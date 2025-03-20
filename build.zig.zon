@@ -1,0 +1,33 @@
+.{
+    .name = .ft_vox,
+    .version = "0.0.0",
+    .fingerprint = 0x1c948e9b0d54fbb9,
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
+            .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
+        },
+        .vulkan = .{
+            .url = "git+https://github.com/Snektron/vulkan-zig#57d587c8a4b6ff5493613b1cf0c64ce34461696e",
+            .hash = "vulkan-0.0.0-r7Ytx5GAAwBIBpjW4Ipd81FiM24t7UxlVomrGkubzW3v",
+        },
+        .sdl = .{
+            .url = "git+https://github.com/castholm/SDL#dbb1b96360658f5845ff6fac380c4f13d7276dc2",
+            .hash = "sdl-0.2.0+3.2.8-7uIn9FxHfQE325TK7b0qpgt10G3x1xl-3ZMOfTzxUg3C",
+        },
+        .zm = .{
+            .url = "git+https://github.com/griush/zm#319a44a9b0859214b9240a5c4ae0d8ae9ac16672",
+            .hash = "zm-0.3.0-AAAAAL3MAAA2du9TcSd0z2lFBF5_Qv-0zd7F566Z7B3K",
+        },
+        .shader_compiler = .{
+            .url = "git+https://github.com/Games-by-Mason/shader_compiler#c25b6138d0bb92c487dd48f1cf16a51a76bfd4ca",
+            .hash = "shader_compiler-0.0.0-bOVsallvAAACTK0MWFoh3ooCW75QEMKV_UWBi9biXT8g",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
