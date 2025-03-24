@@ -38,6 +38,7 @@ pub fn build(b: *Build) void {
         .target = target,
         .optimize = optimize,
     });
+    sdl_header.addIncludePath(sdl.path("include"));
     exe.step.dependOn(&sdl_header.step);
 
     const sdl_mod = sdl_header.createModule();
