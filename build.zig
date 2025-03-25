@@ -51,19 +51,33 @@ pub fn build(b: *Build) void {
     const zm_mod = zm.module("zm");
     exe.root_module.addImport("zm", zm_mod);
 
-    // const glslc = b.dependency("shader_compiler", .{}).artifact("glslc");
-    // const flags: []const []const u8 = &.{
-    //     "--target=vulkan-1.3",
-    // };
-    // const files: []const []const u8 = &.{
-    //     "shaders/cube.vert",
-    // };
+    const glslc = b.dependency("shader_compiler", .{}).artifact("shader_compiler");
+    const flags: []const []const u8 = &.{
+        "--target", "Vulkan-1.2",
+    };
+    const files: []const []const u8 = &.{
+        "assets/shaders/basic_cube.vert",
+        "assets/shaders/basic_cube.frag",
+    };
 
-    // for (files) |file| {
-    //     const path = addCompileShader(b, glslc, exe, file, flags, optimize);
-    //     const name = std.fs.path.basename(file);
-    //     const name_n = name[0..std.mem.indexOfScalar(u8, name, ".")];
-    // }
+    const shaders_mod = b.createModule(.{
+        .root_source_file = b.path("shaders.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    for (files) |file| {
+        const path = addCompileShader(b, glslc, exe, file, flags, optimize);
+        const name = b.dupe(std.fs.path.basename(file));
+
+        std.mem.replaceScalar(u8, name, '.', '_');
+
+        shaders_mod.addAnonymousImport(name, .{
+            .root_source_file = path,
+        });
+    }
+
+    exe.root_module.addImport("shaders", shaders_mod);
 
     b.installArtifact(exe);
 
@@ -116,7 +130,7 @@ fn addCompileShader(
     }
 
     cmd.addFileArg(b.path(path));
-    const output_file = cmd.addOutputFileArg(b.pathJoin(&.{ path, ".spv" }));
+    const output_file = cmd.addOutputFileArg(std.mem.join(b.allocator, "", &.{ path, ".spv" }) catch @panic("OOM"));
 
     exe.step.dependOn(&cmd.step);
 

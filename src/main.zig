@@ -44,6 +44,8 @@ pub fn main() !void {
                 running = false;
             }
         }
+
+        try renderer.draw();
     }
 
     sdl.SDL_DestroyWindow(window);
