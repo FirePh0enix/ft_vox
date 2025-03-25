@@ -461,7 +461,7 @@ fn createSwapchain(
 
     const attach_ref: vk.AttachmentReference = .{
         .attachment = 0,
-        .layout = .attachment_optimal,
+        .layout = .color_attachment_optimal,
     };
 
     const subpass: vk.SubpassDescription = .{
@@ -630,6 +630,7 @@ pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
         .src_alpha_blend_factor = .one,
         .dst_alpha_blend_factor = .zero,
         .alpha_blend_op = .add,
+        .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
     };
 
     const blend_info: vk.PipelineColorBlendStateCreateInfo = .{
