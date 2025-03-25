@@ -27,8 +27,8 @@ pub fn main() !void {
     const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
 
     const renderer = Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count) catch |e| {
-        std.log.err("Failed to initialize vulkan: {}", .{e});
-        return;
+        std.log.err("Failed to initialize vulkan", .{});
+        return e;
     };
     defer renderer.deinit();
 

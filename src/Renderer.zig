@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
+const root = @import("root");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
@@ -24,22 +25,35 @@ const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv
 allocator: Allocator,
 instance: Instance,
 device: Device,
-graphics_queue: Queue,
-present_queue: Queue,
 surface: vk.SurfaceKHR,
-swapchain: vk.SwapchainKHR,
-swapchain_images: []vk.Image,
-swapchain_image_views: []vk.ImageView,
-swapchain_extent: vk.Extent2D,
+physical_device: vk.PhysicalDevice,
+window: *sdl.SDL_Window,
+swapchain: vk.SwapchainKHR = .null_handle,
+swapchain_images: []vk.Image = &.{},
+swapchain_image_views: []vk.ImageView = &.{},
+swapchain_extent: vk.Extent2D = .{ .width = 0, .height = 0 },
 
-var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
-var device_wrapper: vk.DeviceWrapper(apis) = undefined;
+graphics_queue_index: u32,
+graphics_queue: Queue,
+present_queue_index: u32,
+present_queue: Queue,
+
+features: Features,
+
+pub const Features = struct {
+    ray_tracing: bool = false,
+};
 
 pub const InitError = error{
     /// No suitable device found to run the app.
     NoDevice,
+
+    /// Missing Graphics or Present Queue.
     NoGraphicsQueue,
 };
+
+var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
+var device_wrapper: vk.DeviceWrapper(apis) = undefined;
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -69,21 +83,43 @@ pub fn init(
     instance_wrapper = try vk.InstanceWrapper(apis).load(instance_handle, get_proc_addr);
 
     const instance = Instance.init(instance_handle, &instance_wrapper);
+    errdefer instance.destroyInstance(null);
+
+    const required_features: vk.PhysicalDeviceFeatures = .{};
+    const optional_features: vk.PhysicalDeviceFeatures = .{};
+    const required_extensions: []const [*:0]const u8 = &.{
+        vk.extensions.khr_swapchain.name.ptr,
+    };
+    const optional_extensions: []const [*:0]const u8 = &.{
+        vk.extensions.khr_deferred_host_operations.name.ptr,
+        vk.extensions.khr_acceleration_structure.name.ptr,
+        vk.extensions.khr_ray_tracing_pipeline.name.ptr,
+    };
 
     // Select the best physical device.
     const physical_devices = try instance.enumeratePhysicalDevicesAlloc(allocator);
     defer allocator.free(physical_devices);
 
-    const physical_device = getBestDevice(instance, physical_devices) orelse return InitError.NoDevice;
+    const physical_device_with_info = (try getBestDevice(allocator, instance, physical_devices, required_features, optional_features, required_extensions, optional_extensions)) orelse return InitError.NoDevice;
+    const physical_device = physical_device_with_info.physical_device;
     const device_properties = instance.getPhysicalDeviceProperties(physical_device);
 
+    const features: Features = .{
+        .ray_tracing = containsExtension(physical_device_with_info.extensions, vk.extensions.khr_ray_tracing_pipeline.name),
+    };
+
     std.log.info("GPU selected: {s}", .{device_properties.device_name});
+
+    inline for (@typeInfo(Features).@"struct".fields) |field| {
+        if (@field(features, field.name)) std.log.info("Feature `{s}` is ON", .{field.name});
+    }
 
     // Create the surface
     var sdl_surface: sdl.VkSurfaceKHR = undefined;
     const sdl_instance: sdl.VkInstance = @ptrFromInt(@as(usize, @intFromEnum(instance.handle)));
     _ = sdl.SDL_Vulkan_CreateSurface(window, sdl_instance, null, &sdl_surface);
     const surface: vk.SurfaceKHR = @enumFromInt(@as(usize, @intFromPtr(sdl_surface)));
+    errdefer instance.destroySurfaceKHR(surface, null);
 
     // Create queues
     const queue_properties_list = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(physical_device, allocator);
@@ -122,48 +158,105 @@ pub fn init(
         },
     };
 
-    const extensions: []const [*:0]const u8 = &.{
-        vk.extensions.khr_swapchain.name.ptr,
+    const device_extensions = a: {
+        var extensions = std.ArrayList([*:0]const u8).init(allocator);
+
+        for (required_extensions) |ext| {
+            try extensions.append(ext);
+        }
+
+        for (optional_extensions) |ext| {
+            if (containsExtension(physical_device_with_info.extensions, ext)) try extensions.append(ext);
+        }
+
+        break :a try extensions.toOwnedSlice();
+    };
+    defer allocator.free(device_extensions);
+
+    const device_features = a: {
+        const actual_features = physical_device_with_info.features;
+        var device_features: vk.PhysicalDeviceFeatures = required_features;
+
+        inline for (@typeInfo(vk.PhysicalDeviceFeatures).@"struct".fields) |field| {
+            if (@field(actual_features, field.name) == vk.TRUE)
+                @field(device_features, field.name) = vk.TRUE;
+        }
+
+        break :a device_features;
     };
 
-    const device_features: vk.PhysicalDeviceFeatures = .{};
+    physical_device_with_info.deinit(allocator); // free `physical_device_with_info.extensions`
 
     const device_info: vk.DeviceCreateInfo = .{
         .queue_create_info_count = @intCast(queue_infos.len),
         .p_queue_create_infos = queue_infos.ptr,
         .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
         .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
-        .enabled_extension_count = @intCast(extensions.len),
-        .pp_enabled_extension_names = extensions.ptr,
+        .enabled_extension_count = @intCast(device_extensions.len),
+        .pp_enabled_extension_names = device_extensions.ptr,
         .p_enabled_features = &device_features,
     };
 
     const device_proc_addr: *const GetDeviceProcAddrFn = @ptrCast(instance_wrapper.dispatch.vkGetDeviceProcAddr);
 
     const device_handle = try instance.createDevice(physical_device, &device_info, null);
+    // errdefer instance_wrapper.dispatch.vkDestroyDevice(device_handle, null);
     device_wrapper = try .load(device_handle, device_proc_addr);
 
     const device = Device.init(device_handle, &device_wrapper);
+
     const graphics_queue = device.getDeviceQueue(graphics_queue_index, 0);
     const present_queue = device.getDeviceQueue(present_queue_index, 0);
 
     std.debug.assert(graphics_queue != .null_handle);
     std.debug.assert(present_queue != .null_handle);
 
-    // Create the swapchain
-    const surface_capabilities = try instance.getPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface);
-    const surface_formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(physical_device, surface, allocator);
-    defer allocator.free(surface_formats);
+    var self: Self = .{
+        .allocator = allocator,
+        .instance = instance,
+        .device = device,
+        .graphics_queue_index = graphics_queue_index,
+        .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
+        .present_queue_index = present_queue_index,
+        .present_queue = Queue.init(graphics_queue, &device_wrapper),
+        .surface = surface,
+        .physical_device = physical_device,
+        .window = window,
+        .features = features,
+    };
 
-    const surface_present_modes = try instance.getPhysicalDeviceSurfacePresentModesAllocKHR(physical_device, surface, allocator);
-    defer allocator.free(surface_present_modes);
+    try self.createSwapchain();
+
+    return self;
+}
+
+pub fn deinit(self: *const Self) void {
+    _ = self;
+
+    // TODO
+    // self.allocator.free(self.swapchain_image_views);
+    // self.allocator.free(self.swapchain_images);
+
+    // self.device.destroyDevice(&vk_allocation_callbacks);
+    // self.instance.destroyInstance(&vk_allocation_callbacks);
+}
+
+fn createSwapchain(
+    self: *Self,
+) !void {
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    _ = sdl.SDL_GetWindowSize(self.window, &width, &height);
+
+    const surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface);
+    const surface_formats = try self.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(self.physical_device, self.surface, self.allocator);
+    defer self.allocator.free(surface_formats);
+
+    const surface_present_modes = try self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator);
+    defer self.allocator.free(surface_present_modes);
 
     const surface_format: vk.SurfaceFormatKHR = .{ .color_space = .srgb_nonlinear_khr, .format = .b8g8r8a8_srgb };
     const surface_present_mode: vk.PresentModeKHR = .fifo_khr;
-
-    var width: i32 = undefined;
-    var height: i32 = undefined;
-    _ = sdl.SDL_GetWindowSize(window, &width, &height);
 
     const surface_extent: vk.Extent2D = .{
         .width = @intCast(@max(surface_capabilities.min_image_extent.width, @as(u32, @intCast(width)))),
@@ -176,7 +269,7 @@ pub fn init(
         surface_capabilities.min_image_count + 1;
 
     var swapchain_info: vk.SwapchainCreateInfoKHR = .{
-        .surface = surface,
+        .surface = self.surface,
         .min_image_count = image_count,
         .image_format = surface_format.format,
         .image_color_space = surface_format.color_space,
@@ -188,20 +281,25 @@ pub fn init(
         .composite_alpha = .{ .opaque_bit_khr = true },
         .present_mode = surface_present_mode,
         .clipped = vk.TRUE,
-        .old_swapchain = .null_handle,
+        .old_swapchain = self.swapchain,
     };
 
-    const queue_indices: []const u32 = &.{ graphics_queue_index, present_queue_index };
+    const queue_indices: []const u32 = &.{ self.graphics_queue_index, self.present_queue_index };
 
-    if (present_queue_index != graphics_queue_index) {
+    if (self.present_queue_index != self.graphics_queue_index) {
         swapchain_info.image_sharing_mode = .concurrent;
         swapchain_info.queue_family_index_count = @intCast(queue_indices.len);
         swapchain_info.p_queue_family_indices = queue_indices.ptr;
     }
 
-    const swapchain = try device.createSwapchainKHR(&swapchain_info, null);
-    const swapchain_images = try device.getSwapchainImagesAllocKHR(swapchain, allocator);
-    const swapchain_image_views = try allocator.alloc(vk.ImageView, swapchain_images.len);
+    const swapchain = try self.device.createSwapchainKHR(&swapchain_info, null);
+    errdefer self.device.destroySwapchainKHR(swapchain, null);
+
+    const swapchain_images = try self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator);
+    errdefer self.allocator.free(swapchain_images);
+
+    const swapchain_image_views = try self.allocator.alloc(vk.ImageView, swapchain_images.len);
+    errdefer self.allocator.free(swapchain_image_views);
 
     for (swapchain_images, 0..swapchain_images.len) |image, index| {
         const image_view_info: vk.ImageViewCreateInfo = .{
@@ -223,35 +321,47 @@ pub fn init(
             },
         };
 
-        swapchain_image_views[index] = try device.createImageView(&image_view_info, null);
+        swapchain_image_views[index] = try self.device.createImageView(&image_view_info, null);
     }
 
-    return Self{
-        .allocator = allocator,
-        .instance = instance,
-        .device = device,
-        .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
-        .present_queue = Queue.init(graphics_queue, &device_wrapper),
-        .surface = surface,
-        .swapchain = swapchain,
-        .swapchain_images = swapchain_images,
-        .swapchain_extent = surface_extent,
-        .swapchain_image_views = swapchain_image_views,
-    };
+    self.destroySwapchain();
+
+    self.swapchain = swapchain;
+    self.swapchain_images = swapchain_images;
+    self.swapchain_image_views = swapchain_image_views;
 }
 
-pub fn deinit(self: *const Self) void {
-    _ = self;
+fn destroySwapchain(self: *const Self) void {
+    for (self.swapchain_image_views) |image_view| {
+        self.device.destroyImageView(image_view, null);
+    }
 
-    // self.allocator.free(self.swapchain_image_views);
-    // self.allocator.free(self.swapchain_images);
+    self.allocator.free(self.swapchain_images);
+    self.allocator.free(self.swapchain_image_views);
 
-    // TODO
-    // self.device.destroyDevice(null);
-    // self.instance.destroyInstance(null);
+    self.device.destroySwapchainKHR(self.swapchain, null);
 }
 
-fn calculateDeviceScore(properties: vk.PhysicalDeviceProperties) i32 {
+const DeviceWithInfo = struct {
+    physical_device: vk.PhysicalDevice,
+    properties: vk.PhysicalDeviceProperties,
+    features: vk.PhysicalDeviceFeatures,
+    extensions: []const vk.ExtensionProperties,
+
+    pub fn deinit(self: *const DeviceWithInfo, allocator: Allocator) void {
+        allocator.free(self.extensions);
+    }
+};
+
+fn calculateDeviceScore(
+    properties: vk.PhysicalDeviceProperties,
+    features: vk.PhysicalDeviceFeatures,
+    required_features: vk.PhysicalDeviceFeatures,
+    optional_features: vk.PhysicalDeviceFeatures,
+    extensions: []vk.ExtensionProperties,
+    required_extensions: []const [*:0]const u8,
+    optional_extensions: []const [*:0]const u8,
+) i32 {
     var score: i32 = 0;
 
     switch (properties.device_type) {
@@ -261,22 +371,69 @@ fn calculateDeviceScore(properties: vk.PhysicalDeviceProperties) i32 {
         else => {},
     }
 
+    inline for (@typeInfo(vk.PhysicalDeviceFeatures).@"struct".fields) |field| {
+        if (@field(required_features, field.name) == vk.TRUE and @field(features, field.name) == vk.FALSE)
+            return 0; // If a required feature is not supported then the GPU cannot be used.
+
+        if (@field(optional_features, field.name) == vk.TRUE and @field(features, field.name) == vk.TRUE)
+            score += 50;
+    }
+
+    _ = extensions;
+    _ = required_extensions;
+    _ = optional_extensions;
+
     return score;
 }
 
-fn getBestDevice(instance: Instance, devices: []const vk.PhysicalDevice) ?vk.PhysicalDevice {
-    var best_device: ?vk.PhysicalDevice = null;
+fn getBestDevice(
+    allocator: Allocator,
+    instance: Instance,
+    devices: []const vk.PhysicalDevice,
+    required_features: vk.PhysicalDeviceFeatures,
+    optional_features: vk.PhysicalDeviceFeatures,
+    required_extensions: []const [*:0]const u8,
+    optional_extensions: []const [*:0]const u8,
+) !?DeviceWithInfo {
+    var best_device: ?DeviceWithInfo = null;
     var max_score: i32 = -1;
 
     for (devices) |device| {
         const properties = instance.getPhysicalDeviceProperties(device);
-        const score = calculateDeviceScore(properties);
+        const features = instance.getPhysicalDeviceFeatures(device);
+        const extensions = try instance.enumerateDeviceExtensionPropertiesAlloc(device, null, allocator);
+
+        const score = calculateDeviceScore(properties, features, required_features, optional_features, extensions, required_extensions, optional_extensions);
 
         if (score > max_score) {
+            if (best_device) |bd| bd.deinit(allocator);
+
             max_score = score;
-            best_device = device;
+
+            var extensions_strings = try std.ArrayList([*:0]const u8).initCapacity(allocator, extensions.len);
+            for (extensions) |extension| {
+                const name: [:0]const u8 = extension.extension_name[0 .. std.mem.indexOfScalar(u8, &extension.extension_name, 0) orelse 256 :0];
+                extensions_strings.appendAssumeCapacity(name.ptr);
+            }
+
+            best_device = DeviceWithInfo{
+                .physical_device = device,
+                .properties = properties,
+                .features = features,
+                .extensions = extensions,
+            };
         }
     }
 
     return best_device;
+}
+
+fn containsExtension(extensions: []const vk.ExtensionProperties, extension: [*:0]const u8) bool {
+    for (extensions) |props| {
+        const name = props.extension_name[0 .. std.mem.indexOfScalar(u8, &props.extension_name, 0) orelse 256];
+
+        if (std.mem.eql(u8, name, extension[0..std.mem.len(extension)]))
+            return true;
+    }
+    return false;
 }
