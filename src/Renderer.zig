@@ -78,6 +78,8 @@ pub const InitError = error{
 var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
 var device_wrapper: vk.DeviceWrapper(apis) = undefined;
 
+pub var singleton: Self = undefined;
+
 const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
 const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
 
@@ -87,7 +89,7 @@ pub fn init(
     get_proc_addr: *const GetInstanceProcAddrFn,
     instance_extensions: ?[*]const ?[*:0]const u8,
     instance_extensions_count: u32,
-) !Self {
+) !void {
     const vkb = try Base.load(get_proc_addr);
 
     // Create a vulkan instance
@@ -289,7 +291,7 @@ pub fn init(
     try self.createSwapchain();
     self.basic_pipeline = try self.createGraphicsPipeline();
 
-    return self;
+    singleton = self;
 }
 
 pub fn deinit(self: *const Self) void {
@@ -489,6 +491,7 @@ fn createSwapchain(
     };
 
     const render_pass = try self.device.createRenderPass(&render_pass_info, null);
+    errdefer self.device.destroyRenderPass(render_pass, null);
 
     const swapchain_images = try self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator);
     errdefer self.allocator.free(swapchain_images);
@@ -561,6 +564,7 @@ fn destroySwapchain(self: *const Self) void {
         self.allocator.free(self.swapchain_image_views);
         self.allocator.free(self.swapchain_framebuffers);
 
+        self.device.destroyRenderPass(self.render_pass, null);
         self.device.destroySwapchainKHR(self.swapchain, null);
     }
 }

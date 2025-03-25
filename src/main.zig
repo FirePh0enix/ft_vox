@@ -26,11 +26,11 @@ pub fn main() !void {
     var instance_extensions_count: u32 = undefined;
     const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
 
-    const renderer = Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count) catch |e| {
+    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count) catch |e| {
         std.log.err("Failed to initialize vulkan", .{});
         return e;
     };
-    defer renderer.deinit();
+    defer Renderer.singleton.deinit();
 
     _ = sdl.SDL_ShowWindow(window);
 
@@ -45,7 +45,7 @@ pub fn main() !void {
             }
         }
 
-        try renderer.draw();
+        try Renderer.singleton.draw();
     }
 
     sdl.SDL_DestroyWindow(window);

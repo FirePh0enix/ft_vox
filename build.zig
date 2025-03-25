@@ -84,6 +84,14 @@ pub fn build(b: *Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
+    const env_map = std.process.getEnvMap(b.allocator) catch unreachable;
+
+    if (env_map.get("XDG_SESSION_TYPE")) |value| {
+        // Force SDL to use wayland if available.
+        if (std.mem.eql(u8, value, "wayland"))
+            run_cmd.setEnvironmentVariable("SDL_VIDEODRIVER", "wayland");
+    }
+
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
