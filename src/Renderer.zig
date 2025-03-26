@@ -499,12 +499,11 @@ pub fn draw(self: *Self, mesh: Mesh) !void {
     command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
 
-    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, -2.0 };
-    const camera_matrix = zm.Mat4f.translationVec3(-camera_pos).multiply(zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 720.0 / 1280.0, 0.01, 1000.0));
-    // const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 720.0 / 1280.0, 0.01, 1000.0);
+    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, 1.0 };
+    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 16.0 / 9.0, 0.01, 1000.0).multiply(zm.Mat4f.translationVec3(-camera_pos));
 
     const constants: Mesh.PushConstants = .{
-        .camera_matrix = camera_matrix.data,
+        .camera_matrix = camera_matrix.transpose().data,
     };
 
     command_buffer.pushConstants(self.basic_pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
@@ -566,9 +565,7 @@ pub fn draw(self: *Self, mesh: Mesh) !void {
     self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
-fn createSwapchain(
-    self: *Self,
-) !void {
+fn createSwapchain(self: *Self) !void {
     var width: i32 = undefined;
     var height: i32 = undefined;
     _ = sdl.SDL_GetWindowSize(self.window, &width, &height);
@@ -783,7 +780,7 @@ pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
         .polygon_mode = .fill,
         .line_width = 1.0,
         .cull_mode = .{ .back_bit = true },
-        .front_face = .counter_clockwise,
+        .front_face = .clockwise, // TODO: should be .counter_clockwise ?
         .depth_bias_enable = vk.FALSE,
         .depth_bias_constant_factor = 0.0,
         .depth_bias_slope_factor = 0.0,
