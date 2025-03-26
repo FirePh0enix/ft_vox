@@ -24,6 +24,10 @@
             .url = "git+https://github.com/Games-by-Mason/shader_compiler#c25b6138d0bb92c487dd48f1cf16a51a76bfd4ca",
             .hash = "shader_compiler-0.0.0-bOVsallvAAACTK0MWFoh3ooCW75QEMKV_UWBi9biXT8g",
         },
+        .vma = .{
+            .url = "git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator#29b35ea4232688c0f42cdff0c10848290760a417",
+            .hash = "N-V-__8AAEagQQA-UWlVvPJf78W4o-KcjTjV3WIYfUI81Zam",
+        },
     },
     .paths = .{
         "build.zig",

@@ -4,6 +4,7 @@ const sdl = @import("sdl");
 const builtin = @import("builtin");
 
 const Renderer = @import("Renderer.zig");
+const Mesh = @import("Mesh.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -17,11 +18,13 @@ pub fn main() !void {
         std.log.err("SDL init failed", .{});
         return;
     }
+    // defer sdl.SDL_Quit();
 
     const window = sdl.SDL_CreateWindow("ft_vox", 1280, 720, sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_HIDDEN) orelse {
         std.log.err("Create window failed", .{});
         return;
     };
+    defer sdl.SDL_DestroyWindow(window);
 
     var instance_extensions_count: u32 = undefined;
     const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
@@ -30,11 +33,21 @@ pub fn main() !void {
         std.log.err("Failed to initialize vulkan", .{});
         return e;
     };
-    defer Renderer.singleton.deinit();
+    // defer Renderer.singleton.deinit();
 
     _ = sdl.SDL_ShowWindow(window);
 
     var running = true;
+
+    const mesh = try Mesh.init(u16, &.{
+        0, 1, 2,
+        0, 2, 3,
+    }, &.{
+        .{ -0.5, -0.5, 0.0 },
+        .{ 0.5, -0.5, 0.0 },
+        .{ 0.5, 0.5, 0.0 },
+        .{ -0.5, 0.5, 0.0 },
+    });
 
     while (running) {
         var event: sdl.SDL_Event = undefined;
@@ -45,11 +58,8 @@ pub fn main() !void {
             }
         }
 
-        try Renderer.singleton.draw();
+        try Renderer.singleton.draw(mesh);
     }
-
-    sdl.SDL_DestroyWindow(window);
-    sdl.SDL_Quit();
 
     // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();
 }

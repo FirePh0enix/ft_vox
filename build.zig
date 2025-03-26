@@ -25,6 +25,19 @@ pub fn build(b: *Build) void {
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
 
+    const vma = b.dependency("vma", .{});
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/vk_mem_alloc_impl.cpp") });
+
+    const vma_translate_c = b.addTranslateC(.{
+        .root_source_file = vma.path("include/vk_mem_alloc.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("vma", vma_translate_c.createModule());
+    exe.root_module.addIncludePath(vma.path("include"));
+    exe.linkLibCpp(); // libc++  !=  libstdc++
+
     const sdl = b.dependency("sdl", .{
         .target = target,
         .optimize = optimize,

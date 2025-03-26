@@ -4,9 +4,12 @@ const sdl = @import("sdl");
 const builtin = @import("builtin");
 const root = @import("root");
 const shaders = @import("shaders");
+const vma = @import("vma");
+const zm = @import("zm");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
+const Mesh = @import("Mesh.zig");
 
 const apis: []const vk.ApiInfo = &.{
     vk.features.version_1_0,
@@ -22,6 +25,11 @@ const Queue = vk.QueueProxy(apis);
 
 const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () void;
 const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () void;
+
+const VmaAllocator = vma.VmaAllocator;
+const VmaAllocation = vma.VmaAllocation;
+
+const max_frames_in_flight: usize = 2;
 
 allocator: Allocator,
 instance: Instance,
@@ -43,15 +51,20 @@ graphics_queue: Queue,
 present_queue_index: u32,
 present_queue: Queue,
 
-features: Features,
-
 basic_pipeline: GraphicsPipeline = .{},
 
-command_buffer: CommandBuffer,
+current_frame: usize = 0,
+command_buffers: [max_frames_in_flight]CommandBuffer,
+image_available_semaphores: [max_frames_in_flight]vk.Semaphore,
+render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
+in_flight_fences: [max_frames_in_flight]vk.Fence,
 
-image_available_semaphore: vk.Semaphore,
-render_finished_semaphore: vk.Semaphore,
-in_flight_fence: vk.Fence,
+/// Buffer used when transfering data from buffer to buffer.
+buffer_transfer_command_buffer: CommandBuffer,
+
+vma_allocator: VmaAllocator,
+
+features: Features,
 
 pub const Features = struct {
     ray_tracing: bool = false,
@@ -67,12 +80,117 @@ pub const GraphicsPipeline = struct {
     }
 };
 
+pub const Buffer = struct {
+    buffer: vk.Buffer,
+    allocation: vma.VmaAllocation,
+    size: usize,
+
+    pub const AllocUsage = enum {
+        gpu_only,
+        cpu_to_gpu,
+    };
+
+    pub fn create(size: usize, buffer_usage: vk.BufferUsageFlags, alloc_usage: AllocUsage) !Buffer {
+        const alloc_info: vma.VmaAllocationCreateInfo = .{
+            .usage = switch (alloc_usage) {
+                .gpu_only => vma.VMA_MEMORY_USAGE_GPU_ONLY,
+                .cpu_to_gpu => vma.VMA_MEMORY_USAGE_CPU_TO_GPU,
+            },
+        };
+
+        const buffer_info: vk.BufferCreateInfo = .{
+            .size = @intCast(size),
+            .usage = buffer_usage,
+            .sharing_mode = .exclusive,
+        };
+
+        var buffer: vk.Buffer = undefined;
+        var allocation: vma.VmaAllocation = undefined;
+
+        if (vma.vmaCreateBuffer(singleton.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
+            return error.Internal;
+        }
+
+        return .{
+            .buffer = buffer,
+            .allocation = allocation,
+            .size = size,
+        };
+    }
+
+    pub fn createFromData(comptime T: type, data: []const T, buffer_usage: vk.BufferUsageFlags, alloc_usage: AllocUsage) !Buffer {
+        var buffer = try create(@sizeOf(T) * data.len, buffer_usage, alloc_usage);
+        errdefer buffer.deinit();
+
+        try buffer.store(T, data);
+        return buffer;
+    }
+
+    pub fn store(self: *Buffer, comptime T: type, data: []const T) !void {
+        var staging_buffer = try create(self.size, .{ .transfer_src_bit = true }, .cpu_to_gpu);
+        defer staging_buffer.deinit();
+
+        {
+            const map_data = try staging_buffer.map();
+            defer staging_buffer.unmap();
+
+            const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..self.size];
+            @memcpy(map_data, data_bytes);
+        }
+
+        // Record the command buffer
+        const begin_info: vk.CommandBufferBeginInfo = .{
+            .flags = .{ .one_time_submit_bit = true },
+        };
+        try singleton.buffer_transfer_command_buffer.resetCommandBuffer(.{});
+        try singleton.buffer_transfer_command_buffer.beginCommandBuffer(&begin_info);
+
+        const regions: []const vk.BufferCopy = &.{
+            vk.BufferCopy{ .src_offset = 0, .dst_offset = 0, .size = self.size },
+        };
+
+        singleton.buffer_transfer_command_buffer.copyBuffer(staging_buffer.buffer, self.buffer, @intCast(regions.len), regions.ptr);
+        try singleton.buffer_transfer_command_buffer.endCommandBuffer();
+
+        const submit_info: vk.SubmitInfo = .{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&singleton.buffer_transfer_command_buffer),
+        };
+
+        try singleton.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
+        try singleton.device.deviceWaitIdle();
+    }
+
+    pub fn deinit(self: *const Buffer) void {
+        vma.vmaDestroyBuffer(singleton.vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(self.buffer))), self.allocation);
+    }
+
+    pub fn map(self: *const Buffer) ![]u8 {
+        var data: ?*anyopaque = null;
+
+        if (vma.vmaMapMemory(singleton.vma_allocator, self.allocation, &data) != vma.VK_SUCCESS)
+            return error.Internal;
+
+        if (data) |ptr| {
+            return @as([*]u8, @ptrCast(ptr))[0..self.size];
+        } else {
+            return error.Internal;
+        }
+    }
+
+    pub fn unmap(self: *const Buffer) void {
+        vma.vmaUnmapMemory(singleton.vma_allocator, self.allocation);
+    }
+};
+
 pub const InitError = error{
     /// No suitable device found to run the app.
     NoDevice,
 
     /// Missing Graphics or Present Queue.
     NoGraphicsQueue,
+
+    Internal,
 };
 
 var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
@@ -225,11 +343,11 @@ pub fn init(
         .p_enabled_features = &device_features,
     };
 
-    const device_proc_addr: *const GetDeviceProcAddrFn = @ptrCast(instance_wrapper.dispatch.vkGetDeviceProcAddr);
+    const get_device_proc_addr: *const GetDeviceProcAddrFn = @ptrCast(instance_wrapper.dispatch.vkGetDeviceProcAddr);
 
     const device_handle = try instance.createDevice(physical_device, &device_info, null);
     // errdefer instance_wrapper.dispatch.vkDestroyDevice(device_handle, null);
-    device_wrapper = try .load(device_handle, device_proc_addr);
+    device_wrapper = try .load(device_handle, get_device_proc_addr);
 
     const device = Device.init(device_handle, &device_wrapper);
 
@@ -250,22 +368,57 @@ pub fn init(
     const command_buffer_info: vk.CommandBufferAllocateInfo = .{
         .command_pool = command_pool,
         .level = .primary,
-        .command_buffer_count = 1,
+        .command_buffer_count = max_frames_in_flight,
     };
 
-    var command_buffer: vk.CommandBuffer = .null_handle;
-    try device.allocateCommandBuffers(&command_buffer_info, @ptrCast(&command_buffer));
+    var command_buffer_handles: [max_frames_in_flight]vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&command_buffer_info, &command_buffer_handles);
+
+    var command_buffers: [max_frames_in_flight]CommandBuffer = undefined;
+    for (0..max_frames_in_flight) |index| command_buffers[index] = CommandBuffer.init(command_buffer_handles[index], &device_wrapper);
 
     // Create synchronization primitives.
-
     const semaphore_info: vk.SemaphoreCreateInfo = .{};
     const fence_info: vk.FenceCreateInfo = .{
         .flags = .{ .signaled_bit = true },
     };
 
-    const image_available_semaphore = try device.createSemaphore(&semaphore_info, null);
-    const render_finished_semaphore = try device.createSemaphore(&semaphore_info, null);
-    const in_flight_fence = try device.createFence(&fence_info, null);
+    var image_available_semaphores: [max_frames_in_flight]vk.Semaphore = undefined;
+    var render_finished_semaphores: [max_frames_in_flight]vk.Semaphore = undefined;
+    var in_flight_fences: [max_frames_in_flight]vk.Fence = undefined;
+
+    for (0..max_frames_in_flight) |index| {
+        image_available_semaphores[index] = try device.createSemaphore(&semaphore_info, null);
+        render_finished_semaphores[index] = try device.createSemaphore(&semaphore_info, null);
+        in_flight_fences[index] = try device.createFence(&fence_info, null);
+    }
+
+    // Create the VmaAllocator
+    const vulkan_functions: vma.VmaVulkanFunctions = .{
+        .vkGetInstanceProcAddr = @ptrCast(get_proc_addr),
+        .vkGetDeviceProcAddr = @ptrCast(get_device_proc_addr),
+    };
+
+    const allocator_info: vma.VmaAllocatorCreateInfo = .{
+        .flags = 0,
+        .vulkanApiVersion = @bitCast(vk.API_VERSION_1_2),
+        .physicalDevice = @ptrFromInt(@as(usize, @intFromEnum(physical_device))),
+        .device = @ptrFromInt(@as(usize, @intFromEnum(device_handle))),
+        .instance = @ptrFromInt(@as(usize, @intFromEnum(instance_handle))),
+        .pVulkanFunctions = @ptrCast(&vulkan_functions),
+    };
+    var vma_allocator: vma.VmaAllocator = undefined;
+    if (vma.vmaCreateAllocator(&allocator_info, &vma_allocator) != vma.VK_SUCCESS) return error.Internal;
+
+    // Allocate a command buffer to transfer data between buffers.
+    const transfer_cmd_buffer_info: vk.CommandBufferAllocateInfo = .{
+        .command_pool = command_pool,
+        .level = .primary,
+        .command_buffer_count = 1,
+    };
+
+    var buffer_transfer_command_buffer_handle: vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&buffer_transfer_command_buffer_handle));
 
     var self: Self = .{
         .allocator = allocator,
@@ -281,11 +434,13 @@ pub fn init(
         .window = window,
         .features = features,
 
-        .command_buffer = CommandBuffer.init(command_buffer, &device_wrapper),
+        .command_buffers = command_buffers,
+        .image_available_semaphores = image_available_semaphores,
+        .render_finished_semaphores = render_finished_semaphores,
+        .in_flight_fences = in_flight_fences,
 
-        .image_available_semaphore = image_available_semaphore,
-        .render_finished_semaphore = render_finished_semaphore,
-        .in_flight_fence = in_flight_fence,
+        .vma_allocator = vma_allocator,
+        .buffer_transfer_command_buffer = CommandBuffer.init(buffer_transfer_command_buffer_handle, &device_wrapper),
     };
 
     try self.createSwapchain();
@@ -305,14 +460,14 @@ pub fn deinit(self: *const Self) void {
     // self.instance.destroyInstance(&vk_allocation_callbacks);
 }
 
-pub fn draw(self: *const Self) !void {
-    _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fence), vk.TRUE, std.math.maxInt(u64));
-    try self.device.resetFences(1, @ptrCast(&self.in_flight_fence));
+pub fn draw(self: *Self, mesh: Mesh) !void {
+    _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
+    try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
-    const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphore, .null_handle);
+    const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
     const image_index = image_index_result.image_index;
 
-    const command_buffer = self.command_buffer;
+    const command_buffer = self.command_buffers[self.current_frame];
 
     try command_buffer.resetCommandBuffer(.{});
 
@@ -341,6 +496,19 @@ pub fn draw(self: *const Self) !void {
 
     command_buffer.bindPipeline(.graphics, self.basic_pipeline.pipeline);
 
+    command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
+    command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
+
+    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, -2.0 };
+    const camera_matrix = zm.Mat4f.translationVec3(-camera_pos).multiply(zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 720.0 / 1280.0, 0.01, 1000.0));
+    // const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 720.0 / 1280.0, 0.01, 1000.0);
+
+    const constants: Mesh.PushConstants = .{
+        .camera_matrix = camera_matrix.data,
+    };
+
+    command_buffer.pushConstants(self.basic_pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
+
     const viewport: vk.Viewport = .{
         .x = 0.0,
         .y = 0.0,
@@ -359,17 +527,17 @@ pub fn draw(self: *const Self) !void {
 
     command_buffer.setScissor(0, 1, @ptrCast(&scissor));
 
-    command_buffer.draw(3, 1, 0, 0);
+    command_buffer.drawIndexed(@intCast(mesh.count), 1, 0, 0, 0);
 
     command_buffer.endRenderPass();
 
     try command_buffer.endCommandBuffer();
 
     // Submit the frame
-    const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphore};
+    const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
     const wait_stages: []const vk.PipelineStageFlags = &.{.{ .color_attachment_output_bit = true }};
 
-    const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphore};
+    const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
 
     const submit_info: vk.SubmitInfo = .{
         .wait_semaphore_count = @intCast(wait_semaphores.len),
@@ -383,7 +551,7 @@ pub fn draw(self: *const Self) !void {
         .p_signal_semaphores = signal_semaphores.ptr,
     };
 
-    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fence);
+    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
 
     const present_info: vk.PresentInfoKHR = .{
         .wait_semaphore_count = @intCast(signal_semaphores.len),
@@ -394,6 +562,8 @@ pub fn draw(self: *const Self) !void {
     };
 
     _ = try self.graphics_queue.presentKHR(&present_info);
+
+    self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
 fn createSwapchain(
@@ -590,8 +760,10 @@ pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
     };
 
     const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
-        .vertex_binding_description_count = 0,
-        .vertex_attribute_description_count = 0,
+        .vertex_binding_description_count = @intCast(Mesh.binding_descriptions.len),
+        .p_vertex_binding_descriptions = Mesh.binding_descriptions.ptr,
+        .vertex_attribute_description_count = @intCast(Mesh.attribute_descriptions.len),
+        .p_vertex_attribute_descriptions = Mesh.attribute_descriptions.ptr,
     };
 
     const input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = .{
@@ -611,7 +783,7 @@ pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
         .polygon_mode = .fill,
         .line_width = 1.0,
         .cull_mode = .{ .back_bit = true },
-        .front_face = .clockwise,
+        .front_face = .counter_clockwise,
         .depth_bias_enable = vk.FALSE,
         .depth_bias_constant_factor = 0.0,
         .depth_bias_slope_factor = 0.0,
@@ -645,11 +817,15 @@ pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
         .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
     };
 
+    const push_constants: []const vk.PushConstantRange = &.{
+        vk.PushConstantRange{ .offset = 0, .size = @sizeOf(Mesh.PushConstants), .stage_flags = .{ .vertex_bit = true } },
+    };
+
     const layout_info: vk.PipelineLayoutCreateInfo = .{
         .set_layout_count = 0,
         .p_set_layouts = null,
-        .push_constant_range_count = 0,
-        .p_push_constant_ranges = null,
+        .push_constant_range_count = @intCast(push_constants.len),
+        .p_push_constant_ranges = push_constants.ptr,
     };
 
     const pipeline_layout = try self.device.createPipelineLayout(&layout_info, null);
@@ -727,9 +903,15 @@ fn calculateDeviceScore(
             score += 50;
     }
 
-    _ = extensions;
-    _ = required_extensions;
-    _ = optional_extensions;
+    for (required_extensions) |ext| {
+        if (!containsExtension(extensions, ext))
+            return 0;
+    }
+
+    for (optional_extensions) |ext| {
+        if (!containsExtension(extensions, ext))
+            score += 50;
+    }
 
     return score;
 }
@@ -744,7 +926,7 @@ fn getBestDevice(
     optional_extensions: []const [*:0]const u8,
 ) !?DeviceWithInfo {
     var best_device: ?DeviceWithInfo = null;
-    var max_score: i32 = -1;
+    var max_score: i32 = 0;
 
     for (devices) |device| {
         const properties = instance.getPhysicalDeviceProperties(device);
@@ -757,12 +939,6 @@ fn getBestDevice(
             if (best_device) |bd| bd.deinit(allocator);
 
             max_score = score;
-
-            var extensions_strings = try std.ArrayList([*:0]const u8).initCapacity(allocator, extensions.len);
-            for (extensions) |extension| {
-                const name: [:0]const u8 = extension.extension_name[0 .. std.mem.indexOfScalar(u8, &extension.extension_name, 0) orelse 256 :0];
-                extensions_strings.appendAssumeCapacity(name.ptr);
-            }
 
             best_device = DeviceWithInfo{
                 .physical_device = device,
