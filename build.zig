@@ -17,13 +17,25 @@ pub fn build(b: *Build) void {
     const exe = b.addExecutable(.{
         .name = "ft_vox",
         .root_module = exe_mod,
-        .use_llvm = false, // Use the self-hosted backend.
     });
 
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+
     const vulkan = b.dependency("vulkan", .{
-        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+        .registry = vulkan_headers.path("registry/vk.xml"),
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
+
+    if (target.result.os.tag == .macos) {
+        // On macOS we need to link with MoltenVK.
+        const moltenvk = b.dependency("moltenvk", .{});
+
+        const install_icd = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"), "vulkan/icd.d/MoltenVK_icd.json");
+        const install_lib = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"), "vulkan/icd.d/libMoltenVK.dylib");
+
+        b.getInstallStep().dependOn(&install_icd.step);
+        b.getInstallStep().dependOn(&install_lib.step);
+    }
 
     const vma = b.dependency("vma", .{});
     exe.root_module.addCSourceFile(.{ .file = b.path("src/render/vk_mem_alloc_impl.cpp") });
@@ -33,9 +45,11 @@ pub fn build(b: *Build) void {
         .target = target,
         .optimize = optimize,
     });
+    vma_translate_c.addIncludePath(vulkan_headers.path("include"));
 
     exe.root_module.addImport("vma", vma_translate_c.createModule());
     exe.root_module.addIncludePath(vma.path("include"));
+    exe.root_module.addIncludePath(vulkan_headers.path("include"));
     exe.linkLibCpp();
 
     const sdl = b.dependency("sdl", .{

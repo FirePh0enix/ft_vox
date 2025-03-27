@@ -29,8 +29,12 @@
             .hash = "N-V-__8AAEagQQA-UWlVvPJf78W4o-KcjTjV3WIYfUI81Zam",
         },
         .zigimg = .{
-            .url = "git+https://github.com/zigimg/zigimg#b6889a6860970321032a9acc31d94621c6ce8d29",
-            .hash = "zigimg-0.1.0-AAAAAOiwEABeo8Y47ME_5Q1w6p0vSmDOGLwR0DBNwi5H",
+            .url = "git+https://github.com/TUSF/zigimg#31268548fe3276c0e95f318a6c0d2ab10565b58d",
+            .hash = "zigimg-0.1.0-lly-O6N2EABOxke8dqyzCwhtUCAafqP35zC7wsZ4Ddxj",
+        },
+        .moltenvk = .{
+            .url = "https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11-artifacts/MoltenVK-macos.tar",
+            .hash = "N-V-__8AAHJVDAQ_Q3ypg6Itg72ll6Kh7CSfBCFzOCi5IUHf",
         },
     },
     .paths = .{
