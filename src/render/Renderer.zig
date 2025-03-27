@@ -485,6 +485,7 @@ pub fn draw(self: *Self, mesh: Mesh) !void {
 
     command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
+    command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
 
     const camera_pos: zm.Vec3f = .{ 0.0, 0.0, 1.0 };
     const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 16.0 / 9.0, 0.01, 1000.0).multiply(zm.Mat4f.translationVec3(-camera_pos));

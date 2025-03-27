@@ -64,6 +64,13 @@ pub fn build(b: *Build) void {
     const zm_mod = zm.module("zm");
     exe.root_module.addImport("zm", zm_mod);
 
+    const zigimg = b.dependency("zigimg", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zigimg_mod = zigimg.module("zigimg");
+    exe.root_module.addImport("zigimg", zigimg_mod);
+
     const glslc = b.dependency("shader_compiler", .{}).artifact("shader_compiler");
     const flags: []const []const u8 = &.{
         "--target", "Vulkan-1.2",
