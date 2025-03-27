@@ -9,19 +9,20 @@ const zm = @import("zm");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
-const Mesh = @import("Mesh.zig");
+const Mesh = @import("../Mesh.zig");
+const GraphicsPipeline = @import("GraphicsPipeline.zig");
 
-const apis: []const vk.ApiInfo = &.{
+pub const apis: []const vk.ApiInfo = &.{
     vk.features.version_1_0,
     vk.extensions.khr_surface,
     vk.extensions.khr_swapchain,
 };
 
-const Base = vk.BaseWrapper(apis);
-const Instance = vk.InstanceProxy(apis);
-const Device = vk.DeviceProxy(apis);
-const CommandBuffer = vk.CommandBufferProxy(apis);
-const Queue = vk.QueueProxy(apis);
+pub const Base = vk.BaseWrapper(apis);
+pub const Instance = vk.InstanceProxy(apis);
+pub const Device = vk.DeviceProxy(apis);
+pub const CommandBuffer = vk.CommandBufferProxy(apis);
+pub const Queue = vk.QueueProxy(apis);
 
 const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () void;
 const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () void;
@@ -68,16 +69,6 @@ features: Features,
 
 pub const Features = struct {
     ray_tracing: bool = false,
-};
-
-pub const GraphicsPipeline = struct {
-    pipeline: vk.Pipeline = .null_handle,
-    layout: vk.PipelineLayout = .null_handle,
-
-    pub fn deinit(self: *const GraphicsPipeline, device: Device) void {
-        device.destroyPipelineLayout(self.layout, null);
-        device.destroyPipeline(self.pipeline, null);
-    }
 };
 
 pub const Buffer = struct {
@@ -198,9 +189,6 @@ var device_wrapper: vk.DeviceWrapper(apis) = undefined;
 
 pub var singleton: Self = undefined;
 
-const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
-const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
-
 pub fn init(
     allocator: std.mem.Allocator,
     window: *sdl.SDL_Window,
@@ -257,7 +245,7 @@ pub fn init(
     std.log.info("GPU selected: {s}", .{device_properties.device_name});
 
     inline for (@typeInfo(Features).@"struct".fields) |field| {
-        if (@field(features, field.name)) std.log.info("Feature `{s}` is ON", .{field.name});
+        if (@field(features, field.name)) std.log.info("Feature `{s}` is supported", .{field.name});
     }
 
     // Create the surface
@@ -420,7 +408,7 @@ pub fn init(
     var buffer_transfer_command_buffer_handle: vk.CommandBuffer = undefined;
     try device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&buffer_transfer_command_buffer_handle));
 
-    var self: Self = .{
+    const self: Self = .{
         .allocator = allocator,
         .instance = instance,
         .device = device,
@@ -442,11 +430,10 @@ pub fn init(
         .vma_allocator = vma_allocator,
         .buffer_transfer_command_buffer = CommandBuffer.init(buffer_transfer_command_buffer_handle, &device_wrapper),
     };
-
-    try self.createSwapchain();
-    self.basic_pipeline = try self.createGraphicsPipeline();
-
     singleton = self;
+
+    try singleton.createSwapchain();
+    singleton.basic_pipeline = try GraphicsPipeline.create();
 }
 
 pub fn deinit(self: *const Self) void {
@@ -736,125 +723,7 @@ fn destroySwapchain(self: *const Self) void {
     }
 }
 
-pub fn createGraphicsPipeline(self: *const Self) !GraphicsPipeline {
-    const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
-        .{
-            .stage = .{ .vertex_bit = true },
-            .module = try self.createShaderModule(&basic_cube_vert),
-            .p_name = "main",
-        },
-        .{
-            .stage = .{ .fragment_bit = true },
-            .module = try self.createShaderModule(&basic_cube_frag),
-            .p_name = "main",
-        },
-    };
-
-    const dynamic_states: []const vk.DynamicState = &.{ .viewport, .scissor };
-    const dynamic_state_info: vk.PipelineDynamicStateCreateInfo = .{
-        .dynamic_state_count = @intCast(dynamic_states.len),
-        .p_dynamic_states = dynamic_states.ptr,
-    };
-
-    const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
-        .vertex_binding_description_count = @intCast(Mesh.binding_descriptions.len),
-        .p_vertex_binding_descriptions = Mesh.binding_descriptions.ptr,
-        .vertex_attribute_description_count = @intCast(Mesh.attribute_descriptions.len),
-        .p_vertex_attribute_descriptions = Mesh.attribute_descriptions.ptr,
-    };
-
-    const input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = .{
-        .topology = .triangle_list,
-        .primitive_restart_enable = vk.FALSE,
-    };
-
-    const viewport_info: vk.PipelineViewportStateCreateInfo = .{
-        .viewport_count = 1,
-        .scissor_count = 1,
-    };
-
-    const rasterizer_info: vk.PipelineRasterizationStateCreateInfo = .{
-        .depth_clamp_enable = vk.FALSE,
-        .depth_bias_clamp = 0.0,
-        .rasterizer_discard_enable = vk.FALSE,
-        .polygon_mode = .fill,
-        .line_width = 1.0,
-        .cull_mode = .{ .back_bit = true },
-        .front_face = .clockwise, // TODO: should be .counter_clockwise ?
-        .depth_bias_enable = vk.FALSE,
-        .depth_bias_constant_factor = 0.0,
-        .depth_bias_slope_factor = 0.0,
-    };
-
-    const multisample_info: vk.PipelineMultisampleStateCreateInfo = .{
-        .sample_shading_enable = vk.FALSE,
-        .rasterization_samples = .{ .@"1_bit" = true },
-        .min_sample_shading = 1.0,
-        .p_sample_mask = null,
-        .alpha_to_coverage_enable = vk.FALSE,
-        .alpha_to_one_enable = vk.FALSE,
-    };
-
-    const blend_state: vk.PipelineColorBlendAttachmentState = .{
-        .blend_enable = vk.FALSE, // TODO: Support transparency
-        .src_color_blend_factor = .one,
-        .dst_color_blend_factor = .zero,
-        .color_blend_op = .add,
-        .src_alpha_blend_factor = .one,
-        .dst_alpha_blend_factor = .zero,
-        .alpha_blend_op = .add,
-        .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-    };
-
-    const blend_info: vk.PipelineColorBlendStateCreateInfo = .{
-        .logic_op_enable = vk.FALSE,
-        .logic_op = .copy,
-        .attachment_count = 1,
-        .p_attachments = @ptrCast(&blend_state),
-        .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
-    };
-
-    const push_constants: []const vk.PushConstantRange = &.{
-        vk.PushConstantRange{ .offset = 0, .size = @sizeOf(Mesh.PushConstants), .stage_flags = .{ .vertex_bit = true } },
-    };
-
-    const layout_info: vk.PipelineLayoutCreateInfo = .{
-        .set_layout_count = 0,
-        .p_set_layouts = null,
-        .push_constant_range_count = @intCast(push_constants.len),
-        .p_push_constant_ranges = push_constants.ptr,
-    };
-
-    const pipeline_layout = try self.device.createPipelineLayout(&layout_info, null);
-
-    const pipeline_info: vk.GraphicsPipelineCreateInfo = .{
-        .stage_count = @intCast(shader_stages.len),
-        .p_stages = shader_stages.ptr,
-        .p_vertex_input_state = &vertex_input_info,
-        .p_input_assembly_state = &input_assembly_info,
-        .p_viewport_state = &viewport_info,
-        .p_rasterization_state = &rasterizer_info,
-        .p_multisample_state = &multisample_info,
-        .p_depth_stencil_state = null,
-        .p_color_blend_state = &blend_info,
-        .p_dynamic_state = &dynamic_state_info,
-        .layout = pipeline_layout,
-        .render_pass = self.render_pass,
-        .subpass = 0,
-        .base_pipeline_handle = .null_handle,
-        .base_pipeline_index = -1,
-    };
-
-    var pipeline: vk.Pipeline = .null_handle;
-    _ = try self.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&pipeline_info), null, @ptrCast(&pipeline));
-
-    return .{
-        .pipeline = pipeline,
-        .layout = pipeline_layout,
-    };
-}
-
-fn createShaderModule(self: *const Self, spirv: [:0]align(4) const u8) Device.CreateShaderModuleError!vk.ShaderModule {
+pub fn createShaderModule(self: *const Self, spirv: [:0]align(4) const u8) Device.CreateShaderModuleError!vk.ShaderModule {
     const shader_info: vk.ShaderModuleCreateInfo = .{
         .code_size = spirv.len,
         .p_code = @ptrCast(spirv.ptr),

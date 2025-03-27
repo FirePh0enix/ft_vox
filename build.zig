@@ -26,7 +26,7 @@ pub fn build(b: *Build) void {
     exe.root_module.addImport("vulkan", vulkan);
 
     const vma = b.dependency("vma", .{});
-    exe.root_module.addCSourceFile(.{ .file = b.path("src/vk_mem_alloc_impl.cpp") });
+    exe.root_module.addCSourceFile(.{ .file = b.path("src/render/vk_mem_alloc_impl.cpp") });
 
     const vma_translate_c = b.addTranslateC(.{
         .root_source_file = vma.path("include/vk_mem_alloc.h"),
@@ -36,7 +36,7 @@ pub fn build(b: *Build) void {
 
     exe.root_module.addImport("vma", vma_translate_c.createModule());
     exe.root_module.addIncludePath(vma.path("include"));
-    exe.linkLibCpp(); // libc++  !=  libstdc++
+    exe.linkLibCpp();
 
     const sdl = b.dependency("sdl", .{
         .target = target,

@@ -3,7 +3,7 @@ const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
 
-const Renderer = @import("Renderer.zig");
+const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;

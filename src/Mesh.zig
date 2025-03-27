@@ -2,7 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const vma = @import("vma");
 const zm = @import("zm");
-const Renderer = @import("Renderer.zig");
+const Renderer = @import("render/Renderer.zig");
 
 const Buffer = Renderer.Buffer;
 const Vec3 = zm.Vec3f;
