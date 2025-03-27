@@ -2,15 +2,16 @@ const std = @import("std");
 const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
-const root = @import("root");
-const shaders = @import("shaders");
 const vma = @import("vma");
 const zm = @import("zm");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
 const Mesh = @import("../Mesh.zig");
+const Image = @import("Image.zig");
 const GraphicsPipeline = @import("GraphicsPipeline.zig");
+const Buffer = @import("Buffer.zig");
+const Material = @import("../Material.zig");
 
 pub const apis: []const vk.ApiInfo = &.{
     vk.features.version_1_0,
@@ -52,7 +53,7 @@ graphics_queue: Queue,
 present_queue_index: u32,
 present_queue: Queue,
 
-basic_pipeline: GraphicsPipeline = .{},
+basic_pipeline: *GraphicsPipeline = undefined,
 
 current_frame: usize = 0,
 command_buffers: [max_frames_in_flight]CommandBuffer,
@@ -69,109 +70,6 @@ features: Features,
 
 pub const Features = struct {
     ray_tracing: bool = false,
-};
-
-pub const Buffer = struct {
-    buffer: vk.Buffer,
-    allocation: vma.VmaAllocation,
-    size: usize,
-
-    pub const AllocUsage = enum {
-        gpu_only,
-        cpu_to_gpu,
-    };
-
-    pub fn create(size: usize, buffer_usage: vk.BufferUsageFlags, alloc_usage: AllocUsage) !Buffer {
-        const alloc_info: vma.VmaAllocationCreateInfo = .{
-            .usage = switch (alloc_usage) {
-                .gpu_only => vma.VMA_MEMORY_USAGE_GPU_ONLY,
-                .cpu_to_gpu => vma.VMA_MEMORY_USAGE_CPU_TO_GPU,
-            },
-        };
-
-        const buffer_info: vk.BufferCreateInfo = .{
-            .size = @intCast(size),
-            .usage = buffer_usage,
-            .sharing_mode = .exclusive,
-        };
-
-        var buffer: vk.Buffer = undefined;
-        var allocation: vma.VmaAllocation = undefined;
-
-        if (vma.vmaCreateBuffer(singleton.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
-            return error.Internal;
-        }
-
-        return .{
-            .buffer = buffer,
-            .allocation = allocation,
-            .size = size,
-        };
-    }
-
-    pub fn createFromData(comptime T: type, data: []const T, buffer_usage: vk.BufferUsageFlags, alloc_usage: AllocUsage) !Buffer {
-        var buffer = try create(@sizeOf(T) * data.len, buffer_usage, alloc_usage);
-        errdefer buffer.deinit();
-
-        try buffer.store(T, data);
-        return buffer;
-    }
-
-    pub fn store(self: *Buffer, comptime T: type, data: []const T) !void {
-        var staging_buffer = try create(self.size, .{ .transfer_src_bit = true }, .cpu_to_gpu);
-        defer staging_buffer.deinit();
-
-        {
-            const map_data = try staging_buffer.map();
-            defer staging_buffer.unmap();
-
-            const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..self.size];
-            @memcpy(map_data, data_bytes);
-        }
-
-        // Record the command buffer
-        const begin_info: vk.CommandBufferBeginInfo = .{
-            .flags = .{ .one_time_submit_bit = true },
-        };
-        try singleton.buffer_transfer_command_buffer.resetCommandBuffer(.{});
-        try singleton.buffer_transfer_command_buffer.beginCommandBuffer(&begin_info);
-
-        const regions: []const vk.BufferCopy = &.{
-            vk.BufferCopy{ .src_offset = 0, .dst_offset = 0, .size = self.size },
-        };
-
-        singleton.buffer_transfer_command_buffer.copyBuffer(staging_buffer.buffer, self.buffer, @intCast(regions.len), regions.ptr);
-        try singleton.buffer_transfer_command_buffer.endCommandBuffer();
-
-        const submit_info: vk.SubmitInfo = .{
-            .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&singleton.buffer_transfer_command_buffer),
-        };
-
-        try singleton.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
-        try singleton.device.deviceWaitIdle();
-    }
-
-    pub fn deinit(self: *const Buffer) void {
-        vma.vmaDestroyBuffer(singleton.vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(self.buffer))), self.allocation);
-    }
-
-    pub fn map(self: *const Buffer) ![]u8 {
-        var data: ?*anyopaque = null;
-
-        if (vma.vmaMapMemory(singleton.vma_allocator, self.allocation, &data) != vma.VK_SUCCESS)
-            return error.Internal;
-
-        if (data) |ptr| {
-            return @as([*]u8, @ptrCast(ptr))[0..self.size];
-        } else {
-            return error.Internal;
-        }
-    }
-
-    pub fn unmap(self: *const Buffer) void {
-        vma.vmaUnmapMemory(singleton.vma_allocator, self.allocation);
-    }
 };
 
 pub const InitError = error{
@@ -434,7 +332,8 @@ pub fn init(
     singleton = self;
 
     try singleton.createSwapchain();
-    singleton.basic_pipeline = try GraphicsPipeline.create();
+    singleton.basic_pipeline = try allocator.create(GraphicsPipeline);
+    singleton.basic_pipeline.* = try GraphicsPipeline.create(allocator);
 }
 
 pub fn deinit(self: *const Self) void {
@@ -448,7 +347,7 @@ pub fn deinit(self: *const Self) void {
     // self.instance.destroyInstance(&vk_allocation_callbacks);
 }
 
-pub fn draw(self: *Self, mesh: Mesh) !void {
+pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
     try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
@@ -483,6 +382,7 @@ pub fn draw(self: *Self, mesh: Mesh) !void {
     command_buffer.beginRenderPass(&render_pass_begin_info, .@"inline");
 
     command_buffer.bindPipeline(.graphics, self.basic_pipeline.pipeline);
+    command_buffer.bindDescriptorSets(.graphics, self.basic_pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
 
     command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});

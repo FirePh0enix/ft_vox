@@ -4,7 +4,7 @@ const vma = @import("vma");
 const zm = @import("zm");
 const Renderer = @import("render/Renderer.zig");
 
-const Buffer = Renderer.Buffer;
+const Buffer = @import("render/Buffer.zig");
 const Vec3 = zm.Vec3f;
 const Mat4 = zm.Mat4f;
 const Self = @This();

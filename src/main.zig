@@ -5,6 +5,8 @@ const builtin = @import("builtin");
 
 const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
+const Image = @import("render/Image.zig");
+const Material = @import("Material.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -54,6 +56,9 @@ pub fn main() !void {
         .{ 0.0, 1.0 },
     });
 
+    const image = try Image.createFromFile(allocator, "assets/textures/None.png");
+    const material = try Material.init(image, Renderer.singleton.basic_pipeline);
+
     while (running) {
         var event: sdl.SDL_Event = undefined;
 
@@ -63,7 +68,7 @@ pub fn main() !void {
             }
         }
 
-        try Renderer.singleton.draw(mesh);
+        try Renderer.singleton.draw(mesh, material);
     }
 
     // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();

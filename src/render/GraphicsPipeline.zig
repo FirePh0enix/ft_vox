@@ -6,14 +6,65 @@ const Self = @This();
 const Renderer = @import("Renderer.zig");
 const Device = Renderer.Device;
 const Mesh = @import("../Mesh.zig");
+const Allocator = std.mem.Allocator;
 
-pipeline: vk.Pipeline = .null_handle,
-layout: vk.PipelineLayout = .null_handle,
+pipeline: vk.Pipeline,
+layout: vk.PipelineLayout,
+descriptor_pool: MaterialDescriptorPool,
+
+pub const MaterialDescriptorPool = struct {
+    pools: std.ArrayList(vk.DescriptorPool),
+    count: usize,
+    descriptor_set_layout: vk.DescriptorSetLayout,
+
+    const pool_size: usize = 16;
+
+    pub fn init(allocator: Allocator) !MaterialDescriptorPool {
+        // TODO: Each pipeline should define its own descriptor set layout, bindings should not be harcoded.
+
+        const bindings: []const vk.DescriptorSetLayoutBinding = &.{
+            vk.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .stage_flags = .{ .fragment_bit = true }, .p_immutable_samplers = null },
+        };
+        const descriptor_set_layout = try Renderer.singleton.device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
+            .binding_count = @intCast(bindings.len),
+            .p_bindings = bindings.ptr,
+        }, null);
+
+        return .{
+            .pools = std.ArrayList(vk.DescriptorPool).init(allocator),
+            .count = 0,
+            .descriptor_set_layout = descriptor_set_layout,
+        };
+    }
+
+    pub fn createDescriptorSet(self: *MaterialDescriptorPool) !vk.DescriptorSet {
+        if (self.count >= self.pools.items.len * pool_size) {
+            // TODO: Should probably allocate as much of each bindings.
+
+            const sizes: []const vk.DescriptorPoolSize = &.{.{ .type = .combined_image_sampler, .descriptor_count = pool_size }};
+            const pool = try Renderer.singleton.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+                .pool_size_count = @intCast(sizes.len),
+                .p_pool_sizes = sizes.ptr,
+                .max_sets = 1,
+            }, null);
+
+            try self.pools.append(pool);
+        }
+
+        const pool: vk.DescriptorPool = self.pools.items[self.count / pool_size];
+        self.count += 1;
+
+        var descriptor_set: vk.DescriptorSet = undefined;
+        try Renderer.singleton.device.allocateDescriptorSets(&vk.DescriptorSetAllocateInfo{ .descriptor_pool = pool, .descriptor_set_count = 1, .p_set_layouts = @ptrCast(&self.descriptor_set_layout) }, @ptrCast(&descriptor_set));
+
+        return descriptor_set;
+    }
+};
 
 const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
 const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
 
-pub fn create() !Self {
+pub fn create(allocator: Allocator) !Self {
     const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
         .{
             .stage = .{ .vertex_bit = true },
@@ -95,9 +146,14 @@ pub fn create() !Self {
         vk.PushConstantRange{ .offset = 0, .size = @sizeOf(Mesh.PushConstants), .stage_flags = .{ .vertex_bit = true } },
     };
 
+    const descriptor_pool = try MaterialDescriptorPool.init(allocator);
+
+    // TODO: Everything related to descriptor pools should be reworked to allow for customization, maybe by introducing a `Shader`
+    //       type to configure everything from input bindings, descriptor set layouts and push constants.
+
     const layout_info: vk.PipelineLayoutCreateInfo = .{
-        .set_layout_count = 0,
-        .p_set_layouts = null,
+        .set_layout_count = 1,
+        .p_set_layouts = @ptrCast(&descriptor_pool.descriptor_set_layout),
         .push_constant_range_count = @intCast(push_constants.len),
         .p_push_constant_ranges = push_constants.ptr,
     };
@@ -124,10 +180,12 @@ pub fn create() !Self {
 
     var pipeline: vk.Pipeline = .null_handle;
     _ = try Renderer.singleton.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&pipeline_info), null, @ptrCast(&pipeline));
+    errdefer Renderer.singleton.device.destroyPipeline(pipeline, null);
 
     return .{
         .pipeline = pipeline,
         .layout = pipeline_layout,
+        .descriptor_pool = descriptor_pool,
     };
 }
 

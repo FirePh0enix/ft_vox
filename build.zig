@@ -27,7 +27,7 @@ pub fn build(b: *Build) void {
     exe.root_module.addImport("vulkan", vulkan);
 
     if (target.result.os.tag == .macos) {
-        // On macOS we need to link with MoltenVK.
+        // On macOS we need to install MoltenVK at the correct location.
         const moltenvk = b.dependency("moltenvk", .{});
 
         const install_icd = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"), "vulkan/icd.d/MoltenVK_icd.json");

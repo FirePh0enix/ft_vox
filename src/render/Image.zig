@@ -6,13 +6,13 @@ const zigimg = @import("zigimg");
 const Renderer = @import("Renderer.zig");
 const Self = @This();
 const Allocator = std.mem.Allocator;
+const Buffer = @import("Buffer.zig");
 
 image: vk.Image,
 image_view: vk.ImageView,
 allocation: vma.VmaAllocation,
 width: u32,
 height: u32,
-sampler: vk.Sampler,
 
 pub fn create(
     width: u32,
@@ -49,7 +49,7 @@ pub fn create(
         .image = image,
         .view_type = .@"2d",
         .format = format,
-        .components = .{},
+        .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
         .subresource_range = .{
             .aspect_mask = .{ .color_bit = true },
             .base_array_layer = 0,
@@ -60,66 +60,54 @@ pub fn create(
     }, null);
     errdefer Renderer.singleton.device.destroyImageView(image_view, null);
 
-    const sampler = try Renderer.singleton.device.createSampler(&vk.SamplerCreateInfo{
-        .mag_filter = .linear, // Linear is best for pixel art and voxels.
-        .min_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-        .mip_lod_bias = 0.0,
-        .anisotropy_enable = vk.FALSE, // TODO: What is this
-        .max_anisotropy = 0.0,
-        .compare_enable = vk.FALSE,
-        .compare_op = .equal,
-        .min_lod = 0.0,
-        .max_lod = 0.0,
-        .border_color = .int_opaque_black,
-        .unnormalized_coordinates = vk.FALSE,
-    }, null);
-
     return .{
         .image = image,
+        .image_view = image_view,
         .allocation = alloc,
         .width = width,
         .height = height,
-
-        .image_view = image_view,
-        .sampler = sampler,
     };
 }
 
 pub fn createFromFile(
     allocator: Allocator,
     path: []const u8,
-    tiling: vk.ImageTiling,
-    usage: vk.ImageUsageFlags,
 ) !Self {
-    const image_data = try zigimg.Image.fromFilePath(allocator, path);
+    var image_data = try zigimg.Image.fromFilePath(allocator, path);
     defer image_data.deinit();
 
     const width: u32 = @intCast(image_data.width);
     const height: u32 = @intCast(image_data.height);
 
     const vk_format: vk.Format = switch (image_data.pixelFormat()) {
-        .rgb24 => vk.Format.r8g8b8_sint,
-        .rgb32 => vk.Format.r8g8b8a8_sint,
-        else => error.FormatNotSupported,
+        .rgb24 => vk.Format.r8g8b8_srgb,
+        .rgba32 => vk.Format.r8g8b8a8_srgb,
+        else => return error.FormatNotSupported,
     };
 
-    const image = try create(width, height, vk_format, tiling, usage);
-    image.store(image_data.rawBytes());
+    var image = try create(width, height, vk_format, .optimal, .{ .sampled_bit = true, .transfer_dst_bit = true });
+    errdefer image.deinit();
+
+    try image.transferLayout(.undefined, .transfer_dst_optimal);
+    try image.store(image_data.rawBytes());
+    try image.transferLayout(.transfer_dst_optimal, .shader_read_only_optimal);
+
+    return image;
 }
 
-pub fn store(self: *Self, data: []const u8) void {
-    var staging_buffer = try Renderer.Buffer.create(self.size, .{ .transfer_src_bit = true }, .cpu_to_gpu);
+pub fn deinit(self: *const Self) void {
+    Renderer.singleton.device.destroyImageView(self.image_view, null);
+}
+
+pub fn store(self: *Self, data: []const u8) !void {
+    var staging_buffer = try Buffer.create(data.len, .{ .transfer_src_bit = true }, .cpu_to_gpu);
     defer staging_buffer.deinit();
 
     {
         const map_data = try staging_buffer.map();
         defer staging_buffer.unmap();
 
-        const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..self.size];
+        const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..data.len];
         @memcpy(map_data, data_bytes);
     }
 
@@ -141,7 +129,7 @@ pub fn store(self: *Self, data: []const u8) void {
         },
     };
 
-    Renderer.singleton.buffer_transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, self.image, .{ .transfer_dst_optimal = true }, @intCast(regions.len), regions.ptr);
+    Renderer.singleton.buffer_transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, self.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
     try Renderer.singleton.buffer_transfer_command_buffer.endCommandBuffer();
 
     const submit_info: vk.SubmitInfo = .{
@@ -150,12 +138,11 @@ pub fn store(self: *Self, data: []const u8) void {
     };
 
     try Renderer.singleton.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
-    try Renderer.singleton.device.deviceWaitIdle();
+    try Renderer.singleton.graphics_queue.waitIdle();
 }
 
 fn transferLayout(
     self: *const Self,
-    format: vk.Format,
     old_layout: vk.ImageLayout,
     new_layout: vk.ImageLayout,
 ) !void {
@@ -163,10 +150,10 @@ fn transferLayout(
 
     try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{});
 
-    var src_stage: vk.PipelineStageFlags = undefined;
-    var dst_stage: vk.PipelineStageFlags = undefined;
+    var src_stage_mask: vk.PipelineStageFlags = undefined;
+    var dst_stage_mask: vk.PipelineStageFlags = undefined;
 
-    const barrier: vk.ImageMemoryBarrier = .{
+    var barrier: vk.ImageMemoryBarrier = .{
         .src_access_mask = .{},
         .dst_access_mask = .{},
         .old_layout = old_layout,
@@ -179,25 +166,34 @@ fn transferLayout(
             .base_mip_level = 0,
             .level_count = 1,
         },
+        .src_queue_family_index = 0,
+        .dst_queue_family_index = 0,
     };
 
     if (old_layout == .undefined and new_layout == .transfer_dst_optimal) {
         barrier.src_access_mask = .{};
         barrier.dst_access_mask = .{ .transfer_write_bit = true };
 
-        src_stage = .{ .top_of_pipe_bit = true };
-        dst_stage = .{ .transfer_bit = true };
+        src_stage_mask = .{ .top_of_pipe_bit = true };
+        dst_stage_mask = .{ .transfer_bit = true };
     } else if (old_layout == .transfer_dst_optimal and new_layout == .shader_read_only_optimal) {
         barrier.src_access_mask = .{ .transfer_write_bit = true };
         barrier.dst_access_mask = .{ .shader_read_bit = true };
 
-        src_stage = .{ .transfer_bit = true };
-        dst_stage = .{ .fragment_shader_bit = true };
+        src_stage_mask = .{ .transfer_bit = true };
+        dst_stage_mask = .{ .fragment_shader_bit = true };
     } else if (old_layout == .undefined and new_layout == .depth_stencil_attachment_optimal) {
         barrier.src_access_mask = .{};
         barrier.dst_access_mask = .{ .depth_stencil_attachment_write_bit = true };
 
-        src_stage = .{ .transfer_bit = true };
-        dst_stage = .{ .fragment_shader_bit = true };
+        src_stage_mask = .{ .transfer_bit = true };
+        dst_stage_mask = .{ .fragment_shader_bit = true };
+    } else {
+        return error.UnsupportedLayouts;
     }
+
+    command_buffer.pipelineBarrier(src_stage_mask, dst_stage_mask, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+    try command_buffer.endCommandBuffer();
+    try Renderer.singleton.graphics_queue.submit(1, &.{vk.SubmitInfo{ .command_buffer_count = 1, .p_command_buffers = @ptrCast(&command_buffer) }}, .null_handle);
+    try Renderer.singleton.graphics_queue.waitIdle();
 }
