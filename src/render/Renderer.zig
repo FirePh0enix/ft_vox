@@ -206,6 +206,7 @@ pub fn init(
     };
 
     const instance_info: vk.InstanceCreateInfo = .{
+        .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
         .p_application_info = &app_info,
         .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
         .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
