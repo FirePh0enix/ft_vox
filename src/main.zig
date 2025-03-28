@@ -7,6 +7,7 @@ const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
 const Image = @import("render/Image.zig");
 const Material = @import("Material.zig");
+const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -56,8 +57,11 @@ pub fn main() !void {
         .{ 0.0, 1.0 },
     });
 
+    const pipeline = try allocator.create(GraphicsPipeline);
+    pipeline.* = try GraphicsPipeline.create(allocator);
+
     const image = try Image.createFromFile(allocator, "assets/textures/None.png");
-    const material = try Material.init(image, Renderer.singleton.basic_pipeline);
+    const material = try Material.init(image, pipeline);
 
     while (running) {
         var event: sdl.SDL_Event = undefined;

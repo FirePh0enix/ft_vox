@@ -115,8 +115,8 @@ pub fn store(self: *Self, data: []const u8) !void {
     const begin_info: vk.CommandBufferBeginInfo = .{
         .flags = .{ .one_time_submit_bit = true },
     };
-    try Renderer.singleton.buffer_transfer_command_buffer.resetCommandBuffer(.{});
-    try Renderer.singleton.buffer_transfer_command_buffer.beginCommandBuffer(&begin_info);
+    try Renderer.singleton.transfer_command_buffer.resetCommandBuffer(.{});
+    try Renderer.singleton.transfer_command_buffer.beginCommandBuffer(&begin_info);
 
     const regions: []const vk.BufferImageCopy = &.{
         vk.BufferImageCopy{
@@ -129,12 +129,12 @@ pub fn store(self: *Self, data: []const u8) !void {
         },
     };
 
-    Renderer.singleton.buffer_transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, self.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
-    try Renderer.singleton.buffer_transfer_command_buffer.endCommandBuffer();
+    Renderer.singleton.transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, self.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
+    try Renderer.singleton.transfer_command_buffer.endCommandBuffer();
 
     const submit_info: vk.SubmitInfo = .{
         .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&Renderer.singleton.buffer_transfer_command_buffer),
+        .p_command_buffers = @ptrCast(&Renderer.singleton.transfer_command_buffer),
     };
 
     try Renderer.singleton.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
@@ -146,7 +146,7 @@ fn transferLayout(
     old_layout: vk.ImageLayout,
     new_layout: vk.ImageLayout,
 ) !void {
-    const command_buffer = Renderer.singleton.buffer_transfer_command_buffer;
+    const command_buffer = Renderer.singleton.transfer_command_buffer;
 
     try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{});
 

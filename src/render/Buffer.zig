@@ -66,19 +66,19 @@ pub fn store(self: *Self, comptime T: type, data: []const T) !void {
     const begin_info: vk.CommandBufferBeginInfo = .{
         .flags = .{ .one_time_submit_bit = true },
     };
-    try Renderer.singleton.buffer_transfer_command_buffer.resetCommandBuffer(.{});
-    try Renderer.singleton.buffer_transfer_command_buffer.beginCommandBuffer(&begin_info);
+    try Renderer.singleton.transfer_command_buffer.resetCommandBuffer(.{});
+    try Renderer.singleton.transfer_command_buffer.beginCommandBuffer(&begin_info);
 
     const regions: []const vk.BufferCopy = &.{
         vk.BufferCopy{ .src_offset = 0, .dst_offset = 0, .size = self.size },
     };
 
-    Renderer.singleton.buffer_transfer_command_buffer.copyBuffer(staging_buffer.buffer, self.buffer, @intCast(regions.len), regions.ptr);
-    try Renderer.singleton.buffer_transfer_command_buffer.endCommandBuffer();
+    Renderer.singleton.transfer_command_buffer.copyBuffer(staging_buffer.buffer, self.buffer, @intCast(regions.len), regions.ptr);
+    try Renderer.singleton.transfer_command_buffer.endCommandBuffer();
 
     const submit_info: vk.SubmitInfo = .{
         .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&Renderer.singleton.buffer_transfer_command_buffer),
+        .p_command_buffers = @ptrCast(&Renderer.singleton.transfer_command_buffer),
     };
 
     try Renderer.singleton.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);

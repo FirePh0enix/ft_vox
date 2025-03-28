@@ -48,12 +48,8 @@ swapchain_format: vk.SurfaceFormatKHR = undefined,
 render_pass: vk.RenderPass = .null_handle,
 command_pool: vk.CommandPool,
 
-graphics_queue_index: u32,
 graphics_queue: Queue,
-present_queue_index: u32,
-present_queue: Queue,
-
-basic_pipeline: *GraphicsPipeline = undefined,
+compute_queue: Queue,
 
 current_frame: usize = 0,
 command_buffers: [max_frames_in_flight]CommandBuffer,
@@ -62,7 +58,7 @@ render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
 in_flight_fences: [max_frames_in_flight]vk.Fence,
 
 /// Buffer used when transfering data from buffer to buffer.
-buffer_transfer_command_buffer: CommandBuffer,
+transfer_command_buffer: CommandBuffer,
 
 vma_allocator: VmaAllocator,
 
@@ -76,10 +72,21 @@ pub const InitError = error{
     /// No suitable device found to run the app.
     NoDevice,
 
-    /// Missing Graphics or Present Queue.
+    /// Missing Graphics queue.
     NoGraphicsQueue,
 
+    /// Missing Compute queue.
+    NoComputeQueue,
+
+    /// The graphics is missing presentation support.
+    NoPresentationSupport,
+
     Internal,
+};
+
+pub const QueueInfo = struct {
+    graphics_index: ?u32 = null,
+    compute_index: ?u32 = null,
 };
 
 var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
@@ -103,6 +110,9 @@ pub fn init(
         .engine_version = @bitCast(vk.makeApiVersion(0, 0, 0, 0)),
     };
 
+    var validation_layers: std.ArrayList([*:0]const u8) = .init(allocator);
+    defer validation_layers.deinit();
+
     const instance_info: vk.InstanceCreateInfo = .{
         .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
         .p_application_info = &app_info,
@@ -118,6 +128,14 @@ pub fn init(
     const instance = Instance.init(instance_handle, &instance_wrapper);
     errdefer instance.destroyInstance(null);
 
+    // Create the surface
+    var sdl_surface: sdl.VkSurfaceKHR = undefined;
+    const sdl_instance: sdl.VkInstance = @ptrFromInt(@as(usize, @intFromEnum(instance.handle)));
+    _ = sdl.SDL_Vulkan_CreateSurface(window, sdl_instance, null, &sdl_surface);
+    const surface: vk.SurfaceKHR = @enumFromInt(@as(usize, @intFromPtr(sdl_surface)));
+    errdefer instance.destroySurfaceKHR(surface, null);
+
+    // Select the best physical device.
     const required_features: vk.PhysicalDeviceFeatures = .{};
     const optional_features: vk.PhysicalDeviceFeatures = .{};
     const required_extensions: []const [*:0]const u8 = &.{
@@ -129,11 +147,10 @@ pub fn init(
         vk.extensions.khr_ray_tracing_pipeline.name.ptr,
     };
 
-    // Select the best physical device.
     const physical_devices = try instance.enumeratePhysicalDevicesAlloc(allocator);
     defer allocator.free(physical_devices);
 
-    const physical_device_with_info = (try getBestDevice(allocator, instance, physical_devices, required_features, optional_features, required_extensions, optional_extensions)) orelse return InitError.NoDevice;
+    const physical_device_with_info = (try getBestDevice(allocator, instance, surface, physical_devices, required_features, optional_features, required_extensions, optional_extensions)) orelse return InitError.NoDevice;
     const physical_device = physical_device_with_info.physical_device;
     const device_properties = instance.getPhysicalDeviceProperties(physical_device);
 
@@ -147,45 +164,21 @@ pub fn init(
         if (@field(features, field.name)) std.log.info("Feature `{s}` is supported", .{field.name});
     }
 
-    // Create the surface
-    var sdl_surface: sdl.VkSurfaceKHR = undefined;
-    const sdl_instance: sdl.VkInstance = @ptrFromInt(@as(usize, @intFromEnum(instance.handle)));
-    _ = sdl.SDL_Vulkan_CreateSurface(window, sdl_instance, null, &sdl_surface);
-    const surface: vk.SurfaceKHR = @enumFromInt(@as(usize, @intFromPtr(sdl_surface)));
-    errdefer instance.destroySurfaceKHR(surface, null);
-
     // Create queues
     const queue_properties_list = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(physical_device, allocator);
     defer allocator.free(queue_properties_list);
 
-    var graphics_queue_maybe: ?u32 = null;
-    var present_queue_maybe: ?u32 = null;
-
-    for (queue_properties_list, 0..queue_properties_list.len) |queue_properties, index| {
-        if (queue_properties.queue_flags.graphics_bit) {
-            graphics_queue_maybe = @intCast(index);
-        }
-
-        const present_support = try instance.getPhysicalDeviceSurfaceSupportKHR(physical_device, @intCast(index), surface) != 0;
-
-        if (present_support) {
-            present_queue_maybe = @intCast(index);
-        }
-    }
-
     // Create the device.
-    const graphics_queue_index = if (graphics_queue_maybe) |v| v else return InitError.NoGraphicsQueue;
-    const present_queue_index = if (present_queue_maybe) |v| v else return InitError.NoGraphicsQueue;
     const queue_priorities: []const f32 = &.{1.0};
 
     const queue_infos: []const vk.DeviceQueueCreateInfo = &.{
         vk.DeviceQueueCreateInfo{
-            .queue_family_index = graphics_queue_index,
+            .queue_family_index = physical_device_with_info.queue_info.graphics_index orelse return InitError.NoGraphicsQueue,
             .queue_count = queue_priorities.len,
             .p_queue_priorities = queue_priorities.ptr,
         },
         vk.DeviceQueueCreateInfo{
-            .queue_family_index = present_queue_index,
+            .queue_family_index = physical_device_with_info.queue_info.compute_index orelse return InitError.NoComputeQueue,
             .queue_count = queue_priorities.len,
             .p_queue_priorities = queue_priorities.ptr,
         },
@@ -238,16 +231,15 @@ pub fn init(
 
     const device = Device.init(device_handle, &device_wrapper);
 
-    const graphics_queue = device.getDeviceQueue(graphics_queue_index, 0);
-    const present_queue = device.getDeviceQueue(present_queue_index, 0);
+    const graphics_queue = device.getDeviceQueue(physical_device_with_info.queue_info.graphics_index orelse 0, 0);
+    const compute_queue = device.getDeviceQueue(physical_device_with_info.queue_info.compute_index orelse 0, 0);
 
     std.debug.assert(graphics_queue != .null_handle);
-    std.debug.assert(present_queue != .null_handle);
 
     // Allocate command buffers
     const pool_info: vk.CommandPoolCreateInfo = .{
         .flags = .{ .reset_command_buffer_bit = true },
-        .queue_family_index = graphics_queue_index,
+        .queue_family_index = physical_device_with_info.queue_info.graphics_index orelse 0,
     };
 
     const command_pool = try device.createCommandPool(&pool_info, null);
@@ -304,17 +296,15 @@ pub fn init(
         .command_buffer_count = 1,
     };
 
-    var buffer_transfer_command_buffer_handle: vk.CommandBuffer = undefined;
-    try device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&buffer_transfer_command_buffer_handle));
+    var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&transfer_command_buffer_handle));
 
     const self: Self = .{
         .allocator = allocator,
         .instance = instance,
         .device = device,
-        .graphics_queue_index = graphics_queue_index,
         .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
-        .present_queue_index = present_queue_index,
-        .present_queue = Queue.init(graphics_queue, &device_wrapper),
+        .compute_queue = Queue.init(compute_queue, &device_wrapper),
         .surface = surface,
         .physical_device = physical_device,
         .command_pool = command_pool,
@@ -327,13 +317,11 @@ pub fn init(
         .in_flight_fences = in_flight_fences,
 
         .vma_allocator = vma_allocator,
-        .buffer_transfer_command_buffer = CommandBuffer.init(buffer_transfer_command_buffer_handle, &device_wrapper),
+        .transfer_command_buffer = CommandBuffer.init(transfer_command_buffer_handle, &device_wrapper),
     };
     singleton = self;
 
     try singleton.createSwapchain();
-    singleton.basic_pipeline = try allocator.create(GraphicsPipeline);
-    singleton.basic_pipeline.* = try GraphicsPipeline.create(allocator);
 }
 
 pub fn deinit(self: *const Self) void {
@@ -381,8 +369,8 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
 
     command_buffer.beginRenderPass(&render_pass_begin_info, .@"inline");
 
-    command_buffer.bindPipeline(.graphics, self.basic_pipeline.pipeline);
-    command_buffer.bindDescriptorSets(.graphics, self.basic_pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
+    command_buffer.bindPipeline(.graphics, material.pipeline.pipeline);
+    command_buffer.bindDescriptorSets(.graphics, material.pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
 
     command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
@@ -395,7 +383,7 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
         .camera_matrix = camera_matrix.transpose().data,
     };
 
-    command_buffer.pushConstants(self.basic_pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
+    command_buffer.pushConstants(material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
 
     const viewport: vk.Viewport = .{
         .x = 0.0,
@@ -494,14 +482,6 @@ fn createSwapchain(self: *Self) !void {
         .clipped = vk.TRUE,
         .old_swapchain = self.swapchain,
     };
-
-    const queue_indices: []const u32 = &.{ self.graphics_queue_index, self.present_queue_index };
-
-    if (self.present_queue_index != self.graphics_queue_index) {
-        swapchain_info.image_sharing_mode = .concurrent;
-        swapchain_info.queue_family_index_count = @intCast(queue_indices.len);
-        swapchain_info.p_queue_family_indices = queue_indices.ptr;
-    }
 
     const swapchain = try self.device.createSwapchainKHR(&swapchain_info, null);
     errdefer self.device.destroySwapchainKHR(swapchain, null);
@@ -639,6 +619,7 @@ const DeviceWithInfo = struct {
     properties: vk.PhysicalDeviceProperties,
     features: vk.PhysicalDeviceFeatures,
     extensions: []const vk.ExtensionProperties,
+    queue_info: QueueInfo,
 
     pub fn deinit(self: *const DeviceWithInfo, allocator: Allocator) void {
         allocator.free(self.extensions);
@@ -687,6 +668,7 @@ fn calculateDeviceScore(
 fn getBestDevice(
     allocator: Allocator,
     instance: Instance,
+    surface: vk.SurfaceKHR,
     devices: []const vk.PhysicalDevice,
     required_features: vk.PhysicalDeviceFeatures,
     optional_features: vk.PhysicalDeviceFeatures,
@@ -699,9 +681,19 @@ fn getBestDevice(
     for (devices) |device| {
         const properties = instance.getPhysicalDeviceProperties(device);
         const features = instance.getPhysicalDeviceFeatures(device);
+
         const extensions = try instance.enumerateDeviceExtensionPropertiesAlloc(device, null, allocator);
+        errdefer allocator.free(extensions);
+
+        const queue_properties = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
+        errdefer allocator.free(queue_properties);
 
         const score = calculateDeviceScore(properties, features, required_features, optional_features, extensions, required_extensions, optional_extensions);
+        const queue_info = findQueues(instance, device, surface, queue_properties) catch {
+            allocator.free(extensions);
+            allocator.free(queue_properties);
+            continue;
+        };
 
         if (score > max_score) {
             if (best_device) |bd| bd.deinit(allocator);
@@ -713,7 +705,11 @@ fn getBestDevice(
                 .properties = properties,
                 .features = features,
                 .extensions = extensions,
+                .queue_info = queue_info,
             };
+        } else {
+            allocator.free(extensions);
+            allocator.free(queue_properties);
         }
     }
 
@@ -728,4 +724,28 @@ fn containsExtension(extensions: []const vk.ExtensionProperties, extension: [*:0
             return true;
     }
     return false;
+}
+
+fn findQueues(
+    instance: Instance,
+    device: vk.PhysicalDevice,
+    surface: vk.SurfaceKHR,
+    properties: []const vk.QueueFamilyProperties,
+) !QueueInfo {
+    var queue: QueueInfo = .{};
+
+    for (properties, 0..properties.len) |queue_properties, index| {
+        if (queue_properties.queue_flags.graphics_bit) {
+            queue.graphics_index = @intCast(index);
+
+            // All graphics queue supports presentation, some compute queues could also support it.
+            const present_support = try instance.getPhysicalDeviceSurfaceSupportKHR(device, @intCast(index), surface) != 0;
+
+            if (!present_support) return error.NoGraphicsQueue;
+        } else if (queue_properties.queue_flags.compute_bit) {
+            queue.compute_index = @intCast(index);
+        }
+    }
+
+    return queue;
 }
