@@ -2,6 +2,7 @@ const std = @import("std");
 const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
+const console = @import("console.zig");
 
 const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
@@ -23,7 +24,7 @@ pub fn main() !void {
     }
     // defer sdl.SDL_Quit();
 
-    const window = sdl.SDL_CreateWindow("ft_vox", 1280, 720, sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_HIDDEN) orelse {
+    const window = sdl.SDL_CreateWindow("ft_vox", 1280, 720, sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_HIDDEN | sdl.SDL_WINDOW_RESIZABLE) orelse {
         std.log.err("Create window failed", .{});
         return;
     };
@@ -32,7 +33,7 @@ pub fn main() !void {
     var instance_extensions_count: u32 = undefined;
     const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
 
-    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count) catch |e| {
+    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count, .{ .vsync = .off }) catch |e| {
         std.log.err("Failed to initialize vulkan", .{});
         return e;
     };
@@ -41,6 +42,7 @@ pub fn main() !void {
     _ = sdl.SDL_ShowWindow(window);
 
     var running = true;
+    var fullscreen = false;
 
     const mesh = try Mesh.init(u16, &.{
         0, 1, 2,
@@ -67,12 +69,26 @@ pub fn main() !void {
         var event: sdl.SDL_Event = undefined;
 
         while (sdl.SDL_PollEvent(&event)) {
-            if (event.type == sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                running = false;
+            switch (event.type) {
+                sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
+                sdl.SDL_EVENT_WINDOW_RESIZED => try Renderer.singleton.resize(),
+                sdl.SDL_EVENT_KEY_DOWN => {
+                    if (event.key.key == sdl.SDLK_F) {
+                        _ = sdl.SDL_SetWindowFullscreen(window, !fullscreen);
+                        fullscreen = !fullscreen;
+                        try Renderer.singleton.resize();
+                    }
+                },
+                else => {},
             }
         }
 
         try Renderer.singleton.draw(mesh, material);
+
+        console.clear();
+        console.moveToStart();
+
+        Renderer.singleton.printDebugStats();
     }
 
     // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();

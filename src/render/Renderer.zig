@@ -15,6 +15,8 @@ const Material = @import("../Material.zig");
 
 pub const apis: []const vk.ApiInfo = &.{
     vk.features.version_1_0,
+    vk.features.version_1_1,
+    vk.features.version_1_2,
     vk.extensions.khr_surface,
     vk.extensions.khr_swapchain,
 };
@@ -44,9 +46,15 @@ swapchain_images: []vk.Image = &.{},
 swapchain_image_views: []vk.ImageView = &.{},
 swapchain_framebuffers: []vk.Framebuffer = &.{},
 swapchain_extent: vk.Extent2D = .{ .width = 0, .height = 0 },
-swapchain_format: vk.SurfaceFormatKHR = undefined,
-render_pass: vk.RenderPass = .null_handle,
+render_pass: vk.RenderPass,
 command_pool: vk.CommandPool,
+
+surface_capabilities: vk.SurfaceCapabilitiesKHR,
+surface_format: vk.SurfaceFormatKHR,
+surface_present_modes: []const vk.PresentModeKHR,
+
+timestamp_query_pool: vk.QueryPool,
+primitives_query_pool: vk.QueryPool,
 
 graphics_queue: Queue,
 compute_queue: Queue,
@@ -63,9 +71,29 @@ transfer_command_buffer: CommandBuffer,
 vma_allocator: VmaAllocator,
 
 features: Features,
+settings: Settings,
+statistics: Statistics = .{},
 
 pub const Features = struct {
     ray_tracing: bool = false,
+};
+
+pub const VSyncMode = enum {
+    off,
+    performance,
+    smooth,
+    efficient,
+};
+
+pub const Settings = struct {
+    vsync: VSyncMode,
+};
+
+pub const Statistics = struct {
+    gpu_time: f32 = 0.0,
+
+    /// Number of primitives drawn during last frame.
+    primitives: u64 = 0,
 };
 
 pub const InitError = error{
@@ -100,6 +128,7 @@ pub fn init(
     get_proc_addr: *const GetInstanceProcAddrFn,
     instance_extensions: ?[*]const ?[*:0]const u8,
     instance_extensions_count: u32,
+    settings: Settings,
 ) !void {
     const vkb = try Base.load(get_proc_addr);
 
@@ -147,6 +176,11 @@ pub fn init(
         vk.extensions.khr_ray_tracing_pipeline.name.ptr,
     };
 
+    // According to gpuinfo support for hostQueryReset this is 99.5%.
+    const host_query_reset_features: vk.PhysicalDeviceHostQueryResetFeatures = .{
+        .host_query_reset = vk.TRUE,
+    };
+
     const physical_devices = try instance.enumeratePhysicalDevicesAlloc(allocator);
     defer allocator.free(physical_devices);
 
@@ -164,9 +198,15 @@ pub fn init(
         if (@field(features, field.name)) std.log.info("Feature `{s}` is supported", .{field.name});
     }
 
-    // Create queues
-    const queue_properties_list = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(physical_device, allocator);
-    defer allocator.free(queue_properties_list);
+    // Query surface capabilities.
+    const surface_capabilities = try instance.getPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface);
+    // const surface_formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(physical_device, surface, allocator);
+    // errdefer allocator.free(surface_formats);
+
+    const surface_present_modes = try instance.getPhysicalDeviceSurfacePresentModesAllocKHR(physical_device, surface, allocator);
+    errdefer allocator.free(surface_present_modes);
+
+    const surface_format: vk.SurfaceFormatKHR = .{ .color_space = .srgb_nonlinear_khr, .format = .b8g8r8a8_srgb };
 
     // Create the device.
     const queue_priorities: []const f32 = &.{1.0};
@@ -221,6 +261,7 @@ pub fn init(
         .enabled_extension_count = @intCast(device_extensions.len),
         .pp_enabled_extension_names = device_extensions.ptr,
         .p_enabled_features = &device_features,
+        .p_next = @ptrCast(&host_query_reset_features),
     };
 
     const get_device_proc_addr: *const GetDeviceProcAddrFn = @ptrCast(instance_wrapper.dispatch.vkGetDeviceProcAddr);
@@ -299,193 +340,24 @@ pub fn init(
     var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
     try device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&transfer_command_buffer_handle));
 
-    const self: Self = .{
-        .allocator = allocator,
-        .instance = instance,
-        .device = device,
-        .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
-        .compute_queue = Queue.init(compute_queue, &device_wrapper),
-        .surface = surface,
-        .physical_device = physical_device,
-        .command_pool = command_pool,
-        .window = window,
-        .features = features,
+    const timestamp_query_pool = try device.createQueryPool(&vk.QueryPoolCreateInfo{
+        .pipeline_statistics = .{},
+        .query_type = .timestamp,
+        .query_count = max_frames_in_flight * 2,
+    }, null);
 
-        .command_buffers = command_buffers,
-        .image_available_semaphores = image_available_semaphores,
-        .render_finished_semaphores = render_finished_semaphores,
-        .in_flight_fences = in_flight_fences,
+    const primitives_query_pool = try device.createQueryPool(&vk.QueryPoolCreateInfo{
+        .pipeline_statistics = .{ .input_assembly_primitives_bit = true },
+        .query_type = .pipeline_statistics,
+        .query_count = max_frames_in_flight,
+    }, null);
 
-        .vma_allocator = vma_allocator,
-        .transfer_command_buffer = CommandBuffer.init(transfer_command_buffer_handle, &device_wrapper),
-    };
-    singleton = self;
+    for (0..max_frames_in_flight) |index| {
+        device.resetQueryPool(timestamp_query_pool, @intCast(index * 2), 2);
+        device.resetQueryPool(primitives_query_pool, @intCast(index), 1);
+    }
 
-    try singleton.createSwapchain();
-}
-
-pub fn deinit(self: *const Self) void {
-    self.device.deviceWaitIdle() catch {};
-
-    // TODO
-    // self.allocator.free(self.swapchain_image_views);
-    // self.allocator.free(self.swapchain_images);
-
-    // self.device.destroyDevice(&vk_allocation_callbacks);
-    // self.instance.destroyInstance(&vk_allocation_callbacks);
-}
-
-pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
-    _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
-    try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
-
-    const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
-    const image_index = image_index_result.image_index;
-
-    const command_buffer = self.command_buffers[self.current_frame];
-
-    try command_buffer.resetCommandBuffer(.{});
-
-    // Record the command buffer
-    const begin_info: vk.CommandBufferBeginInfo = .{
-        .flags = .{ .one_time_submit_bit = true },
-    };
-    try command_buffer.beginCommandBuffer(&begin_info);
-
-    const clear_color: vk.ClearValue = .{
-        .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } },
-    };
-
-    const render_pass_begin_info: vk.RenderPassBeginInfo = .{
-        .render_pass = self.render_pass,
-        .framebuffer = self.swapchain_framebuffers[image_index],
-        .render_area = .{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = self.swapchain_extent,
-        },
-        .clear_value_count = 1,
-        .p_clear_values = @ptrCast(&clear_color),
-    };
-
-    command_buffer.beginRenderPass(&render_pass_begin_info, .@"inline");
-
-    command_buffer.bindPipeline(.graphics, material.pipeline.pipeline);
-    command_buffer.bindDescriptorSets(.graphics, material.pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
-
-    command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
-    command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
-    command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
-
-    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, 1.0 };
-    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), 16.0 / 9.0, 0.01, 1000.0).multiply(zm.Mat4f.translationVec3(-camera_pos));
-
-    const constants: Mesh.PushConstants = .{
-        .camera_matrix = camera_matrix.transpose().data,
-    };
-
-    command_buffer.pushConstants(material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
-
-    const viewport: vk.Viewport = .{
-        .x = 0.0,
-        .y = 0.0,
-        .width = @floatFromInt(self.swapchain_extent.width),
-        .height = @floatFromInt(self.swapchain_extent.height),
-        .min_depth = 0.0,
-        .max_depth = 1.0,
-    };
-
-    command_buffer.setViewport(0, 1, @ptrCast(&viewport));
-
-    const scissor: vk.Rect2D = .{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = self.swapchain_extent,
-    };
-
-    command_buffer.setScissor(0, 1, @ptrCast(&scissor));
-
-    command_buffer.drawIndexed(@intCast(mesh.count), 1, 0, 0, 0);
-
-    command_buffer.endRenderPass();
-
-    try command_buffer.endCommandBuffer();
-
-    // Submit the frame
-    const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
-    const wait_stages: []const vk.PipelineStageFlags = &.{.{ .color_attachment_output_bit = true }};
-
-    const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
-
-    const submit_info: vk.SubmitInfo = .{
-        .wait_semaphore_count = @intCast(wait_semaphores.len),
-        .p_wait_semaphores = wait_semaphores.ptr,
-        .p_wait_dst_stage_mask = wait_stages.ptr,
-
-        .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&command_buffer),
-
-        .signal_semaphore_count = @intCast(signal_semaphores.len),
-        .p_signal_semaphores = signal_semaphores.ptr,
-    };
-
-    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
-
-    const present_info: vk.PresentInfoKHR = .{
-        .wait_semaphore_count = @intCast(signal_semaphores.len),
-        .p_wait_semaphores = signal_semaphores.ptr,
-        .swapchain_count = 1,
-        .p_swapchains = @ptrCast(&self.swapchain),
-        .p_image_indices = @ptrCast(&image_index),
-    };
-
-    _ = try self.graphics_queue.presentKHR(&present_info);
-
-    self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
-}
-
-fn createSwapchain(self: *Self) !void {
-    var width: i32 = undefined;
-    var height: i32 = undefined;
-    _ = sdl.SDL_GetWindowSize(self.window, &width, &height);
-
-    const surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface);
-    const surface_formats = try self.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(self.physical_device, self.surface, self.allocator);
-    defer self.allocator.free(surface_formats);
-
-    const surface_present_modes = try self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator);
-    defer self.allocator.free(surface_present_modes);
-
-    const surface_format: vk.SurfaceFormatKHR = .{ .color_space = .srgb_nonlinear_khr, .format = .b8g8r8a8_srgb };
-    const surface_present_mode: vk.PresentModeKHR = .fifo_khr;
-
-    const surface_extent: vk.Extent2D = .{
-        .width = @intCast(@max(surface_capabilities.min_image_extent.width, @as(u32, @intCast(width)))),
-        .height = @intCast(@max(surface_capabilities.min_image_extent.height, @as(u32, @intCast(height)))),
-    };
-
-    const image_count = if (surface_capabilities.max_image_count > 0 and surface_capabilities.min_image_count + 1 > surface_capabilities.max_image_count)
-        surface_capabilities.max_image_count
-    else
-        surface_capabilities.min_image_count + 1;
-
-    var swapchain_info: vk.SwapchainCreateInfoKHR = .{
-        .surface = self.surface,
-        .min_image_count = image_count,
-        .image_format = surface_format.format,
-        .image_color_space = surface_format.color_space,
-        .image_extent = surface_extent,
-        .image_array_layers = 1,
-        .image_usage = .{ .color_attachment_bit = true },
-        .image_sharing_mode = .exclusive,
-        .pre_transform = surface_capabilities.current_transform,
-        .composite_alpha = .{ .opaque_bit_khr = true },
-        .present_mode = surface_present_mode,
-        .clipped = vk.TRUE,
-        .old_swapchain = self.swapchain,
-    };
-
-    const swapchain = try self.device.createSwapchainKHR(&swapchain_info, null);
-    errdefer self.device.destroySwapchainKHR(swapchain, null);
-
+    // Create the color pass
     const color_attach: vk.AttachmentDescription = .{
         .format = surface_format.format,
         .samples = .{ .@"1_bit" = true },
@@ -526,8 +398,241 @@ fn createSwapchain(self: *Self) !void {
         .p_dependencies = @ptrCast(&dependency),
     };
 
-    const render_pass = try self.device.createRenderPass(&render_pass_info, null);
-    errdefer self.device.destroyRenderPass(render_pass, null);
+    const render_pass = try device.createRenderPass(&render_pass_info, null);
+    errdefer device.destroyRenderPass(render_pass, null);
+
+    const self: Self = .{
+        .allocator = allocator,
+        .instance = instance,
+        .device = device,
+        .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
+        .compute_queue = Queue.init(compute_queue, &device_wrapper),
+        .surface = surface,
+        .physical_device = physical_device,
+        .command_pool = command_pool,
+        .window = window,
+        .render_pass = render_pass,
+
+        .features = features,
+        .settings = settings,
+
+        .timestamp_query_pool = timestamp_query_pool,
+        .primitives_query_pool = primitives_query_pool,
+
+        .command_buffers = command_buffers,
+        .image_available_semaphores = image_available_semaphores,
+        .render_finished_semaphores = render_finished_semaphores,
+        .in_flight_fences = in_flight_fences,
+
+        .surface_capabilities = surface_capabilities,
+        .surface_present_modes = surface_present_modes,
+        .surface_format = surface_format,
+
+        .vma_allocator = vma_allocator,
+        .transfer_command_buffer = CommandBuffer.init(transfer_command_buffer_handle, &device_wrapper),
+    };
+    singleton = self;
+
+    try singleton.createSwapchain();
+}
+
+pub fn deinit(self: *const Self) void {
+    self.device.deviceWaitIdle() catch {};
+
+    self.allocator.free(self.surface_present_modes);
+
+    // TODO
+    // self.allocator.free(self.swapchain_image_views);
+    // self.allocator.free(self.swapchain_images);
+
+    // self.device.destroyDevice(&vk_allocation_callbacks);
+    // self.instance.destroyInstance(&vk_allocation_callbacks);
+}
+
+pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
+    _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
+    try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
+
+    const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
+    const image_index = image_index_result.image_index;
+
+    const command_buffer = self.command_buffers[self.current_frame];
+
+    try command_buffer.resetCommandBuffer(.{});
+
+    // Record the command buffer
+    try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
+        .flags = .{ .one_time_submit_bit = true },
+    });
+
+    // Store the timestamp before drawing.
+    command_buffer.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
+    command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2));
+
+    const clear_color: vk.ClearValue = .{
+        .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } },
+    };
+
+    const render_pass_begin_info: vk.RenderPassBeginInfo = .{
+        .render_pass = self.render_pass,
+        .framebuffer = self.swapchain_framebuffers[image_index],
+        .render_area = .{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = self.swapchain_extent,
+        },
+        .clear_value_count = 1,
+        .p_clear_values = @ptrCast(&clear_color),
+    };
+
+    command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
+    command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
+
+    command_buffer.beginRenderPass(&render_pass_begin_info, .@"inline");
+
+    command_buffer.bindPipeline(.graphics, material.pipeline.pipeline);
+    command_buffer.bindDescriptorSets(.graphics, material.pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
+
+    command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
+    command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
+    command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
+
+    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, 1.0 };
+    const aspect_ratio = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
+    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0).multiply(zm.Mat4f.translationVec3(-camera_pos));
+
+    const constants: Mesh.PushConstants = .{
+        .camera_matrix = camera_matrix.transpose().data,
+    };
+
+    command_buffer.pushConstants(material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
+
+    const viewport: vk.Viewport = .{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @floatFromInt(self.swapchain_extent.width),
+        .height = @floatFromInt(self.swapchain_extent.height),
+        .min_depth = 0.0,
+        .max_depth = 1.0,
+    };
+
+    command_buffer.setViewport(0, 1, @ptrCast(&viewport));
+
+    const scissor: vk.Rect2D = .{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = self.swapchain_extent,
+    };
+
+    command_buffer.setScissor(0, 1, @ptrCast(&scissor));
+
+    command_buffer.drawIndexed(@intCast(mesh.count), 1, 0, 0, 0);
+
+    command_buffer.endRenderPass();
+
+    command_buffer.endQuery(self.primitives_query_pool, 0);
+    command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
+
+    try command_buffer.endCommandBuffer();
+
+    // Submit the frame
+    const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
+    const wait_stages: []const vk.PipelineStageFlags = &.{.{ .color_attachment_output_bit = true }};
+
+    const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
+
+    const submit_info: vk.SubmitInfo = .{
+        .wait_semaphore_count = @intCast(wait_semaphores.len),
+        .p_wait_semaphores = wait_semaphores.ptr,
+        .p_wait_dst_stage_mask = wait_stages.ptr,
+
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast(&command_buffer),
+
+        .signal_semaphore_count = @intCast(signal_semaphores.len),
+        .p_signal_semaphores = signal_semaphores.ptr,
+    };
+
+    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
+
+    const present_info: vk.PresentInfoKHR = .{
+        .wait_semaphore_count = @intCast(signal_semaphores.len),
+        .p_wait_semaphores = signal_semaphores.ptr,
+        .swapchain_count = 1,
+        .p_swapchains = @ptrCast(&self.swapchain),
+        .p_image_indices = @ptrCast(&image_index),
+    };
+
+    _ = try self.graphics_queue.presentKHR(&present_info);
+
+    var timestamp_buffer: [2]u64 = .{ 0, 0 };
+    if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
+        self.statistics.gpu_time = @as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0;
+    }
+    self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
+
+    var primitives_count: u64 = 0;
+    if ((try self.device.getQueryPoolResults(self.primitives_query_pool, @intCast(self.current_frame), 1, @sizeOf(u64), @ptrCast(&primitives_count), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
+        self.statistics.primitives = primitives_count;
+    }
+    self.device.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
+
+    self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
+}
+
+pub fn printDebugStats(self: *const Self) void {
+    std.debug.print("GPU Time   = {d} ms\n", .{self.statistics.gpu_time});
+    std.debug.print("Primitives = {}\n", .{self.statistics.primitives});
+}
+
+fn createSwapchain(self: *Self) !void {
+    try self.device.deviceWaitIdle();
+
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    _ = sdl.SDL_GetWindowSize(self.window, &width, &height);
+
+    const surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface);
+    const surface_formats = try self.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(self.physical_device, self.surface, self.allocator);
+    defer self.allocator.free(surface_formats);
+
+    const surface_present_modes = try self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator);
+    defer self.allocator.free(surface_present_modes);
+
+    // Per the Vulkan spec only FIFO is guaranteed to be supported, so we fallback to this if others are not.
+    const surface_present_mode: vk.PresentModeKHR = switch (self.settings.vsync) {
+        .off => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .immediate_khr)) .immediate_khr else .fifo_khr,
+        .smooth => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .fifo_relaxed_khr)) .fifo_relaxed_khr else .fifo_khr,
+        .performance => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .mailbox_khr)) .mailbox_khr else .fifo_khr,
+        .efficient => .fifo_khr,
+    };
+
+    const surface_extent: vk.Extent2D = .{
+        .width = @intCast(@max(surface_capabilities.min_image_extent.width, @as(u32, @intCast(width)))),
+        .height = @intCast(@max(surface_capabilities.min_image_extent.height, @as(u32, @intCast(height)))),
+    };
+
+    const image_count = if (surface_capabilities.max_image_count > 0 and surface_capabilities.min_image_count + 1 > surface_capabilities.max_image_count)
+        surface_capabilities.max_image_count
+    else
+        surface_capabilities.min_image_count + 1;
+
+    var swapchain_info: vk.SwapchainCreateInfoKHR = .{
+        .surface = self.surface,
+        .min_image_count = image_count,
+        .image_format = self.surface_format.format,
+        .image_color_space = self.surface_format.color_space,
+        .image_extent = surface_extent,
+        .image_array_layers = 1,
+        .image_usage = .{ .color_attachment_bit = true },
+        .image_sharing_mode = .exclusive,
+        .pre_transform = surface_capabilities.current_transform,
+        .composite_alpha = .{ .opaque_bit_khr = true },
+        .present_mode = surface_present_mode,
+        .clipped = vk.TRUE,
+        .old_swapchain = self.swapchain,
+    };
+
+    const swapchain = try self.device.createSwapchainKHR(&swapchain_info, null);
+    errdefer self.device.destroySwapchainKHR(swapchain, null);
 
     const swapchain_images = try self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator);
     errdefer self.allocator.free(swapchain_images);
@@ -542,7 +647,7 @@ fn createSwapchain(self: *Self) !void {
         const image_view_info: vk.ImageViewCreateInfo = .{
             .image = image,
             .view_type = .@"2d",
-            .format = surface_format.format,
+            .format = self.surface_format.format,
             .components = .{
                 .r = .identity,
                 .g = .identity,
@@ -564,7 +669,7 @@ fn createSwapchain(self: *Self) !void {
         const attachments: []const vk.ImageView = &.{image_view};
 
         const framebuffer_info: vk.FramebufferCreateInfo = .{
-            .render_pass = render_pass,
+            .render_pass = self.render_pass,
             .attachment_count = @intCast(attachments.len),
             .p_attachments = attachments.ptr,
             .width = surface_extent.width,
@@ -581,26 +686,23 @@ fn createSwapchain(self: *Self) !void {
     self.swapchain_images = swapchain_images;
     self.swapchain_image_views = swapchain_image_views;
     self.swapchain_framebuffers = swapchain_framebuffers;
-    self.swapchain_format = surface_format;
     self.swapchain_extent = surface_extent;
-    self.render_pass = render_pass;
 }
 
 fn destroySwapchain(self: *const Self) void {
     if (self.swapchain != .null_handle) {
-        for (self.swapchain_image_views) |image_view| {
-            self.device.destroyImageView(image_view, null);
-        }
-
         for (self.swapchain_framebuffers) |framebuffer| {
             self.device.destroyFramebuffer(framebuffer, null);
+        }
+
+        for (self.swapchain_image_views) |image_view| {
+            self.device.destroyImageView(image_view, null);
         }
 
         self.allocator.free(self.swapchain_images);
         self.allocator.free(self.swapchain_image_views);
         self.allocator.free(self.swapchain_framebuffers);
 
-        self.device.destroyRenderPass(self.render_pass, null);
         self.device.destroySwapchainKHR(self.swapchain, null);
     }
 }
@@ -612,6 +714,16 @@ pub fn createShaderModule(self: *const Self, spirv: [:0]align(4) const u8) Devic
     };
 
     return self.device.createShaderModule(&shader_info, null);
+}
+
+pub fn resize(self: *Self) !void {
+    try self.createSwapchain();
+}
+
+pub fn setVSyncMode(self: *Self, mode: VSyncMode) !void {
+    self.settings.vsync = mode;
+
+    try self.createSwapchain();
 }
 
 const DeviceWithInfo = struct {
