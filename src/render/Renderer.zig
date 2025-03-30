@@ -13,19 +13,11 @@ const GraphicsPipeline = @import("GraphicsPipeline.zig");
 const Buffer = @import("Buffer.zig");
 const Material = @import("../Material.zig");
 
-pub const apis: []const vk.ApiInfo = &.{
-    vk.features.version_1_0,
-    vk.features.version_1_1,
-    vk.features.version_1_2,
-    vk.extensions.khr_surface,
-    vk.extensions.khr_swapchain,
-};
-
-pub const Base = vk.BaseWrapper(apis);
-pub const Instance = vk.InstanceProxy(apis);
-pub const Device = vk.DeviceProxy(apis);
-pub const CommandBuffer = vk.CommandBufferProxy(apis);
-pub const Queue = vk.QueueProxy(apis);
+pub const Base = vk.BaseWrapper;
+pub const Instance = vk.InstanceProxy;
+pub const Device = vk.DeviceProxy;
+pub const CommandBuffer = vk.CommandBufferProxy;
+pub const Queue = vk.QueueProxy;
 
 const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () void;
 const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () void;
@@ -136,8 +128,8 @@ pub const QueueInfo = struct {
     compute_index: ?u32 = null,
 };
 
-var instance_wrapper: vk.InstanceWrapper(apis) = undefined;
-var device_wrapper: vk.DeviceWrapper(apis) = undefined;
+var instance_wrapper: vk.InstanceWrapper = undefined;
+var device_wrapper: vk.DeviceWrapper = undefined;
 
 pub var singleton: Self = undefined;
 
@@ -149,7 +141,7 @@ pub fn init(
     instance_extensions_count: u32,
     settings: Settings,
 ) !void {
-    const vkb = try Base.load(get_proc_addr);
+    const vkb = Base.load(get_proc_addr);
 
     // Create a vulkan instance
     const app_info: vk.ApplicationInfo = .{
@@ -175,7 +167,7 @@ pub fn init(
     };
 
     const instance_handle = try vkb.createInstance(&instance_info, null);
-    instance_wrapper = try vk.InstanceWrapper(apis).load(instance_handle, get_proc_addr);
+    instance_wrapper = .load(instance_handle, get_proc_addr);
 
     const instance = Instance.init(instance_handle, &instance_wrapper);
     errdefer instance.destroyInstance(null);
@@ -293,7 +285,7 @@ pub fn init(
 
     const device_handle = try instance.createDevice(physical_device, &device_info, null);
     // errdefer instance_wrapper.dispatch.vkDestroyDevice(device_handle, null);
-    device_wrapper = try .load(device_handle, get_device_proc_addr);
+    device_wrapper = .load(device_handle, get_device_proc_addr);
 
     const device = Device.init(device_handle, &device_wrapper);
 
