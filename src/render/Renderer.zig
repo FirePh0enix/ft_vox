@@ -76,6 +76,7 @@ statistics: Statistics = .{},
 
 pub const Features = struct {
     ray_tracing: bool = false,
+    vk_memory_budget: bool = false,
 };
 
 pub const VSyncMode = enum {
@@ -90,10 +91,28 @@ pub const Settings = struct {
 };
 
 pub const Statistics = struct {
-    gpu_time: f32 = 0.0,
+    prv_gpu_time: f32 = 0.0,
+    acc_gpu_time: f32 = 0.0,
+    min_gpu_time: f32 = std.math.inf(f32),
+    max_gpu_time: f32 = 0.0,
+
+    frames_recorded: usize = 0,
 
     /// Number of primitives drawn during last frame.
     primitives: u64 = 0,
+
+    pub fn putGpuTimeValue(self: *Statistics, value: f32) void {
+        self.prv_gpu_time = value;
+        if (value > self.max_gpu_time) self.max_gpu_time = value;
+        if (value < self.min_gpu_time) self.min_gpu_time = value;
+        self.acc_gpu_time += value;
+        self.frames_recorded += 1;
+    }
+
+    pub fn getAverageGpuTime(self: *const Statistics) f32 {
+        if (self.frames_recorded > 0) return self.acc_gpu_time / @as(f32, @floatFromInt(self.frames_recorded));
+        return 0;
+    }
 };
 
 pub const InitError = error{
@@ -142,13 +161,17 @@ pub fn init(
     var validation_layers: std.ArrayList([*:0]const u8) = .init(allocator);
     defer validation_layers.deinit();
 
+    var required_instance_extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, instance_extensions_count);
+    defer required_instance_extensions.deinit();
+    for (0..instance_extensions_count) |index| try required_instance_extensions.append(instance_extensions.?[index] orelse unreachable);
+
     const instance_info: vk.InstanceCreateInfo = .{
         .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
         .p_application_info = &app_info,
         .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
         .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
-        .enabled_extension_count = instance_extensions_count,
-        .pp_enabled_extension_names = @ptrCast(instance_extensions),
+        .enabled_extension_count = @intCast(required_instance_extensions.items.len),
+        .pp_enabled_extension_names = required_instance_extensions.items.ptr,
     };
 
     const instance_handle = try vkb.createInstance(&instance_info, null);
@@ -174,9 +197,12 @@ pub fn init(
         vk.extensions.khr_deferred_host_operations.name.ptr,
         vk.extensions.khr_acceleration_structure.name.ptr,
         vk.extensions.khr_ray_tracing_pipeline.name.ptr,
+
+        vk.extensions.ext_memory_budget.name.ptr,
     };
 
     // According to gpuinfo support for hostQueryReset this is 99.5%.
+    // TODO: Probably better to set this features as optional since it is only used for debugging purpose.
     const host_query_reset_features: vk.PhysicalDeviceHostQueryResetFeatures = .{
         .host_query_reset = vk.TRUE,
     };
@@ -185,11 +211,14 @@ pub fn init(
     defer allocator.free(physical_devices);
 
     const physical_device_with_info = (try getBestDevice(allocator, instance, surface, physical_devices, required_features, optional_features, required_extensions, optional_extensions)) orelse return InitError.NoDevice;
+    defer physical_device_with_info.deinit(allocator);
+
     const physical_device = physical_device_with_info.physical_device;
     const device_properties = instance.getPhysicalDeviceProperties(physical_device);
 
     const features: Features = .{
         .ray_tracing = containsExtension(physical_device_with_info.extensions, vk.extensions.khr_ray_tracing_pipeline.name),
+        .vk_memory_budget = containsExtension(physical_device_with_info.extensions, vk.extensions.ext_memory_budget.name),
     };
 
     std.log.info("GPU selected: {s}", .{device_properties.device_name});
@@ -200,13 +229,11 @@ pub fn init(
 
     // Query surface capabilities.
     const surface_capabilities = try instance.getPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface);
-    // const surface_formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(physical_device, surface, allocator);
-    // errdefer allocator.free(surface_formats);
 
     const surface_present_modes = try instance.getPhysicalDeviceSurfacePresentModesAllocKHR(physical_device, surface, allocator);
     errdefer allocator.free(surface_present_modes);
 
-    const surface_format: vk.SurfaceFormatKHR = .{ .color_space = .srgb_nonlinear_khr, .format = .b8g8r8a8_srgb };
+    const surface_format = physical_device_with_info.surface_format;
 
     // Create the device.
     const queue_priorities: []const f32 = &.{1.0};
@@ -250,8 +277,6 @@ pub fn init(
 
         break :a device_features;
     };
-
-    physical_device_with_info.deinit(allocator); // free `physical_device_with_info.extensions`
 
     const device_info: vk.DeviceCreateInfo = .{
         .queue_create_info_count = @intCast(queue_infos.len),
@@ -320,7 +345,7 @@ pub fn init(
     };
 
     const allocator_info: vma.VmaAllocatorCreateInfo = .{
-        .flags = 0,
+        .flags = if (features.vk_memory_budget) vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT else 0,
         .vulkanApiVersion = @bitCast(vk.API_VERSION_1_2),
         .physicalDevice = @ptrFromInt(@as(usize, @intFromEnum(physical_device))),
         .device = @ptrFromInt(@as(usize, @intFromEnum(device_handle))),
@@ -565,7 +590,7 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
 
     var timestamp_buffer: [2]u64 = .{ 0, 0 };
     if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-        self.statistics.gpu_time = @as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0;
+        self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0);
     }
     self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
 
@@ -579,8 +604,21 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
 }
 
 pub fn printDebugStats(self: *const Self) void {
-    std.debug.print("GPU Time   = {d} ms\n", .{self.statistics.gpu_time});
-    std.debug.print("Primitives = {}\n", .{self.statistics.primitives});
+    // Calculate the total GPU memory allocated by VMA.
+    // TODO: Add other types of memory like swapchain images to the total.
+    // TODO: Print also CPU memory, including vulkan objects using allocation callbacks.
+    var total_bytes: usize = 0;
+
+    var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
+    vma.vmaGetHeapBudgets(self.vma_allocator, &budgets);
+    var index: usize = 0;
+    while (index < @as(usize, @intCast(vma.VK_MAX_MEMORY_HEAPS))) : (index += 1) {
+        total_bytes += budgets[index].statistics.allocationBytes;
+    }
+
+    std.debug.print("GPU Time   : prev = {d} ms, min = {d} ms, max = {d} ms\n", .{ self.statistics.prv_gpu_time, self.statistics.min_gpu_time, self.statistics.max_gpu_time });
+    std.debug.print("GPU Memory : {}\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
+    std.debug.print("Primitives : {}\n", .{self.statistics.primitives});
 }
 
 fn createSwapchain(self: *Self) !void {
@@ -732,6 +770,7 @@ const DeviceWithInfo = struct {
     features: vk.PhysicalDeviceFeatures,
     extensions: []const vk.ExtensionProperties,
     queue_info: QueueInfo,
+    surface_format: vk.SurfaceFormatKHR,
 
     pub fn deinit(self: *const DeviceWithInfo, allocator: Allocator) void {
         allocator.free(self.extensions);
@@ -800,14 +839,21 @@ fn getBestDevice(
         const queue_properties = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
         errdefer allocator.free(queue_properties);
 
+        const surface_formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(device, surface, allocator);
+        defer allocator.free(surface_formats);
+
         const score = calculateDeviceScore(properties, features, required_features, optional_features, extensions, required_extensions, optional_extensions);
         const queue_info = findQueues(instance, device, surface, queue_properties) catch {
             allocator.free(extensions);
             allocator.free(queue_properties);
             continue;
         };
+        const surface_format = chooseSurfaceFormat(&.{
+            vk.SurfaceFormatKHR{ .format = .b8g8r8a8_srgb, .color_space = .srgb_nonlinear_khr },
+            vk.SurfaceFormatKHR{ .format = .r8g8b8a8_srgb, .color_space = .srgb_nonlinear_khr },
+        }, surface_formats);
 
-        if (score > max_score) {
+        if (score > max_score and surface_format != null) {
             if (best_device) |bd| bd.deinit(allocator);
 
             max_score = score;
@@ -818,6 +864,7 @@ fn getBestDevice(
                 .features = features,
                 .extensions = extensions,
                 .queue_info = queue_info,
+                .surface_format = surface_format orelse unreachable,
             };
         } else {
             allocator.free(extensions);
@@ -836,6 +883,15 @@ fn containsExtension(extensions: []const vk.ExtensionProperties, extension: [*:0
             return true;
     }
     return false;
+}
+
+fn chooseSurfaceFormat(wanted_formats: []const vk.SurfaceFormatKHR, supported_formats: []const vk.SurfaceFormatKHR) ?vk.SurfaceFormatKHR {
+    for (wanted_formats) |fmt| {
+        for (supported_formats) |fmt2| {
+            if (fmt.color_space == fmt2.color_space and fmt.format == fmt.format) return fmt;
+        }
+    }
+    return null;
 }
 
 fn findQueues(

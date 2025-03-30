@@ -65,6 +65,8 @@ pub fn main() !void {
     const image = try Image.createFromFile(allocator, "assets/textures/None.png");
     const material = try Material.init(image, pipeline);
 
+    // var last_time: i64 = 0;
+
     while (running) {
         var event: sdl.SDL_Event = undefined;
 
@@ -85,10 +87,14 @@ pub fn main() !void {
 
         try Renderer.singleton.draw(mesh, material);
 
-        console.clear();
-        console.moveToStart();
+        // if (std.time.milliTimestamp() - last_time >= 500) {
+        //     console.clear();
+        //     console.moveToStart();
 
-        Renderer.singleton.printDebugStats();
+        //     Renderer.singleton.printDebugStats();
+
+        //     last_time = std.time.milliTimestamp();
+        // }
     }
 
     // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();
