@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
 const console = @import("console.zig");
+const zm = @import("zmath");
 
 const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
@@ -47,22 +48,64 @@ pub fn main() !void {
     var fullscreen = false;
 
     const mesh = try Mesh.init(u16, &.{
-        3, 6, 7, 2, 6, 3, // back
-        0, 4, 5, 1, 0, 5, // front
-        3, 7, 4, 0, 3, 4, // left
-        2, 5, 6, 1, 5, 2, // right
-        5, 4, 7, 6, 5, 7, // top
-        3, 0, 1, 1, 2, 3, // bottom
+        0, 1, 2, 2, 3, 0, // front
+        4, 5, 6, 6, 7, 4, // right
+        8, 9, 10, 10, 11, 8, // top
+        12, 13, 14, 14, 15, 12, // left
+        16, 17, 18, 18, 19, 16, // bottom
+        20, 21, 22, 22, 23, 20, // back
     }, &.{
-        .{ 0.0, 0.0, 0.0 }, // 0
-        .{ 1.0, 0.0, 0.0 }, // 1
-        .{ 1.0, 0.0, 1.0 }, // 2
-        .{ 0.0, 0.0, 1.0 }, // 3
-        .{ 0.0, 1.0, 0.0 }, // 4
-        .{ 1.0, 1.0, 0.0 }, // 5
-        .{ 1.0, 1.0, 1.0 }, // 6
-        .{ 0.0, 1.0, 1.0 }, // 7
+        // front
+        .{ -1.0, -1.0, 1.0 },
+        .{ 1.0, -1.0, 1.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ -1.0, 1.0, 1.0 },
+        // top
+        .{ -1.0, 1.0, 1.0 },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 1.0, 1.0, -1.0 },
+        .{ -1.0, 1.0, -1.0 },
+        // back
+        .{ 1.0, -1.0, -1.0 },
+        .{ -1.0, -1.0, -1.0 },
+        .{ -1.0, 1.0, -1.0 },
+        .{ 1.0, 1.0, -1.0 },
+        // bottom
+        .{ -1.0, -1.0, -1.0 },
+        .{ 1.0, -1.0, -1.0 },
+        .{ 1.0, -1.0, 1.0 },
+        .{ -1.0, -1.0, 1.0 },
+        // left
+        .{ -1.0, -1.0, -1.0 },
+        .{ -1.0, -1.0, 1.0 },
+        .{ -1.0, 1.0, 1.0 },
+        .{ -1.0, 1.0, -1.0 },
+        // right
+        .{ 1.0, -1.0, 1.0 },
+        .{ 1.0, -1.0, -1.0 },
+        .{ 1.0, 1.0, -1.0 },
+        .{ 1.0, 1.0, 1.0 },
     }, &.{
+        .{ 0.0, 0.0 },
+        .{ 1.0, 0.0 },
+        .{ 1.0, 1.0 },
+        .{ 0.0, 1.0 },
+
+        .{ 0.0, 0.0 },
+        .{ 1.0, 0.0 },
+        .{ 1.0, 1.0 },
+        .{ 0.0, 1.0 },
+
+        .{ 0.0, 0.0 },
+        .{ 1.0, 0.0 },
+        .{ 1.0, 1.0 },
+        .{ 0.0, 1.0 },
+
+        .{ 0.0, 0.0 },
+        .{ 1.0, 0.0 },
+        .{ 1.0, 1.0 },
+        .{ 0.0, 1.0 },
+
         .{ 0.0, 0.0 },
         .{ 1.0, 0.0 },
         .{ 1.0, 1.0 },
@@ -82,6 +125,11 @@ pub fn main() !void {
 
     // var last_time: i64 = 0;
 
+    var camera_pos: zm.Vec = .{ 0.0, 0.0, 2.0, 1.0 };
+    const camera_rot: zm.Vec = .{ 0.0, 0.0, 0.0, 1.0 };
+
+    const speed: f32 = 0.1;
+
     while (running) {
         var event: sdl.SDL_Event = undefined;
 
@@ -90,17 +138,41 @@ pub fn main() !void {
                 sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
                 sdl.SDL_EVENT_WINDOW_RESIZED => try Renderer.singleton.resize(),
                 sdl.SDL_EVENT_KEY_DOWN => {
-                    if (event.key.key == sdl.SDLK_F) {
-                        _ = sdl.SDL_SetWindowFullscreen(window, !fullscreen);
-                        fullscreen = !fullscreen;
-                        try Renderer.singleton.resize();
+                    switch (event.key.key) {
+                        sdl.SDLK_F => {
+                            _ = sdl.SDL_SetWindowFullscreen(window, !fullscreen);
+                            fullscreen = !fullscreen;
+                            try Renderer.singleton.resize();
+                        },
+
+                        sdl.SDLK_W => {
+                            camera_pos[2] -= speed;
+                        },
+                        sdl.SDLK_S => {
+                            camera_pos[2] += speed;
+                        },
+                        sdl.SDLK_A => {
+                            camera_pos[0] -= speed;
+                        },
+                        sdl.SDLK_D => {
+                            camera_pos[0] += speed;
+                        },
+
+                        sdl.SDLK_SPACE => {
+                            camera_pos[1] += speed;
+                        },
+                        sdl.SDLK_LSHIFT => {
+                            camera_pos[1] -= speed;
+                        },
+
+                        else => {},
                     }
                 },
                 else => {},
             }
         }
 
-        try Renderer.singleton.draw(mesh, material);
+        try Renderer.singleton.draw(mesh, material, camera_pos, camera_rot);
 
         // if (std.time.milliTimestamp() - last_time >= 500) {
         //     console.clear();

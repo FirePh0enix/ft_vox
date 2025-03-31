@@ -3,7 +3,7 @@ const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
 const vma = @import("vma");
-const zm = @import("zm");
+const zm = @import("zmath");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
@@ -486,7 +486,13 @@ pub fn deinit(self: *const Self) void {
     // self.instance.destroyInstance(&vk_allocation_callbacks);
 }
 
-pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
+pub fn draw(
+    self: *Self,
+    mesh: Mesh,
+    material: Material,
+    camera_pos: zm.Vec,
+    camera_rot: zm.Vec,
+) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
     try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
@@ -532,14 +538,17 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
     command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
 
-    const camera_pos: zm.Vec3f = .{ 0.5 - 2.0, 0.5, 3.0 };
-    const camera_rot: zm.Vec3f = std.math.degreesToRadians(zm.Vec3f{ 0.0, 0, 0 });
-    const camera_rot_mat = zm.Mat4f.rotation(.{ 1, 0, 0 }, camera_rot[0]).multiply(zm.Mat4f.rotation(.{ 0, 1, 0 }, camera_rot[1])).multiply(zm.Mat4f.rotation(.{ 0, 0, 1 }, camera_rot[2]));
+    const camera_rot_rad = std.math.degreesToRadians(camera_rot);
+    const camera_rot_mat = zm.mul(zm.mul(zm.rotationX(camera_rot_rad[0]), zm.rotationY(camera_rot_rad[1])), zm.rotationZ(camera_rot_rad[2]));
     const aspect_ratio = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
-    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0).multiply(camera_rot_mat.multiply(zm.Mat4f.translationVec3(-camera_pos)));
+
+    var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
+    projection_matrix[1][1] *= -1;
+
+    const camera_matrix = zm.mul(zm.mul(zm.translationV(-camera_pos), camera_rot_mat), projection_matrix);
 
     const constants: Mesh.PushConstants = .{
-        .camera_matrix = camera_matrix.transpose().data,
+        .camera_matrix = camera_matrix,
     };
 
     command_buffer.pushConstants(material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));

@@ -1,15 +1,12 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const vma = @import("vma");
-const zm = @import("zm");
+const zm = @import("zmath");
 const Renderer = @import("render/Renderer.zig");
 
 const Buffer = @import("render/Buffer.zig");
-const Vec3 = zm.Vec3f;
-const Mat4 = zm.Mat4f;
 const Self = @This();
 
-// `Vec3f` is the same size as `Vec4f`, but thats wasted space.
 pub const Vertex = [3]f32;
 
 index_buffer: Buffer,
@@ -52,5 +49,5 @@ pub const attribute_descriptions: []const vk.VertexInputAttributeDescription = &
 };
 
 pub const PushConstants = extern struct {
-    camera_matrix: @Vector(16, f32),
+    camera_matrix: zm.Mat,
 };

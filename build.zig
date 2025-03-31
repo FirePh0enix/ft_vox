@@ -71,12 +71,12 @@ pub fn build(b: *Build) void {
     const sdl_mod = sdl_header.createModule();
     exe.root_module.addImport("sdl", sdl_mod);
 
-    const zm = b.dependency("zm", .{
+    const zm = b.dependency("zmath", .{
         .target = target,
         .optimize = optimize,
     });
-    const zm_mod = zm.module("zm");
-    exe.root_module.addImport("zm", zm_mod);
+    const zm_mod = zm.module("root");
+    exe.root_module.addImport("zmath", zm_mod);
 
     const zigimg = b.dependency("zigimg", .{
         .target = target,

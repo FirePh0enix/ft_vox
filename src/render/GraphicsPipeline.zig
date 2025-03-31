@@ -113,7 +113,7 @@ pub fn create(allocator: Allocator) !Self {
         .polygon_mode = .fill,
         .line_width = 1.0,
         .cull_mode = .{ .back_bit = true },
-        .front_face = .clockwise, // TODO: should be .counter_clockwise ?
+        .front_face = .counter_clockwise,
         .depth_bias_enable = vk.FALSE,
         .depth_bias_constant_factor = 0.0,
         .depth_bias_slope_factor = 0.0,
