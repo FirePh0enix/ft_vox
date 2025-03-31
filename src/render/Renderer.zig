@@ -33,13 +33,15 @@ device: Device,
 surface: vk.SurfaceKHR,
 physical_device: vk.PhysicalDevice,
 window: *sdl.SDL_Window,
+render_pass: vk.RenderPass,
+command_pool: vk.CommandPool,
+
 swapchain: vk.SwapchainKHR = .null_handle,
 swapchain_images: []vk.Image = &.{},
 swapchain_image_views: []vk.ImageView = &.{},
 swapchain_framebuffers: []vk.Framebuffer = &.{},
 swapchain_extent: vk.Extent2D = .{ .width = 0, .height = 0 },
-render_pass: vk.RenderPass,
-command_pool: vk.CommandPool,
+depth_image: Image = undefined,
 
 surface_capabilities: vk.SurfaceCapabilitiesKHR,
 surface_format: vk.SurfaceFormatKHR,
@@ -273,8 +275,8 @@ pub fn init(
     const device_info: vk.DeviceCreateInfo = .{
         .queue_create_info_count = @intCast(queue_infos.len),
         .p_queue_create_infos = queue_infos.ptr,
-        .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
-        .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
+        .enabled_layer_count = 0,
+        .pp_enabled_layer_names = null,
         .enabled_extension_count = @intCast(device_extensions.len),
         .pp_enabled_extension_names = device_extensions.ptr,
         .p_enabled_features = &device_features,
@@ -375,40 +377,58 @@ pub fn init(
     }
 
     // Create the color pass
-    const color_attach: vk.AttachmentDescription = .{
-        .format = surface_format.format,
-        .samples = .{ .@"1_bit" = true },
-        .load_op = .clear,
-        .store_op = .store,
-        .stencil_load_op = .dont_care,
-        .stencil_store_op = .dont_care,
-        .initial_layout = .undefined,
-        .final_layout = .present_src_khr,
-    };
-
-    const attach_ref: vk.AttachmentReference = .{
+    const color_ref: vk.AttachmentReference = .{
         .attachment = 0,
         .layout = .color_attachment_optimal,
+    };
+
+    const depth_ref: vk.AttachmentReference = .{
+        .attachment = 1,
+        .layout = .depth_stencil_attachment_optimal,
     };
 
     const subpass: vk.SubpassDescription = .{
         .pipeline_bind_point = .graphics,
         .color_attachment_count = 1,
-        .p_color_attachments = @ptrCast(&attach_ref),
+        .p_color_attachments = @ptrCast(&color_ref),
+        .p_depth_stencil_attachment = @ptrCast(&depth_ref),
+    };
+
+    const attachments: []const vk.AttachmentDescription = &.{
+        .{
+            .format = surface_format.format,
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .store,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .undefined,
+            .final_layout = .present_src_khr,
+        },
+        .{
+            .format = .d32_sfloat, // TODO: same as `Image.createDepth`
+            .samples = .{ .@"1_bit" = true },
+            .load_op = .clear,
+            .store_op = .dont_care,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .initial_layout = .undefined,
+            .final_layout = .depth_stencil_attachment_optimal,
+        },
     };
 
     const dependency: vk.SubpassDependency = .{
         .src_subpass = vk.SUBPASS_EXTERNAL,
         .dst_subpass = 0,
-        .src_stage_mask = .{ .color_attachment_output_bit = true },
+        .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+        .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
         .src_access_mask = .{},
-        .dst_stage_mask = .{ .color_attachment_output_bit = true },
-        .dst_access_mask = .{ .color_attachment_write_bit = true },
+        .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
     };
 
     const render_pass_info: vk.RenderPassCreateInfo = .{
-        .attachment_count = 1,
-        .p_attachments = @ptrCast(&color_attach),
+        .attachment_count = @intCast(attachments.len),
+        .p_attachments = attachments.ptr,
         .subpass_count = 1,
         .p_subpasses = @ptrCast(&subpass),
         .dependency_count = 1,
@@ -486,25 +506,24 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
     command_buffer.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2));
 
-    const clear_color: vk.ClearValue = .{
-        .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } },
+    const clears: []const vk.ClearValue = &.{
+        .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
+        .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
     };
 
-    const render_pass_begin_info: vk.RenderPassBeginInfo = .{
+    command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
+    command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
+
+    command_buffer.beginRenderPass(&vk.RenderPassBeginInfo{
         .render_pass = self.render_pass,
         .framebuffer = self.swapchain_framebuffers[image_index],
         .render_area = .{
             .offset = .{ .x = 0, .y = 0 },
             .extent = self.swapchain_extent,
         },
-        .clear_value_count = 1,
-        .p_clear_values = @ptrCast(&clear_color),
-    };
-
-    command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
-    command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
-
-    command_buffer.beginRenderPass(&render_pass_begin_info, .@"inline");
+        .clear_value_count = @intCast(clears.len),
+        .p_clear_values = clears.ptr,
+    }, .@"inline");
 
     command_buffer.bindPipeline(.graphics, material.pipeline.pipeline);
     command_buffer.bindDescriptorSets(.graphics, material.pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
@@ -513,9 +532,11 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
     command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
 
-    const camera_pos: zm.Vec3f = .{ 0.0, 0.0, 1.0 };
+    const camera_pos: zm.Vec3f = .{ 0.5 - 2.0, 0.5, 3.0 };
+    const camera_rot: zm.Vec3f = std.math.degreesToRadians(zm.Vec3f{ 0.0, 0, 0 });
+    const camera_rot_mat = zm.Mat4f.rotation(.{ 1, 0, 0 }, camera_rot[0]).multiply(zm.Mat4f.rotation(.{ 0, 1, 0 }, camera_rot[1])).multiply(zm.Mat4f.rotation(.{ 0, 0, 1 }, camera_rot[2]));
     const aspect_ratio = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
-    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0).multiply(zm.Mat4f.translationVec3(-camera_pos));
+    const camera_matrix = zm.Mat4f.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0).multiply(camera_rot_mat.multiply(zm.Mat4f.translationVec3(-camera_pos)));
 
     const constants: Mesh.PushConstants = .{
         .camera_matrix = camera_matrix.transpose().data,
@@ -582,7 +603,7 @@ pub fn draw(self: *Self, mesh: Mesh, material: Material) !void {
 
     var timestamp_buffer: [2]u64 = .{ 0, 0 };
     if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-        self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0);
+        if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0);
     }
     self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
 
@@ -673,6 +694,9 @@ fn createSwapchain(self: *Self) !void {
     const swapchain_framebuffers = try self.allocator.alloc(vk.Framebuffer, swapchain_images.len);
     errdefer self.allocator.free(swapchain_framebuffers);
 
+    const depth_image = try Image.createDepth(surface_extent.width, surface_extent.height);
+    errdefer depth_image.deinit();
+
     for (swapchain_images, 0..swapchain_images.len) |image, index| {
         const image_view_info: vk.ImageViewCreateInfo = .{
             .image = image,
@@ -696,18 +720,16 @@ fn createSwapchain(self: *Self) !void {
         const image_view = try self.device.createImageView(&image_view_info, null);
         swapchain_image_views[index] = image_view;
 
-        const attachments: []const vk.ImageView = &.{image_view};
+        const attachments: []const vk.ImageView = &.{ image_view, depth_image.image_view };
 
-        const framebuffer_info: vk.FramebufferCreateInfo = .{
+        swapchain_framebuffers[index] = try self.device.createFramebuffer(&vk.FramebufferCreateInfo{
             .render_pass = self.render_pass,
             .attachment_count = @intCast(attachments.len),
             .p_attachments = attachments.ptr,
             .width = surface_extent.width,
             .height = surface_extent.height,
             .layers = 1,
-        };
-
-        swapchain_framebuffers[index] = try self.device.createFramebuffer(&framebuffer_info, null);
+        }, null);
     }
 
     self.destroySwapchain();
@@ -717,6 +739,7 @@ fn createSwapchain(self: *Self) !void {
     self.swapchain_image_views = swapchain_image_views;
     self.swapchain_framebuffers = swapchain_framebuffers;
     self.swapchain_extent = surface_extent;
+    self.depth_image = depth_image;
 }
 
 fn destroySwapchain(self: *const Self) void {
@@ -728,6 +751,8 @@ fn destroySwapchain(self: *const Self) void {
         for (self.swapchain_image_views) |image_view| {
             self.device.destroyImageView(image_view, null);
         }
+
+        self.depth_image.deinit();
 
         self.allocator.free(self.swapchain_images);
         self.allocator.free(self.swapchain_image_views);

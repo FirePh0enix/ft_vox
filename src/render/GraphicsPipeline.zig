@@ -31,10 +31,15 @@ pub const MaterialDescriptorPool = struct {
         }, null);
 
         return .{
-            .pools = std.ArrayList(vk.DescriptorPool).init(allocator),
+            .pools = .init(allocator),
             .count = 0,
             .descriptor_set_layout = descriptor_set_layout,
         };
+    }
+
+    pub fn deinit(self: *const MaterialDescriptorPool) void {
+        for (self.pools.items) |pool| Renderer.singleton.device.destroyQueryPool(pool, null);
+        self.pools.deinit();
     }
 
     pub fn createDescriptorSet(self: *MaterialDescriptorPool) !vk.DescriptorSet {
@@ -142,6 +147,18 @@ pub fn create(allocator: Allocator) !Self {
         .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
     };
 
+    const depth_info: vk.PipelineDepthStencilStateCreateInfo = .{
+        .depth_test_enable = vk.TRUE,
+        .depth_write_enable = vk.TRUE,
+        .depth_compare_op = .less,
+        .depth_bounds_test_enable = vk.FALSE,
+        .min_depth_bounds = 0.0,
+        .max_depth_bounds = 1.0,
+        .stencil_test_enable = vk.FALSE,
+        .front = std.mem.zeroes(vk.StencilOpState),
+        .back = std.mem.zeroes(vk.StencilOpState),
+    };
+
     const push_constants: []const vk.PushConstantRange = &.{
         vk.PushConstantRange{ .offset = 0, .size = @sizeOf(Mesh.PushConstants), .stage_flags = .{ .vertex_bit = true } },
     };
@@ -168,7 +185,7 @@ pub fn create(allocator: Allocator) !Self {
         .p_viewport_state = &viewport_info,
         .p_rasterization_state = &rasterizer_info,
         .p_multisample_state = &multisample_info,
-        .p_depth_stencil_state = null,
+        .p_depth_stencil_state = &depth_info,
         .p_color_blend_state = &blend_info,
         .p_dynamic_state = &dynamic_state_info,
         .layout = pipeline_layout,

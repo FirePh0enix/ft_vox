@@ -17,6 +17,8 @@ pub const allocator: std.mem.Allocator = if (builtin.mode == .Debug)
 else
     std.heap.smp_allocator;
 
+// export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
+
 pub fn main() !void {
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
         std.log.err("SDL init failed", .{});
@@ -33,7 +35,7 @@ pub fn main() !void {
     var instance_extensions_count: u32 = undefined;
     const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
 
-    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count, .{ .vsync = .off }) catch |e| {
+    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count, .{ .vsync = .performance }) catch |e| {
         std.log.err("Failed to initialize vulkan", .{});
         return e;
     };
@@ -45,14 +47,27 @@ pub fn main() !void {
     var fullscreen = false;
 
     const mesh = try Mesh.init(u16, &.{
-        0, 1, 2,
-        0, 2, 3,
+        3, 6, 7, 2, 6, 3, // back
+        0, 4, 5, 1, 0, 5, // front
+        3, 7, 4, 0, 3, 4, // left
+        2, 5, 6, 1, 5, 2, // right
+        5, 4, 7, 6, 5, 7, // top
+        3, 0, 1, 1, 2, 3, // bottom
     }, &.{
-        .{ -0.5, -0.5, 0.0 },
-        .{ 0.5, -0.5, 0.0 },
-        .{ 0.5, 0.5, 0.0 },
-        .{ -0.5, 0.5, 0.0 },
+        .{ 0.0, 0.0, 0.0 }, // 0
+        .{ 1.0, 0.0, 0.0 }, // 1
+        .{ 1.0, 0.0, 1.0 }, // 2
+        .{ 0.0, 0.0, 1.0 }, // 3
+        .{ 0.0, 1.0, 0.0 }, // 4
+        .{ 1.0, 1.0, 0.0 }, // 5
+        .{ 1.0, 1.0, 1.0 }, // 6
+        .{ 0.0, 1.0, 1.0 }, // 7
     }, &.{
+        .{ 0.0, 0.0 },
+        .{ 1.0, 0.0 },
+        .{ 1.0, 1.0 },
+        .{ 0.0, 1.0 },
+
         .{ 0.0, 0.0 },
         .{ 1.0, 0.0 },
         .{ 1.0, 1.0 },

@@ -14,12 +14,13 @@ allocation: vma.VmaAllocation,
 width: u32,
 height: u32,
 
-pub fn create(
+fn create(
     width: u32,
     height: u32,
     format: vk.Format,
     tiling: vk.ImageTiling,
     usage: vk.ImageUsageFlags,
+    aspect_mask: vk.ImageAspectFlags,
 ) !Self {
     const image_info: vk.ImageCreateInfo = .{
         .image_type = .@"2d",
@@ -51,7 +52,7 @@ pub fn create(
         .format = format,
         .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
         .subresource_range = .{
-            .aspect_mask = .{ .color_bit = true },
+            .aspect_mask = aspect_mask,
             .base_array_layer = 0,
             .layer_count = 1,
             .base_mip_level = 0,
@@ -80,17 +81,28 @@ pub fn createFromFile(
     const height: u32 = @intCast(image_data.height);
 
     const vk_format: vk.Format = switch (image_data.pixelFormat()) {
-        .rgb24 => vk.Format.r8g8b8_srgb,
+        .rgb24 => vk.Format.r8g8b8a8_srgb, // TODO: Support more pixel formats.
         .rgba32 => vk.Format.r8g8b8a8_srgb,
         else => return error.FormatNotSupported,
     };
 
-    var image = try create(width, height, vk_format, .optimal, .{ .sampled_bit = true, .transfer_dst_bit = true });
+    var image = try create(width, height, vk_format, .optimal, .{ .sampled_bit = true, .transfer_dst_bit = true }, .{ .color_bit = true });
     errdefer image.deinit();
 
-    try image.transferLayout(.undefined, .transfer_dst_optimal);
+    try image.transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
     try image.store(image_data.rawBytes());
-    try image.transferLayout(.transfer_dst_optimal, .shader_read_only_optimal);
+    try image.transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+
+    return image;
+}
+
+pub fn createDepth(width: u32, height: u32) !Self {
+    // TODO: Check supported format for depth images.
+    const depth_format: vk.Format = .d32_sfloat;
+    const tiling: vk.ImageTiling = .optimal;
+
+    var image = try Self.create(width, height, depth_format, tiling, .{ .depth_stencil_attachment_bit = true }, .{ .depth_bit = true });
+    try image.transferLayout(.undefined, .depth_stencil_attachment_optimal, .{ .depth_bit = true });
 
     return image;
 }
@@ -145,6 +157,7 @@ fn transferLayout(
     self: *const Self,
     old_layout: vk.ImageLayout,
     new_layout: vk.ImageLayout,
+    aspect_mask: vk.ImageAspectFlags,
 ) !void {
     const command_buffer = Renderer.singleton.transfer_command_buffer;
 
@@ -160,7 +173,7 @@ fn transferLayout(
         .new_layout = new_layout,
         .image = self.image,
         .subresource_range = .{
-            .aspect_mask = .{ .color_bit = true },
+            .aspect_mask = aspect_mask,
             .base_array_layer = 0,
             .layer_count = 1,
             .base_mip_level = 0,
@@ -184,10 +197,10 @@ fn transferLayout(
         dst_stage_mask = .{ .fragment_shader_bit = true };
     } else if (old_layout == .undefined and new_layout == .depth_stencil_attachment_optimal) {
         barrier.src_access_mask = .{};
-        barrier.dst_access_mask = .{ .depth_stencil_attachment_write_bit = true };
+        barrier.dst_access_mask = .{ .depth_stencil_attachment_read_bit = true };
 
         src_stage_mask = .{ .transfer_bit = true };
-        dst_stage_mask = .{ .fragment_shader_bit = true };
+        dst_stage_mask = .{ .early_fragment_tests_bit = true };
     } else {
         return error.UnsupportedLayouts;
     }
