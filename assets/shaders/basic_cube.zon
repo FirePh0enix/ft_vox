@@ -1,0 +1,23 @@
+.{
+    .shaders = .{
+        .{ .vertex = "./basic_cube.vert" },
+        .{ .vertex = "./basic_cube.frag" },
+    },
+
+    .buffers = .{
+        .{ .element_type = .vec3, .rate = .vertex },
+        .{ .element_type = .vec2, .rate = .vertex },
+        .{ .element_type = .mat4, .rate = .instance },
+    },
+    .inputs = .{
+        .{ .binding = 0, .type = .vec3 },
+        .{ .binding = 1, .type = .vec2 },
+        .{ .binding = 2, .type = .mat4 },
+    },
+    .descriptors = .{
+        .{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
+    },
+    .push_constants = .{
+        .{ .type = .{ .buffer = .{.mat4} }, .stage = .vertex },
+    },
+}
