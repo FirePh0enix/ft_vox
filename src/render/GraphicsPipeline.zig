@@ -7,6 +7,7 @@ const Renderer = @import("Renderer.zig");
 const Device = Renderer.Device;
 const Mesh = @import("../Mesh.zig");
 const Allocator = std.mem.Allocator;
+const ShaderModel = @import("ShaderModel.zig");
 
 pipeline: vk.Pipeline,
 layout: vk.PipelineLayout,
@@ -16,24 +17,21 @@ pub const MaterialDescriptorPool = struct {
     pools: std.ArrayList(vk.DescriptorPool),
     count: usize,
     descriptor_set_layout: vk.DescriptorSetLayout,
+    shader_model: ShaderModel,
 
     const pool_size: usize = 16;
 
-    pub fn init(allocator: Allocator) !MaterialDescriptorPool {
-        // TODO: Each pipeline should define its own descriptor set layout, bindings should not be harcoded.
-
-        const bindings: []const vk.DescriptorSetLayoutBinding = &.{
-            vk.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .stage_flags = .{ .fragment_bit = true }, .p_immutable_samplers = null },
-        };
+    pub fn init(allocator: Allocator, shader_model: ShaderModel) !MaterialDescriptorPool {
         const descriptor_set_layout = try Renderer.singleton.device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
-            .binding_count = @intCast(bindings.len),
-            .p_bindings = bindings.ptr,
+            .binding_count = @intCast(shader_model.vk_descriptor_bindings.items.len),
+            .p_bindings = shader_model.vk_descriptor_bindings.items.ptr,
         }, null);
 
         return .{
             .pools = .init(allocator),
             .count = 0,
             .descriptor_set_layout = descriptor_set_layout,
+            .shader_model = shader_model,
         };
     }
 
@@ -69,7 +67,10 @@ pub const MaterialDescriptorPool = struct {
 const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
 const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
 
-pub fn create(allocator: Allocator) !Self {
+pub fn create(
+    allocator: Allocator,
+    shader_model: ShaderModel,
+) !Self {
     const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
         .{
             .stage = .{ .vertex_bit = true },
@@ -90,14 +91,14 @@ pub fn create(allocator: Allocator) !Self {
     };
 
     const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
-        .vertex_binding_description_count = @intCast(Mesh.binding_descriptions.len),
-        .p_vertex_binding_descriptions = Mesh.binding_descriptions.ptr,
-        .vertex_attribute_description_count = @intCast(Mesh.attribute_descriptions.len),
-        .p_vertex_attribute_descriptions = Mesh.attribute_descriptions.ptr,
+        .vertex_binding_description_count = @intCast(shader_model.vk_bindings.items.len),
+        .p_vertex_binding_descriptions = shader_model.vk_bindings.items.ptr,
+        .vertex_attribute_description_count = @intCast(shader_model.vk_attribs.items.len),
+        .p_vertex_attribute_descriptions = shader_model.vk_attribs.items.ptr,
     };
 
     const input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = .{
-        .topology = .triangle_list,
+        .topology = shader_model.topology,
         .primitive_restart_enable = vk.FALSE,
     };
 
@@ -110,7 +111,7 @@ pub fn create(allocator: Allocator) !Self {
         .depth_clamp_enable = vk.FALSE,
         .depth_bias_clamp = 0.0,
         .rasterizer_discard_enable = vk.FALSE,
-        .polygon_mode = .fill,
+        .polygon_mode = shader_model.polygon_mode,
         .line_width = 1.0,
         .cull_mode = .{ .back_bit = true },
         .front_face = .counter_clockwise,
@@ -159,20 +160,13 @@ pub fn create(allocator: Allocator) !Self {
         .back = std.mem.zeroes(vk.StencilOpState),
     };
 
-    const push_constants: []const vk.PushConstantRange = &.{
-        vk.PushConstantRange{ .offset = 0, .size = @sizeOf(Mesh.PushConstants), .stage_flags = .{ .vertex_bit = true } },
-    };
-
-    const descriptor_pool = try MaterialDescriptorPool.init(allocator);
-
-    // TODO: Everything related to descriptor pools should be reworked to allow for customization, maybe by introducing a `Shader`
-    //       type to configure everything from input bindings, descriptor set layouts and push constants.
+    const descriptor_pool = try MaterialDescriptorPool.init(allocator, shader_model);
 
     const layout_info: vk.PipelineLayoutCreateInfo = .{
         .set_layout_count = 1,
         .p_set_layouts = @ptrCast(&descriptor_pool.descriptor_set_layout),
-        .push_constant_range_count = @intCast(push_constants.len),
-        .p_push_constant_ranges = push_constants.ptr,
+        .push_constant_range_count = @intCast(shader_model.vk_push_constants.items.len),
+        .p_push_constant_ranges = shader_model.vk_push_constants.items.ptr,
     };
 
     const pipeline_layout = try Renderer.singleton.device.createPipelineLayout(&layout_info, null);

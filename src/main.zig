@@ -11,6 +11,7 @@ const Mesh = @import("Mesh.zig");
 const Image = @import("render/Image.zig");
 const Material = @import("Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
+const ShaderModel = @import("render/ShaderModel.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -118,8 +119,28 @@ pub fn main() !void {
         .{ 0.0, 1.0 },
     });
 
+    const shader_model = try ShaderModel.init(allocator, .{
+        .buffers = &.{
+            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
+            ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
+            ShaderModel.Buffer{ .element_type = .mat4, .rate = .instance },
+        },
+        .inputs = &.{
+            ShaderModel.Input{ .binding = 0, .type = .vec3 },
+            ShaderModel.Input{ .binding = 1, .type = .vec2 },
+            ShaderModel.Input{ .binding = 2, .type = .mat4 },
+        },
+        .descriptors = &.{
+            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
+        },
+        .push_constants = &.{
+            ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
+        },
+    });
+    defer shader_model.deinit();
+
     const pipeline = try allocator.create(GraphicsPipeline);
-    pipeline.* = try GraphicsPipeline.create(allocator);
+    pipeline.* = try GraphicsPipeline.create(allocator, shader_model);
 
     const image = try Image.createFromFile(allocator, "assets/textures/None.png");
     const material = try Material.init(image, pipeline);
