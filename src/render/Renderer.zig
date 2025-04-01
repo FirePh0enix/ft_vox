@@ -933,14 +933,19 @@ fn findQueues(
     var queue: QueueInfo = .{};
 
     for (properties, 0..properties.len) |queue_properties, index| {
-        if (queue_properties.queue_flags.graphics_bit) {
+        if (queue_properties.queue_flags.graphics_bit and queue.graphics_index == null) {
             queue.graphics_index = @intCast(index);
 
             // All graphics queue supports presentation, some compute queues could also support it.
             const present_support = try instance.getPhysicalDeviceSurfaceSupportKHR(device, @intCast(index), surface) != 0;
 
             if (!present_support) return error.NoGraphicsQueue;
-        } else if (queue_properties.queue_flags.compute_bit) {
+        }
+    }
+
+    for (properties, 0..properties.len) |queue_properties, index| {
+        // On some device queues can be both graphics and compute this will make sure we use two different queues in that case.
+        if (queue_properties.queue_flags.compute_bit and queue.compute_index == null and queue.graphics_index != null and @as(u32, @intCast(index)) != queue.graphics_index) {
             queue.compute_index = @intCast(index);
         }
     }
