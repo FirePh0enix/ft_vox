@@ -365,15 +365,15 @@ pub fn init(
         .query_count = max_frames_in_flight * 2,
     }, null);
 
-    const primitives_query_pool = try device.createQueryPool(&vk.QueryPoolCreateInfo{
-        .pipeline_statistics = .{ .input_assembly_primitives_bit = true },
-        .query_type = .pipeline_statistics,
-        .query_count = max_frames_in_flight,
-    }, null);
+    // const primitives_query_pool = try device.createQueryPool(&vk.QueryPoolCreateInfo{
+    //     .pipeline_statistics = .{ .input_assembly_primitives_bit = true },
+    //     .query_type = .pipeline_statistics,
+    //     .query_count = max_frames_in_flight,
+    // }, null);
 
     for (0..max_frames_in_flight) |index| {
         device.resetQueryPool(timestamp_query_pool, @intCast(index * 2), 2);
-        device.resetQueryPool(primitives_query_pool, @intCast(index), 1);
+        // device.resetQueryPool(primitives_query_pool, @intCast(index), 1);
     }
 
     // Create the color pass
@@ -454,7 +454,7 @@ pub fn init(
         .settings = settings,
 
         .timestamp_query_pool = timestamp_query_pool,
-        .primitives_query_pool = primitives_query_pool,
+        .primitives_query_pool = .null_handle, // primitives_query_pool,
 
         .command_buffers = command_buffers,
         .image_available_semaphores = image_available_semaphores,
@@ -519,8 +519,8 @@ pub fn draw(
         .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
     };
 
-    command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
-    command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
+    // command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
+    // command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
 
     command_buffer.beginRenderPass(&vk.RenderPassBeginInfo{
         .render_pass = self.render_pass,
@@ -579,7 +579,7 @@ pub fn draw(
 
     command_buffer.endRenderPass();
 
-    command_buffer.endQuery(self.primitives_query_pool, 0);
+    // command_buffer.endQuery(self.primitives_query_pool, 0);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
 
     try command_buffer.endCommandBuffer();
@@ -620,11 +620,11 @@ pub fn draw(
     }
     self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
 
-    var primitives_count: u64 = 0;
-    if ((try self.device.getQueryPoolResults(self.primitives_query_pool, @intCast(self.current_frame), 1, @sizeOf(u64), @ptrCast(&primitives_count), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-        self.statistics.primitives = primitives_count;
-    }
-    self.device.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
+    // var primitives_count: u64 = 0;
+    // if ((try self.device.getQueryPoolResults(self.primitives_query_pool, @intCast(self.current_frame), 1, @sizeOf(u64), @ptrCast(&primitives_count), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
+    //     self.statistics.primitives = primitives_count;
+    // }
+    // self.device.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
 
     self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
