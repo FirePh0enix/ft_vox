@@ -6,6 +6,7 @@ const console = @import("console.zig");
 const zm = @import("zmath");
 
 const Renderer = @import("render/Renderer.zig");
+const Buffer = @import("render/Buffer.zig");
 const Mesh = @import("Mesh.zig");
 const Image = @import("render/Image.zig");
 const Material = @import("Material.zig");
@@ -56,34 +57,34 @@ pub fn main() !void {
         20, 21, 22, 22, 23, 20, // back
     }, &.{
         // front
-        .{ -1.0, -1.0, 1.0 },
-        .{ 1.0, -1.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 1.0, 0.0, 1.0 },
         .{ 1.0, 1.0, 1.0 },
-        .{ -1.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
         // top
-        .{ -1.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
         .{ 1.0, 1.0, 1.0 },
-        .{ 1.0, 1.0, -1.0 },
-        .{ -1.0, 1.0, -1.0 },
+        .{ 1.0, 1.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
         // back
-        .{ 1.0, -1.0, -1.0 },
-        .{ -1.0, -1.0, -1.0 },
-        .{ -1.0, 1.0, -1.0 },
-        .{ 1.0, 1.0, -1.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 1.0, 1.0, 0.0 },
         // bottom
-        .{ -1.0, -1.0, -1.0 },
-        .{ 1.0, -1.0, -1.0 },
-        .{ 1.0, -1.0, 1.0 },
-        .{ -1.0, -1.0, 1.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
         // left
-        .{ -1.0, -1.0, -1.0 },
-        .{ -1.0, -1.0, 1.0 },
-        .{ -1.0, 1.0, 1.0 },
-        .{ -1.0, 1.0, -1.0 },
+        .{ 0.0, 0.0, 0.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 1.0, 1.0 },
+        .{ 0.0, 1.0, 0.0 },
         // right
-        .{ 1.0, -1.0, 1.0 },
-        .{ 1.0, -1.0, -1.0 },
-        .{ 1.0, 1.0, -1.0 },
+        .{ 1.0, 0.0, 1.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 1.0, 0.0 },
         .{ 1.0, 1.0, 1.0 },
     }, &.{
         .{ 0.0, 0.0 },
@@ -122,6 +123,23 @@ pub fn main() !void {
 
     const image = try Image.createFromFile(allocator, "assets/textures/None.png");
     const material = try Material.init(image, pipeline);
+
+    const width = 16;
+    const height = 256;
+    const depth = 16;
+
+    var instances: [width * height * depth]zm.Mat = undefined;
+
+    for (0..width) |x| {
+        for (0..height) |y| {
+            for (0..depth) |z| {
+                instances[z * width * height + y * width + x] = zm.translation(@floatFromInt(x), @floatFromInt(y), -@as(f32, @floatFromInt(z)));
+            }
+        }
+    }
+
+    var instance_buffer = try Buffer.create(@sizeOf(zm.Mat) * instances.len, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only);
+    try instance_buffer.update(zm.Mat, &instances);
 
     // var last_time: i64 = 0;
 
@@ -172,7 +190,7 @@ pub fn main() !void {
             }
         }
 
-        try Renderer.singleton.draw(mesh, material, camera_pos, camera_rot);
+        try Renderer.singleton.draw(mesh, material, camera_pos, camera_rot, instance_buffer, instances.len);
 
         // if (std.time.milliTimestamp() - last_time >= 500) {
         //     console.clear();

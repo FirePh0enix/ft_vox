@@ -2,6 +2,7 @@
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec2 textureCoords;
+layout(location = 2) in mat4 modelMatrix;
 
 layout(location = 0) out vec2 fragTextureCoords;
 
@@ -10,6 +11,6 @@ layout(push_constant) uniform PushConstants {
 };
 
 void main() {
-    gl_Position = cameraMatrix * vec4(position, 1.0);
+    gl_Position = cameraMatrix * modelMatrix * vec4(position, 1.0);
     fragTextureCoords = textureCoords;
 }

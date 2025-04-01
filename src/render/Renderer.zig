@@ -492,6 +492,8 @@ pub fn draw(
     material: Material,
     camera_pos: zm.Vec,
     camera_rot: zm.Vec,
+    instance_buffer: Buffer,
+    instance_count: usize,
 ) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
     try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
@@ -538,6 +540,8 @@ pub fn draw(
     command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
     command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
 
+    command_buffer.bindVertexBuffers(2, 1, @ptrCast(&instance_buffer), &.{0});
+
     const camera_rot_rad = std.math.degreesToRadians(camera_rot);
     const camera_rot_mat = zm.mul(zm.mul(zm.rotationX(camera_rot_rad[0]), zm.rotationY(camera_rot_rad[1])), zm.rotationZ(camera_rot_rad[2]));
     const aspect_ratio = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
@@ -571,7 +575,7 @@ pub fn draw(
 
     command_buffer.setScissor(0, 1, @ptrCast(&scissor));
 
-    command_buffer.drawIndexed(@intCast(mesh.count), 1, 0, 0, 0);
+    command_buffer.drawIndexed(@intCast(mesh.count), @intCast(instance_count), 0, 0, 0);
 
     command_buffer.endRenderPass();
 

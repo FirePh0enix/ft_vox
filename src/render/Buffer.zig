@@ -46,11 +46,11 @@ pub fn createFromData(comptime T: type, data: []const T, buffer_usage: vk.Buffer
     var buffer = try create(@sizeOf(T) * data.len, buffer_usage, alloc_usage);
     errdefer buffer.deinit();
 
-    try buffer.store(T, data);
+    try buffer.update(T, data);
     return buffer;
 }
 
-pub fn store(self: *Self, comptime T: type, data: []const T) !void {
+pub fn update(self: *Self, comptime T: type, data: []const T) !void {
     var staging_buffer = try create(self.size, .{ .transfer_src_bit = true }, .cpu_to_gpu);
     defer staging_buffer.deinit();
 
