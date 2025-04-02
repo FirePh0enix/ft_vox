@@ -78,12 +78,14 @@ pub const Stage = enum {
     vertex,
     fragment,
     geometry,
+    compute,
 
     pub fn toVkFlags(self: Stage) vk.ShaderStageFlags {
         switch (self) {
             .vertex => return .{ .vertex_bit = true },
             .fragment => return .{ .fragment_bit = true },
             .geometry => return .{ .geometry_bit = true },
+            .compute => return .{ .compute_bit = true },
         }
     }
 };
@@ -102,7 +104,29 @@ pub const Descriptor = struct {
     stage: Stage,
 };
 
+pub const ShaderRef = struct {
+    path: []const u8,
+    stage: ?Stage = null,
+
+    pub fn getStage(self: *const ShaderRef) Stage {
+        if (self.stage) |stage|
+            return stage;
+
+        const ext = std.fs.path.extension(self.path);
+
+        if (std.mem.eql(u8, ext, ".vert")) {
+            return .vertex;
+        } else if (std.mem.eql(u8, ext, ".frag")) {
+            return .fragment;
+        } else {
+            return .compute;
+        }
+    }
+};
+
 pub const Options = struct {
+    shaders: []const ShaderRef,
+
     buffers: []const Buffer = &.{},
     inputs: []const Input = &.{},
     push_constants: []const PushConstant = &.{},

@@ -13,6 +13,7 @@ const Material = @import("Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Camera = @import("Camera.zig");
+const RenderFrame = @import("render/RenderFrame.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -27,83 +28,51 @@ var camera = Camera{};
 const speed: f32 = 0.1;
 
 const Movement = enum { forward, left, right, backward };
-var movementStates: std.EnumArray(Movement, bool) = .initFill(false);
+var movement_states: std.EnumArray(Movement, bool) = .initFill(false);
 
 pub fn keyPressed(key: u32) void {
     switch (key) {
-        sdl.SDLK_W => movementStates.set(.forward, true),
-        sdl.SDLK_A => movementStates.set(.left, true),
-        sdl.SDLK_S => movementStates.set(.backward, true),
-        sdl.SDLK_D => movementStates.set(.right, true),
+        sdl.SDLK_W => movement_states.set(.forward, true),
+        sdl.SDLK_A => movement_states.set(.left, true),
+        sdl.SDLK_S => movement_states.set(.backward, true),
+        sdl.SDLK_D => movement_states.set(.right, true),
         else => {},
     }
 }
 
 pub fn keyReleased(key: u32) void {
     switch (key) {
-        sdl.SDLK_W => movementStates.set(.forward, false),
-        sdl.SDLK_A => movementStates.set(.left, false),
-        sdl.SDLK_S => movementStates.set(.backward, false),
-        sdl.SDLK_D => movementStates.set(.right, false),
+        sdl.SDLK_W => movement_states.set(.forward, false),
+        sdl.SDLK_A => movement_states.set(.left, false),
+        sdl.SDLK_S => movement_states.set(.backward, false),
+        sdl.SDLK_D => movement_states.set(.right, false),
         else => {},
     }
 }
 
 pub fn updateCameraPosition() void {
-    const yaw = std.math.degreesToRadians(camera.rotation[1]);
-    const pitch = std.math.degreesToRadians(camera.rotation[0]);
+    const forward: zm.Vec = camera.forward();
+    const right: zm.Vec = camera.right();
 
-    // This is where the camera "looks".
-    const forward: zm.Vec = .{
-        std.math.cos(pitch) * std.math.sin(yaw),
-        -std.math.sin(pitch),
-        -std.math.cos(pitch) * std.math.cos(yaw),
-        0.0,
-    };
-
-    // And this is a perpendicular to where it looks.
-    const right: zm.Vec = .{
-        std.math.cos(yaw),
-        0.0,
-        -std.math.sin(yaw),
-        0.0,
-    };
-
-    if (movementStates.get(.forward)) {
+    if (movement_states.get(.forward)) {
         camera.position[0] += forward[0] * speed;
         camera.position[1] += forward[1] * speed;
         camera.position[2] += forward[2] * speed;
     }
-    if (movementStates.get(.backward)) {
+    if (movement_states.get(.backward)) {
         camera.position[0] -= forward[0] * speed;
         camera.position[1] -= forward[1] * speed;
         camera.position[2] -= forward[2] * speed;
     }
-    if (movementStates.get(.left)) {
+    if (movement_states.get(.left)) {
         camera.position[0] -= right[0] * speed;
         camera.position[1] -= right[1] * speed;
         camera.position[2] -= right[2] * speed;
     }
-    if (movementStates.get(.right)) {
+    if (movement_states.get(.right)) {
         camera.position[0] += right[0] * speed;
         camera.position[1] += right[1] * speed;
         camera.position[2] += right[2] * speed;
-    }
-}
-
-pub fn handleMouseMotion(xrel: f32, yrel: f32) void {
-    const sensitivity: f32 = 0.1;
-
-    camera.rotation[1] += xrel * sensitivity;
-
-    camera.rotation[0] += yrel * sensitivity;
-
-
-// Ensure you cant do a 360 deg from looking top/bottom.
-    if (camera.rotation[0] >= 90.0) {
-        camera.rotation[0] = 90.0;
-    } else if (camera.rotation[0] <= -90.0) {
-        camera.rotation[0] = -90.0;
     }
 }
 
@@ -205,6 +174,7 @@ pub fn main() !void {
     });
 
     const shader_model = try ShaderModel.init(allocator, .{
+        .shaders = &.{},
         .buffers = &.{
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
@@ -230,27 +200,26 @@ pub fn main() !void {
     const image = try Image.createFromFile(allocator, "assets/textures/None.png");
     const material = try Material.init(image, pipeline);
 
-    const width = 16;
-    const height = 256;
-    const depth = 16;
+    var render_frame: RenderFrame = try .create(allocator, mesh, material);
 
-    var instances: [width * height * depth]zm.Mat = undefined;
+    const width = 64;
+    const height = 16;
+    const depth = 64;
+
+    var instances: [width * height * depth]RenderFrame.BlockInstanceData = undefined;
 
     for (0..width) |x| {
         for (0..height) |y| {
             for (0..depth) |z| {
-                instances[z * width * height + y * width + x] = zm.translation(@floatFromInt(x), @floatFromInt(y), -@as(f32, @floatFromInt(z)));
+                instances[z * width * height + y * width + x] = .{
+                    .model_matrix = zm.translation(@floatFromInt(x), @floatFromInt(y), -@as(f32, @floatFromInt(z))),
+                };
             }
         }
     }
 
-    var instance_buffer = try Buffer.create(@sizeOf(zm.Mat) * instances.len, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only);
-    try instance_buffer.update(zm.Mat, &instances);
-
-    // var last_time: i64 = 0;
-
-    _ = sdl.SDL_SetWindowRelativeMouseMode(window, true);
-    var mouse_grab = true;
+    var last_time: i64 = 0;
+    var mouse_grab = false;
 
     while (running) {
         var event: sdl.SDL_Event = undefined;
@@ -278,8 +247,12 @@ pub fn main() !void {
                 sdl.SDL_EVENT_KEY_UP => {
                     keyReleased(event.key.key);
                 },
+                sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                    _ = sdl.SDL_SetWindowRelativeMouseMode(window, true);
+                    mouse_grab = true;
+                },
                 sdl.SDL_EVENT_MOUSE_MOTION => {
-                    handleMouseMotion(event.motion.xrel, event.motion.yrel);
+                    if (mouse_grab) camera.rotate(event.motion.xrel, event.motion.yrel);
                 },
                 else => {},
             }
@@ -287,16 +260,19 @@ pub fn main() !void {
 
         updateCameraPosition();
 
-        try Renderer.singleton.draw(mesh, material, camera.position, camera.rotation, instance_buffer, instances.len);
+        render_frame.reset();
+        try render_frame.addBlocks(&instances);
 
-        // if (std.time.milliTimestamp() - last_time >= 500) {
-        //     console.clear();
-        //     console.moveToStart();
+        try Renderer.singleton.draw(&camera, &render_frame);
 
-        //     Renderer.singleton.printDebugStats();
+        if (std.time.milliTimestamp() - last_time >= 500) {
+            // console.clear();
+            // console.moveToStart();
 
-        //     last_time = std.time.milliTimestamp();
-        // }
+            // Renderer.singleton.printDebugStats();
+
+            last_time = std.time.milliTimestamp();
+        }
     }
 
     // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();

@@ -1,7 +1,7 @@
 .{
     .shaders = .{
-        .{ .vertex = "./basic_cube.vert" },
-        .{ .vertex = "./basic_cube.frag" },
+        .{ .path = "basic_cube.vert" },
+        .{ .path = "basic_cube.frag" },
     },
 
     .buffers = .{

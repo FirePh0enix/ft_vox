@@ -12,6 +12,8 @@ const Image = @import("Image.zig");
 const GraphicsPipeline = @import("GraphicsPipeline.zig");
 const Buffer = @import("Buffer.zig");
 const Material = @import("../Material.zig");
+const RenderFrame = @import("RenderFrame.zig");
+const Camera = @import("../Camera.zig");
 
 pub const Base = vk.BaseWrapper;
 pub const Instance = vk.InstanceProxy;
@@ -51,7 +53,9 @@ timestamp_query_pool: vk.QueryPool,
 primitives_query_pool: vk.QueryPool,
 
 graphics_queue: Queue,
+graphics_queue_index: u32,
 compute_queue: Queue,
+compute_queue_index: u32,
 
 current_frame: usize = 0,
 command_buffers: [max_frames_in_flight]CommandBuffer,
@@ -443,7 +447,9 @@ pub fn init(
         .instance = instance,
         .device = device,
         .graphics_queue = Queue.init(graphics_queue, &device_wrapper),
+        .graphics_queue_index = physical_device_with_info.queue_info.graphics_index orelse undefined,
         .compute_queue = Queue.init(compute_queue, &device_wrapper),
+        .compute_queue_index = physical_device_with_info.queue_info.compute_index orelse undefined,
         .surface = surface,
         .physical_device = physical_device,
         .command_pool = command_pool,
@@ -488,12 +494,8 @@ pub fn deinit(self: *const Self) void {
 
 pub fn draw(
     self: *Self,
-    mesh: Mesh,
-    material: Material,
-    camera_pos: zm.Vec,
-    camera_rot: zm.Vec,
-    instance_buffer: Buffer,
-    instance_count: usize,
+    camera: *const Camera,
+    render_frame: *const RenderFrame,
 ) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
     try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
@@ -514,70 +516,10 @@ pub fn draw(
     command_buffer.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2));
 
-    const clears: []const vk.ClearValue = &.{
-        .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
-        .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
-    };
-
     // command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
     // command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
 
-    command_buffer.beginRenderPass(&vk.RenderPassBeginInfo{
-        .render_pass = self.render_pass,
-        .framebuffer = self.swapchain_framebuffers[image_index],
-        .render_area = .{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = self.swapchain_extent,
-        },
-        .clear_value_count = @intCast(clears.len),
-        .p_clear_values = clears.ptr,
-    }, .@"inline");
-
-    command_buffer.bindPipeline(.graphics, material.pipeline.pipeline);
-    command_buffer.bindDescriptorSets(.graphics, material.pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
-
-    command_buffer.bindIndexBuffer(mesh.index_buffer.buffer, 0, mesh.index_type);
-    command_buffer.bindVertexBuffers(0, 1, @ptrCast(&mesh.vertex_buffer.buffer), &.{0});
-    command_buffer.bindVertexBuffers(1, 1, @ptrCast(&mesh.texture_buffer), &.{0});
-
-    command_buffer.bindVertexBuffers(2, 1, @ptrCast(&instance_buffer), &.{0});
-
-    const camera_rot_rad = std.math.degreesToRadians(camera_rot);
-    const camera_rot_mat = zm.mul(zm.mul(zm.rotationX(camera_rot_rad[0]), zm.rotationY(camera_rot_rad[1])), zm.rotationZ(camera_rot_rad[2]));
-    const aspect_ratio = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
-
-    var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
-    projection_matrix[1][1] *= -1;
-
-    const camera_matrix = zm.mul(zm.mul(zm.translationV(-camera_pos), camera_rot_mat), projection_matrix);
-
-    const constants: Mesh.PushConstants = .{
-        .camera_matrix = camera_matrix,
-    };
-
-    command_buffer.pushConstants(material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
-
-    const viewport: vk.Viewport = .{
-        .x = 0.0,
-        .y = 0.0,
-        .width = @floatFromInt(self.swapchain_extent.width),
-        .height = @floatFromInt(self.swapchain_extent.height),
-        .min_depth = 0.0,
-        .max_depth = 1.0,
-    };
-
-    command_buffer.setViewport(0, 1, @ptrCast(&viewport));
-
-    const scissor: vk.Rect2D = .{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = self.swapchain_extent,
-    };
-
-    command_buffer.setScissor(0, 1, @ptrCast(&scissor));
-
-    command_buffer.drawIndexed(@intCast(mesh.count), @intCast(instance_count), 0, 0, 0);
-
-    command_buffer.endRenderPass();
+    try render_frame.recordCommandBuffer(command_buffer, camera, self.swapchain_framebuffers[image_index]);
 
     // command_buffer.endQuery(self.primitives_query_pool, 0);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
@@ -616,7 +558,7 @@ pub fn draw(
 
     var timestamp_buffer: [2]u64 = .{ 0, 0 };
     if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-        if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000.0);
+        if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000000.0);
     }
     self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
 
@@ -643,7 +585,7 @@ pub fn printDebugStats(self: *const Self) void {
     }
 
     std.debug.print("GPU Time   : prev = {d} ms, min = {d} ms, max = {d} ms\n", .{ self.statistics.prv_gpu_time, self.statistics.min_gpu_time, self.statistics.max_gpu_time });
-    std.debug.print("GPU Memory : {}\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
+    std.debug.print("GPU Memory : {d:.2}\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
     std.debug.print("Primitives : {}\n", .{self.statistics.primitives});
 }
 
@@ -951,4 +893,8 @@ fn findQueues(
     }
 
     return queue;
+}
+
+pub fn rdr() Self {
+    return singleton;
 }
