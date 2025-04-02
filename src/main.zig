@@ -12,6 +12,7 @@ const Image = @import("render/Image.zig");
 const Material = @import("Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
+const Camera = @import("Camera.zig");
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -21,6 +22,90 @@ else
     std.heap.smp_allocator;
 
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
+
+var camera = Camera{};
+const speed: f32 = 0.1;
+
+const Movement = enum { forward, left, right, backward };
+var movementStates: std.EnumArray(Movement, bool) = .initFill(false);
+
+pub fn keyPressed(key: u32) void {
+    switch (key) {
+        sdl.SDLK_W => movementStates.set(.forward, true),
+        sdl.SDLK_A => movementStates.set(.left, true),
+        sdl.SDLK_S => movementStates.set(.backward, true),
+        sdl.SDLK_D => movementStates.set(.right, true),
+        else => {},
+    }
+}
+
+pub fn keyReleased(key: u32) void {
+    switch (key) {
+        sdl.SDLK_W => movementStates.set(.forward, false),
+        sdl.SDLK_A => movementStates.set(.left, false),
+        sdl.SDLK_S => movementStates.set(.backward, false),
+        sdl.SDLK_D => movementStates.set(.right, false),
+        else => {},
+    }
+}
+
+pub fn updateCameraPosition() void {
+    const yaw = std.math.degreesToRadians(camera.rotation[1]);
+    const pitch = std.math.degreesToRadians(camera.rotation[0]);
+
+    // This is where the camera "looks".
+    const forward: zm.Vec = .{
+        std.math.cos(pitch) * std.math.sin(yaw),
+        -std.math.sin(pitch),
+        -std.math.cos(pitch) * std.math.cos(yaw),
+        0.0,
+    };
+
+    // And this is a perpendicular to where it looks.
+    const right: zm.Vec = .{
+        std.math.cos(yaw),
+        0.0,
+        -std.math.sin(yaw),
+        0.0,
+    };
+
+    if (movementStates.get(.forward)) {
+        camera.position[0] += forward[0] * speed;
+        camera.position[1] += forward[1] * speed;
+        camera.position[2] += forward[2] * speed;
+    }
+    if (movementStates.get(.backward)) {
+        camera.position[0] -= forward[0] * speed;
+        camera.position[1] -= forward[1] * speed;
+        camera.position[2] -= forward[2] * speed;
+    }
+    if (movementStates.get(.left)) {
+        camera.position[0] -= right[0] * speed;
+        camera.position[1] -= right[1] * speed;
+        camera.position[2] -= right[2] * speed;
+    }
+    if (movementStates.get(.right)) {
+        camera.position[0] += right[0] * speed;
+        camera.position[1] += right[1] * speed;
+        camera.position[2] += right[2] * speed;
+    }
+}
+
+pub fn handleMouseMotion(xrel: f32, yrel: f32) void {
+    const sensitivity: f32 = 0.1;
+
+    camera.rotation[1] += xrel * sensitivity;
+
+    camera.rotation[0] += yrel * sensitivity;
+
+
+// Ensure you cant do a 360 deg from looking top/bottom.
+    if (camera.rotation[0] >= 90.0) {
+        camera.rotation[0] = 90.0;
+    } else if (camera.rotation[0] <= -90.0) {
+        camera.rotation[0] = -90.0;
+    }
+}
 
 pub fn main() !void {
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
@@ -164,10 +249,8 @@ pub fn main() !void {
 
     // var last_time: i64 = 0;
 
-    var camera_pos: zm.Vec = .{ 0.0, 0.0, 2.0, 1.0 };
-    const camera_rot: zm.Vec = .{ 0.0, 0.0, 0.0, 1.0 };
-
-    const speed: f32 = 0.1;
+    _ = sdl.SDL_SetWindowRelativeMouseMode(window, true);
+    var mouse_grab = true;
 
     while (running) {
         var event: sdl.SDL_Event = undefined;
@@ -183,35 +266,28 @@ pub fn main() !void {
                             fullscreen = !fullscreen;
                             try Renderer.singleton.resize();
                         },
-
-                        sdl.SDLK_W => {
-                            camera_pos[2] -= speed;
+                        sdl.SDLK_ESCAPE => {
+                            _ = sdl.SDL_SetWindowRelativeMouseMode(window, false);
+                            mouse_grab = false;
                         },
-                        sdl.SDLK_S => {
-                            camera_pos[2] += speed;
+                        else => {
+                            keyPressed(event.key.key);
                         },
-                        sdl.SDLK_A => {
-                            camera_pos[0] -= speed;
-                        },
-                        sdl.SDLK_D => {
-                            camera_pos[0] += speed;
-                        },
-
-                        sdl.SDLK_SPACE => {
-                            camera_pos[1] += speed;
-                        },
-                        sdl.SDLK_LSHIFT => {
-                            camera_pos[1] -= speed;
-                        },
-
-                        else => {},
                     }
+                },
+                sdl.SDL_EVENT_KEY_UP => {
+                    keyReleased(event.key.key);
+                },
+                sdl.SDL_EVENT_MOUSE_MOTION => {
+                    handleMouseMotion(event.motion.xrel, event.motion.yrel);
                 },
                 else => {},
             }
         }
 
-        try Renderer.singleton.draw(mesh, material, camera_pos, camera_rot, instance_buffer, instances.len);
+        updateCameraPosition();
+
+        try Renderer.singleton.draw(mesh, material, camera.position, camera.rotation, instance_buffer, instances.len);
 
         // if (std.time.milliTimestamp() - last_time >= 500) {
         //     console.clear();
