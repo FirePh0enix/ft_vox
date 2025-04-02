@@ -152,7 +152,7 @@ pub fn recordCommandBuffer(
         var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
         projection_matrix[1][1] *= -1;
 
-        const camera_matrix = zm.mul(zm.mul(zm.translationV(-camera.position), camera.calculateViewMatrix()), projection_matrix);
+        const camera_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
 
         const constants: Mesh.PushConstants = .{
             .camera_matrix = camera_matrix,

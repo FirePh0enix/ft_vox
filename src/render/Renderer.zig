@@ -895,6 +895,6 @@ fn findQueues(
     return queue;
 }
 
-pub fn rdr() Self {
-    return singleton;
+pub fn rdr() *Self {
+    return &singleton;
 }

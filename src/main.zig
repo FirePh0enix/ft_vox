@@ -4,6 +4,7 @@ const sdl = @import("sdl");
 const builtin = @import("builtin");
 const console = @import("console.zig");
 const zm = @import("zmath");
+const input = @import("input.zig");
 
 const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
@@ -25,56 +26,6 @@ else
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
 var camera = Camera{};
-const speed: f32 = 0.1;
-
-const Movement = enum { forward, left, right, backward };
-var movement_states: std.EnumArray(Movement, bool) = .initFill(false);
-
-pub fn keyPressed(key: u32) void {
-    switch (key) {
-        sdl.SDLK_W => movement_states.set(.forward, true),
-        sdl.SDLK_A => movement_states.set(.left, true),
-        sdl.SDLK_S => movement_states.set(.backward, true),
-        sdl.SDLK_D => movement_states.set(.right, true),
-        else => {},
-    }
-}
-
-pub fn keyReleased(key: u32) void {
-    switch (key) {
-        sdl.SDLK_W => movement_states.set(.forward, false),
-        sdl.SDLK_A => movement_states.set(.left, false),
-        sdl.SDLK_S => movement_states.set(.backward, false),
-        sdl.SDLK_D => movement_states.set(.right, false),
-        else => {},
-    }
-}
-
-pub fn updateCameraPosition() void {
-    const forward: zm.Vec = camera.forward();
-    const right: zm.Vec = camera.right();
-
-    if (movement_states.get(.forward)) {
-        camera.position[0] += forward[0] * speed;
-        camera.position[1] += forward[1] * speed;
-        camera.position[2] += forward[2] * speed;
-    }
-    if (movement_states.get(.backward)) {
-        camera.position[0] -= forward[0] * speed;
-        camera.position[1] -= forward[1] * speed;
-        camera.position[2] -= forward[2] * speed;
-    }
-    if (movement_states.get(.left)) {
-        camera.position[0] -= right[0] * speed;
-        camera.position[1] -= right[1] * speed;
-        camera.position[2] -= right[2] * speed;
-    }
-    if (movement_states.get(.right)) {
-        camera.position[0] += right[0] * speed;
-        camera.position[1] += right[1] * speed;
-        camera.position[2] += right[2] * speed;
-    }
-}
 
 pub fn main() !void {
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
@@ -101,7 +52,6 @@ pub fn main() !void {
     _ = sdl.SDL_ShowWindow(window);
 
     var running = true;
-    var fullscreen = false;
 
     const mesh = try Mesh.init(u16, &.{
         0, 1, 2, 2, 3, 0, // front
@@ -218,8 +168,9 @@ pub fn main() !void {
         }
     }
 
+    input.init(window);
+
     var last_time: i64 = 0;
-    var mouse_grab = false;
 
     while (running) {
         var event: sdl.SDL_Event = undefined;
@@ -228,37 +179,11 @@ pub fn main() !void {
             switch (event.type) {
                 sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
                 sdl.SDL_EVENT_WINDOW_RESIZED => try Renderer.singleton.resize(),
-                sdl.SDL_EVENT_KEY_DOWN => {
-                    switch (event.key.key) {
-                        sdl.SDLK_F => {
-                            _ = sdl.SDL_SetWindowFullscreen(window, !fullscreen);
-                            fullscreen = !fullscreen;
-                            try Renderer.singleton.resize();
-                        },
-                        sdl.SDLK_ESCAPE => {
-                            _ = sdl.SDL_SetWindowRelativeMouseMode(window, false);
-                            mouse_grab = false;
-                        },
-                        else => {
-                            keyPressed(event.key.key);
-                        },
-                    }
-                },
-                sdl.SDL_EVENT_KEY_UP => {
-                    keyReleased(event.key.key);
-                },
-                sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
-                    _ = sdl.SDL_SetWindowRelativeMouseMode(window, true);
-                    mouse_grab = true;
-                },
-                sdl.SDL_EVENT_MOUSE_MOTION => {
-                    if (mouse_grab) camera.rotate(event.motion.xrel, event.motion.yrel);
-                },
-                else => {},
+                else => try input.handleSDLEvent(event, &camera),
             }
         }
 
-        updateCameraPosition();
+        camera.updateCamera();
 
         render_frame.reset();
         try render_frame.addBlocks(&instances);
@@ -266,10 +191,10 @@ pub fn main() !void {
         try Renderer.singleton.draw(&camera, &render_frame);
 
         if (std.time.milliTimestamp() - last_time >= 500) {
-            // console.clear();
-            // console.moveToStart();
+            console.clear();
+            console.moveToStart();
 
-            // Renderer.singleton.printDebugStats();
+            Renderer.singleton.printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }
