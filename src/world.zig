@@ -36,20 +36,20 @@ pub const BlockState = packed struct(u32) {
     id: BlockId = 0,
     can_be_seen: bool = false,
     direction: Direction = .north,
-    _padding: u12,
+    _padding: u12 = 0,
 };
 
 pub const ChunkPos = struct {
-    x: u32,
-    z: u32,
+    x: isize,
+    z: isize,
 };
 
 pub const Chunk = struct {
-    const length = 16;
-    const height = 256;
+    pub const length = 16;
+    pub const height = 256;
 
     position: ChunkPos,
-    blocks: [length * height * length]BlockState,
+    blocks: [length * height * length]BlockState = @splat(BlockState{}),
 
     pub fn draw(self: *const Chunk, render_frame: *RenderFrame) void {
         var index: usize = 0;
@@ -58,10 +58,14 @@ pub const Chunk = struct {
             for (0..height) |y| {
                 for (0..length) |z| {
                     if (self.getBlockState(x, y, z)) |block| {
-                        _ = block;
+                        if (!block.can_be_seen) continue;
 
                         const instance: RenderFrame.BlockInstanceData = .{
-                            .model_matrix = zm.translation(@floatFromInt(x + self.position.x * length), @floatFromInt(y), @floatFromInt(z + self.position.z * length)),
+                            .model_matrix = zm.translation(
+                                @floatFromInt(@as(isize, @intCast(x)) + self.position.x * length),
+                                @floatFromInt(@as(isize, @intCast(y))),
+                                @floatFromInt(@as(isize, @intCast(z)) + self.position.z * length),
+                            ),
                         };
 
                         render_frame.addBlocks(&.{instance}) catch @panic("Cannot add more block the renderer");
@@ -77,5 +81,9 @@ pub const Chunk = struct {
         const block: BlockState = self.blocks[z * length * height + y * length + x];
         if (block.id == 0) return null;
         return block;
+    }
+
+    pub fn setBlockState(self: *Chunk, x: usize, y: usize, z: usize, state: BlockState) void {
+        self.blocks[z * length * height + y * length + x] = state;
     }
 };

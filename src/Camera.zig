@@ -7,7 +7,7 @@ const Vec = zm.Vec;
 const Quat = zm.Quat;
 const Mat = zm.Mat;
 
-speed: f32 = 0.06,
+speed: f32 = 0.15,
 position: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
 rotation: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
 

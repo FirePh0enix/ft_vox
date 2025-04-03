@@ -26,7 +26,7 @@ block_instance_staging_buffer: Buffer,
 mesh: Mesh,
 material: Material,
 
-const preallocated_instance_count: usize = 65536;
+const preallocated_instance_count: usize = 65536 * 64;
 
 pub fn create(allocator: Allocator, mesh: Mesh, material: Material) !Self {
     return .{

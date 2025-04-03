@@ -6,6 +6,7 @@ const console = @import("console.zig");
 const zm = @import("zmath");
 const input = @import("input.zig");
 const world = @import("world.zig");
+const world_gen = @import("world_gen.zig");
 
 const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
@@ -30,7 +31,10 @@ else
 
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
-var camera = Camera{};
+var camera = Camera{
+    .position = .{ 64.0, 20.0, -10.0, 0.0 },
+    .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
+};
 
 pub fn main() !void {
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
@@ -156,7 +160,9 @@ pub fn main() !void {
     const material = try Material.init(image, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
-    var the_world: World = .{ .seed = 0, .allocator = allocator };
+    var the_world = try world_gen.generateWorld(allocator, .{
+        .seed = 0,
+    });
     defer the_world.deinit();
 
     input.init(window);
