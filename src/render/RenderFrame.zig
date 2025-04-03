@@ -58,10 +58,10 @@ pub fn recordCommandBuffer(
     // between calls using barriers.
     const draw_calls = std.math.divCeil(usize, self.block_instances.items.len, preallocated_instance_count) catch 0;
 
-    for (0..draw_calls) |draw_index| {
-        const index = draw_index * preallocated_instance_count;
-        const count = @min(self.block_instances.items.len - index, preallocated_instance_count);
+    const index = 0 * preallocated_instance_count;
+    const count = @min(self.block_instances.items.len - index, preallocated_instance_count);
 
+    if (count > 0) {
         const byte_index: usize = index * @sizeOf(BlockInstanceData);
         const byte_size: usize = count * @as(usize, @sizeOf(BlockInstanceData));
 
@@ -104,23 +104,27 @@ pub fn recordCommandBuffer(
             0,
             null,
         );
+    }
 
-        // Begin a new render pass.
-        const clears: []const vk.ClearValue = &.{
-            .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
-            .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
-        };
+    // Begin a new render pass.
+    const clears: []const vk.ClearValue = &.{
+        .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
+        .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
+    };
 
-        command_buffer.beginRenderPass(&vk.RenderPassBeginInfo{
-            .render_pass = rdr().render_pass,
-            .framebuffer = framebuffer,
-            .render_area = .{
-                .offset = .{ .x = 0, .y = 0 },
-                .extent = rdr().swapchain_extent,
-            },
-            .clear_value_count = @intCast(clears.len),
-            .p_clear_values = clears.ptr,
-        }, .@"inline");
+    command_buffer.beginRenderPass(&vk.RenderPassBeginInfo{
+        .render_pass = rdr().render_pass,
+        .framebuffer = framebuffer,
+        .render_area = .{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = rdr().swapchain_extent,
+        },
+        .clear_value_count = @intCast(clears.len),
+        .p_clear_values = clears.ptr,
+    }, .@"inline");
+
+    for (0..draw_calls) |draw_index| {
+        _ = draw_index;
 
         // Bind command pipeline, buffer and other vulkan stuff.
         command_buffer.bindPipeline(.graphics, self.material.pipeline.pipeline);
@@ -162,6 +166,7 @@ pub fn recordCommandBuffer(
 
         // And then we draw our instances.
         command_buffer.drawIndexed(@intCast(self.mesh.count), @intCast(self.block_instances.items.len), 0, 0, 0);
-        command_buffer.endRenderPass();
     }
+
+    command_buffer.endRenderPass();
 }
