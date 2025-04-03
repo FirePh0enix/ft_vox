@@ -14,7 +14,7 @@ const Camera = @import("../Camera.zig");
 const rdr = Renderer.rdr;
 
 pub const BlockInstanceData = struct {
-    model_matrix: zm.Mat,
+    model_position: [3]f32,
 };
 
 allocator: Allocator,
@@ -26,7 +26,7 @@ block_instance_staging_buffer: Buffer,
 mesh: Mesh,
 material: Material,
 
-const preallocated_instance_count: usize = 65536 * 64;
+const preallocated_instance_count: usize = 65536 * 21 * 21;
 
 pub fn create(allocator: Allocator, mesh: Mesh, material: Material) !Self {
     return .{
@@ -46,6 +46,10 @@ pub fn reset(self: *Self) void {
 
 pub fn addBlocks(self: *Self, instances: []const BlockInstanceData) !void {
     try self.block_instances.appendSlice(self.allocator, instances);
+}
+
+pub fn addBlock(self: *Self, instance: BlockInstanceData) !void {
+    try self.block_instances.append(self.allocator, instance);
 }
 
 pub fn recordCommandBuffer(

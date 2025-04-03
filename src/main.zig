@@ -137,12 +137,12 @@ pub fn main() !void {
         .buffers = &.{
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .mat4, .rate = .instance },
+            ShaderModel.Buffer{ .element_type = .vec3, .rate = .instance },
         },
         .inputs = &.{
             ShaderModel.Input{ .binding = 0, .type = .vec3 },
             ShaderModel.Input{ .binding = 1, .type = .vec2 },
-            ShaderModel.Input{ .binding = 2, .type = .mat4 },
+            ShaderModel.Input{ .binding = 2, .type = .vec3 },
         },
         .descriptors = &.{
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
@@ -169,7 +169,21 @@ pub fn main() !void {
 
     var last_time: i64 = 0;
 
+    const time_between_update: i64 = 1000000 / 60;
+    var last_update_time: i64 = 0;
+
+    // For now the world is not changing so no need to regerate the frame each time.
+    render_frame.reset();
+    the_world.draw(&render_frame);
+
     while (running) {
+        if (std.time.microTimestamp() - last_update_time < time_between_update) {
+            continue;
+        }
+        last_update_time = std.time.microTimestamp();
+
+        const time_before = std.time.microTimestamp();
+
         var event: sdl.SDL_Event = undefined;
 
         while (sdl.SDL_PollEvent(&event)) {
@@ -182,16 +196,18 @@ pub fn main() !void {
 
         camera.updateCamera();
 
-        render_frame.reset();
-        the_world.draw(&render_frame);
-
         try Renderer.singleton.draw(&camera, &render_frame);
+
+        const time_after = std.time.microTimestamp();
+        const elapsed = time_after - time_before;
+
+        rdr().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 
         if (std.time.milliTimestamp() - last_time >= 500) {
             console.clear();
             console.moveToStart();
 
-            Renderer.singleton.printDebugStats();
+            rdr().printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }

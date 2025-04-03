@@ -95,6 +95,8 @@ pub const Statistics = struct {
     min_gpu_time: f32 = std.math.inf(f32),
     max_gpu_time: f32 = 0.0,
 
+    prv_cpu_time: f32 = 0.0,
+
     frames_recorded: usize = 0,
 
     /// Number of primitives drawn during last frame.
@@ -592,6 +594,7 @@ pub fn printDebugStats(self: *const Self) void {
         total_bytes += budgets[index].statistics.allocationBytes;
     }
 
+    std.debug.print("CPU Time   : prev = {d} ms\n", .{self.statistics.prv_cpu_time});
     std.debug.print("GPU Time   : prev = {d} ms, min = {d} ms, max = {d} ms\n", .{ self.statistics.prv_gpu_time, self.statistics.min_gpu_time, self.statistics.max_gpu_time });
     std.debug.print("GPU Memory : {d:.2}\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
     std.debug.print("Primitives : {}\n", .{self.statistics.primitives});

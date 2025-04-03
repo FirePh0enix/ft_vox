@@ -61,11 +61,11 @@ pub const Chunk = struct {
                         if (!block.can_be_seen) continue;
 
                         const instance: RenderFrame.BlockInstanceData = .{
-                            .model_matrix = zm.translation(
+                            .model_position = .{
                                 @floatFromInt(@as(isize, @intCast(x)) + self.position.x * length),
                                 @floatFromInt(@as(isize, @intCast(y))),
                                 @floatFromInt(@as(isize, @intCast(z)) + self.position.z * length),
-                            ),
+                            },
                         };
 
                         render_frame.addBlocks(&.{instance}) catch @panic("Cannot add more block the renderer");

@@ -23,10 +23,10 @@ pub fn rotate(self: *Self, x_rel: f32, y_rel: f32) void {
     self.rotation[0] += y_rel * input.mouse_sensibility;
     self.rotation[1] += x_rel * input.mouse_sensibility;
 
-    if (self.rotation[0] > std.math.pi) self.rotation[0] -= std.math.pi;
-    if (self.rotation[0] < -std.math.pi) self.rotation[0] += std.math.pi;
-    if (self.rotation[1] > std.math.pi) self.rotation[1] -= std.math.pi;
-    if (self.rotation[1] < -std.math.pi) self.rotation[1] += std.math.pi;
+    if (self.rotation[0] > std.math.tau) self.rotation[0] -= std.math.tau;
+    if (self.rotation[0] < -std.math.tau) self.rotation[0] += std.math.tau;
+    if (self.rotation[1] > std.math.tau) self.rotation[1] -= std.math.tau;
+    if (self.rotation[1] < -std.math.tau) self.rotation[1] += std.math.tau;
 }
 
 pub fn updateCamera(self: *Self) void {
