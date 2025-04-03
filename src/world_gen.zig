@@ -15,14 +15,33 @@ pub fn generateWorld(allocator: Allocator, options: Options) !World {
     const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
     var the_world: World = .{ .allocator = allocator, .seed = seed };
 
-    const width = 8;
-    const depth = 8;
+    const width = 32;
+    const depth = 32;
 
     for (0..width) |x| {
         for (0..depth) |z| {
-            var chunk = try generateChunk(seed, @intCast(x), @intCast(z));
-            try chunk.rebuildInstanceBuffer();
+            const chunk = try generateChunk(seed, @intCast(x), @intCast(z));
             try the_world.chunks.append(the_world.allocator, chunk);
+        }
+    }
+
+    for (0..width) |x| {
+        for (0..depth) |z| {
+            const chunk = &the_world.chunks.items[x + z * width];
+
+            chunk.computeVisibilityForAllBlocks(
+                if (z > 0) &the_world.chunks.items[x + (z - 1) * width] else null,
+                if (z < depth - 1) &the_world.chunks.items[x + (z + 1) * width] else null,
+                if (x > 0) &the_world.chunks.items[(x - 1) + z * width] else null,
+                if (x < width - 1) &the_world.chunks.items[(x + 1) + z * width] else null,
+            );
+        }
+    }
+
+    for (0..width) |x| {
+        for (0..depth) |z| {
+            const chunk = &the_world.chunks.items[x + z * width];
+            try chunk.rebuildInstanceBuffer();
         }
     }
 

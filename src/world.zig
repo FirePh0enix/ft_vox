@@ -79,7 +79,7 @@ pub const Chunk = struct {
                 for (0..length) |z| {
                     const block: BlockState = self.blocks[z * length * height + y * length + x];
 
-                    if (block.id == 0) continue;
+                    if (block.id == 0 or !block.can_be_seen) continue;
 
                     instances[index] = .{
                         .position = .{
@@ -95,5 +95,40 @@ pub const Chunk = struct {
 
         self.instance_count = index;
         try self.instance_buffer.update(BlockInstance, instances[0..index]);
+    }
+
+    pub fn computeVisibilityForAllBlocks(
+        self: *Chunk,
+        north: ?*const Chunk,
+        south: ?*const Chunk,
+        west: ?*const Chunk,
+        east: ?*const Chunk,
+    ) void {
+        _ = north;
+        _ = south;
+        _ = west;
+        _ = east;
+
+        var c: usize = 0;
+
+        for (0..length) |x| {
+            for (0..height) |y| {
+                for (0..length) |z| {
+                    var neighbour_count: usize = 0;
+
+                    if (x > 0 and self.getBlockState(x - 1, y, z) != null) neighbour_count += 1;
+                    if (x < length - 1 and self.getBlockState(x + 1, y, z) != null) neighbour_count += 1;
+
+                    if (y > 0 and self.getBlockState(x, y - 1, z) != null) neighbour_count += 1;
+                    if (y < height - 1 and self.getBlockState(x, y + 1, z) != null) neighbour_count += 1;
+
+                    if (z > 0 and self.getBlockState(x, y, z - 1) != null) neighbour_count += 1;
+                    if (z < length - 1 and self.getBlockState(x, y, z + 1) != null) neighbour_count += 1;
+
+                    self.blocks[z * length * height + y * length + x].can_be_seen = neighbour_count < 6;
+                    if (neighbour_count == 6) c += 1;
+                }
+            }
+        }
     }
 };

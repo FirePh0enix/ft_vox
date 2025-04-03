@@ -195,7 +195,7 @@ pub fn main() !void {
 
         camera.updateCamera();
 
-        try Renderer.singleton.draw(&camera, &the_world, &render_frame);
+        try rdr().draw(&camera, &the_world, &render_frame);
 
         const time_after = std.time.microTimestamp();
         const elapsed = time_after - time_before;

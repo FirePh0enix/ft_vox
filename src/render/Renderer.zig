@@ -37,6 +37,7 @@ instance: Instance,
 device: Device,
 surface: vk.SurfaceKHR,
 physical_device: vk.PhysicalDevice,
+physical_device_properties: vk.PhysicalDeviceProperties,
 window: *sdl.SDL_Window,
 render_pass: vk.RenderPass,
 command_pool: vk.CommandPool,
@@ -460,6 +461,7 @@ pub fn init(
         .compute_queue_index = physical_device_with_info.queue_info.compute_index orelse undefined,
         .surface = surface,
         .physical_device = physical_device,
+        .physical_device_properties = physical_device_with_info.properties,
         .command_pool = command_pool,
         .window = window,
         .render_pass = render_pass,
@@ -569,7 +571,7 @@ pub fn draw(
 
     var timestamp_buffer: [2]u64 = .{ 0, 0 };
     if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-        if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) / 1000000.0);
+        if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) * self.physical_device_properties.limits.timestamp_period / 1000000.0);
     }
     self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
 
