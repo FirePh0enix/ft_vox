@@ -19,15 +19,18 @@ const Camera = @import("Camera.zig");
 const RenderFrame = @import("render/RenderFrame.zig");
 const World = world.World;
 const Chunk = world.Chunk;
+const TrackingAllocator = @import("TrackingAllocator.zig");
 
 const rdr = Renderer.rdr;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-pub const allocator: std.mem.Allocator = if (builtin.mode == .Debug)
-    debug_allocator.allocator()
+pub var tracking_allocator = if (builtin.mode == .Debug)
+    TrackingAllocator{ .backing_allocator = debug_allocator.allocator() }
 else
-    std.heap.smp_allocator;
+    TrackingAllocator{ .backing_allocator = std.heap.smp_allocator };
+
+pub const allocator: std.mem.Allocator = tracking_allocator.allocator();
 
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
@@ -172,10 +175,6 @@ pub fn main() !void {
     const time_between_update: i64 = 1000000 / 60;
     var last_update_time: i64 = 0;
 
-    // For now the world is not changing so no need to regerate the frame each time.
-    render_frame.reset();
-    the_world.draw(&render_frame);
-
     while (running) {
         if (std.time.microTimestamp() - last_update_time < time_between_update) {
             continue;
@@ -196,7 +195,7 @@ pub fn main() !void {
 
         camera.updateCamera();
 
-        try Renderer.singleton.draw(&camera, &render_frame);
+        try Renderer.singleton.draw(&camera, &the_world, &render_frame);
 
         const time_after = std.time.microTimestamp();
         const elapsed = time_after - time_before;

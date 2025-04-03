@@ -20,7 +20,8 @@ pub fn generateWorld(allocator: Allocator, options: Options) !World {
 
     for (0..width) |x| {
         for (0..depth) |z| {
-            const chunk = try generateChunk(seed, @intCast(x), @intCast(z));
+            var chunk = try generateChunk(seed, @intCast(x), @intCast(z));
+            try chunk.rebuildInstanceBuffer();
             try the_world.chunks.append(the_world.allocator, chunk);
         }
     }

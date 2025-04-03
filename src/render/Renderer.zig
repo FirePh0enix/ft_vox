@@ -4,6 +4,7 @@ const sdl = @import("sdl");
 const builtin = @import("builtin");
 const vma = @import("vma");
 const zm = @import("zmath");
+const world = @import("../world.zig");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
@@ -14,6 +15,7 @@ const Buffer = @import("Buffer.zig");
 const Material = @import("../Material.zig");
 const RenderFrame = @import("RenderFrame.zig");
 const Camera = @import("../Camera.zig");
+const World = world.World;
 
 pub const Base = vk.BaseWrapper;
 pub const Instance = vk.InstanceProxy;
@@ -501,6 +503,7 @@ pub fn deinit(self: *const Self) void {
 pub fn draw(
     self: *Self,
     camera: *const Camera,
+    the_world: *const World,
     render_frame: *const RenderFrame,
 ) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
@@ -527,7 +530,7 @@ pub fn draw(
         command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
     }
 
-    try render_frame.recordCommandBuffer(command_buffer, camera, self.swapchain_framebuffers[image_index]);
+    try render_frame.recordCommandBuffer(command_buffer, camera, the_world, self.swapchain_framebuffers[image_index]);
 
     if (!use_moltenvk) command_buffer.endQuery(self.primitives_query_pool, 0);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
@@ -595,8 +598,9 @@ pub fn printDebugStats(self: *const Self) void {
     }
 
     std.debug.print("CPU Time   : prev = {d} ms\n", .{self.statistics.prv_cpu_time});
+    std.debug.print("CPU Memory : {d:.2}\n\n", .{std.fmt.fmtIntSizeBin(@import("root").tracking_allocator.total_allocated_bytes)});
     std.debug.print("GPU Time   : prev = {d} ms, min = {d} ms, max = {d} ms\n", .{ self.statistics.prv_gpu_time, self.statistics.min_gpu_time, self.statistics.max_gpu_time });
-    std.debug.print("GPU Memory : {d:.2}\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
+    std.debug.print("GPU Memory : {d:.2}\n\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
     std.debug.print("Primitives : {}\n", .{self.statistics.primitives});
 }
 
