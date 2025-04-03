@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const console = @import("console.zig");
 const zm = @import("zmath");
 const input = @import("input.zig");
+const world = @import("world.zig");
 
 const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
@@ -15,6 +16,10 @@ const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Camera = @import("Camera.zig");
 const RenderFrame = @import("render/RenderFrame.zig");
+const World = world.World;
+const Chunk = world.Chunk;
+
+const rdr = Renderer.rdr;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
@@ -151,22 +156,8 @@ pub fn main() !void {
     const material = try Material.init(image, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
-
-    const width = 64;
-    const height = 16;
-    const depth = 64;
-
-    var instances: [width * height * depth]RenderFrame.BlockInstanceData = undefined;
-
-    for (0..width) |x| {
-        for (0..height) |y| {
-            for (0..depth) |z| {
-                instances[z * width * height + y * width + x] = .{
-                    .model_matrix = zm.translation(@floatFromInt(x), @floatFromInt(y), -@as(f32, @floatFromInt(z))),
-                };
-            }
-        }
-    }
+    var the_world: World = .{ .seed = 0, .allocator = allocator };
+    defer the_world.deinit();
 
     input.init(window);
 
@@ -186,7 +177,7 @@ pub fn main() !void {
         camera.updateCamera();
 
         render_frame.reset();
-        try render_frame.addBlocks(&instances);
+        the_world.draw(&render_frame);
 
         try Renderer.singleton.draw(&camera, &render_frame);
 
