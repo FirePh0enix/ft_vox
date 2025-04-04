@@ -19,6 +19,10 @@ pub const BlockInstanceData = struct {
     model_position: [3]f32,
 };
 
+pub const PushConstants = extern struct {
+    camera_matrix: zm.Mat,
+};
+
 const LightInfo = struct {
     sun_direction: zm.Vec,
     sun_color: zm.Vec,
@@ -52,7 +56,7 @@ pub fn create(allocator: Allocator, mesh: Mesh, material: Material) !Self {
 
     // Update the light buffer
     const light_info: LightInfo = .{
-        .sun_direction = zm.normalize3(.{ 0.0, -1.0, 0.0, 0.0 }),
+        .sun_direction = zm.normalize3(.{ -1.0, -1.0, 0.0, 0.0 }),
         .sun_color = .{ 1.0, 1.0, 1.0, 1.0 },
     };
 
@@ -120,11 +124,11 @@ pub fn recordCommandBuffer(
 
     const camera_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
 
-    const constants: Mesh.PushConstants = .{
+    const constants: PushConstants = .{
         .camera_matrix = camera_matrix,
     };
 
-    command_buffer.pushConstants(self.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
+    command_buffer.pushConstants(self.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), @ptrCast(&constants));
 
     for (the_world.chunks.items) |*chunk| {
         command_buffer.bindVertexBuffers(3, 1, @ptrCast(&chunk.instance_buffer.buffer), &.{0});

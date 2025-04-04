@@ -22,5 +22,5 @@ void main() {
 
     gl_Position = cameraMatrix * modelMatrix * vec4(position, 1.0);
     fragTextureCoords = textureCoords;
-    fragNormal = (modelMatrix * vec4(normal, 1.0)).xyz;
+    fragNormal = normal;
 }

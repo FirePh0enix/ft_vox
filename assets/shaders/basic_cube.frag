@@ -12,9 +12,6 @@ layout(binding = 1) uniform Light
     vec4 sun_color;
 };
 
-const float min_brightness = 0.1;
-
 void main() {
-    float brightness = clamp(dot(normalize(sun_direction.xyz), -normalize(normal)), min_brightness, 1.0);
-    outColor = brightness * sun_color * texture(image, textureCoords);
+    outColor = texture(image, textureCoords);
 }
