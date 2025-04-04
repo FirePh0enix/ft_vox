@@ -19,16 +19,50 @@ pub const BlockInstanceData = struct {
     model_position: [3]f32,
 };
 
+const LightInfo = struct {
+    sun_direction: zm.Vec,
+    sun_color: zm.Vec,
+};
+
 allocator: Allocator,
 
 mesh: Mesh,
 material: Material,
 
+light_buffer: Buffer,
+
 pub fn create(allocator: Allocator, mesh: Mesh, material: Material) !Self {
+    var light_buffer = try Buffer.create(@sizeOf(LightInfo), .{ .uniform_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only);
+    const light_buffer_info: vk.DescriptorBufferInfo = .{ .buffer = light_buffer.buffer, .offset = 0, .range = @sizeOf(LightInfo) };
+
+    const writes: []const vk.WriteDescriptorSet = &.{
+        vk.WriteDescriptorSet{
+            .dst_set = material.descriptor_set,
+            .dst_binding = 1,
+            .dst_array_element = 0,
+            .descriptor_count = 1,
+            .descriptor_type = .uniform_buffer,
+            .p_image_info = undefined,
+            .p_buffer_info = @ptrCast(&light_buffer_info),
+            .p_texel_buffer_view = undefined,
+        },
+    };
+
+    rdr().device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
+
+    // Update the light buffer
+    const light_info: LightInfo = .{
+        .sun_direction = zm.normalize3(.{ 0.0, -1.0, 0.0, 0.0 }),
+        .sun_color = .{ 1.0, 1.0, 1.0, 1.0 },
+    };
+
+    try light_buffer.update(LightInfo, &.{light_info});
+
     return .{
         .allocator = allocator,
         .mesh = mesh,
         .material = material,
+        .light_buffer = light_buffer,
     };
 }
 
@@ -61,8 +95,8 @@ pub fn recordCommandBuffer(
     command_buffer.bindDescriptorSets(.graphics, self.material.pipeline.layout, 0, 1, @ptrCast(&self.material.descriptor_set), 0, null);
 
     command_buffer.bindIndexBuffer(self.mesh.index_buffer.buffer, 0, self.mesh.index_type);
-    command_buffer.bindVertexBuffers(0, 1, @ptrCast(&self.mesh.vertex_buffer.buffer), &.{0});
-    command_buffer.bindVertexBuffers(1, 1, @ptrCast(&self.mesh.texture_buffer), &.{0});
+
+    command_buffer.bindVertexBuffers(0, 3, &.{ self.mesh.vertex_buffer.buffer, self.mesh.normal_buffer.buffer, self.mesh.texture_buffer.buffer }, &.{ 0, 0, 0 });
 
     command_buffer.setViewport(0, 1, @ptrCast(&vk.Viewport{
         .x = 0.0,
@@ -93,7 +127,7 @@ pub fn recordCommandBuffer(
     command_buffer.pushConstants(self.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Mesh.PushConstants), @ptrCast(&constants));
 
     for (the_world.chunks.items) |*chunk| {
-        command_buffer.bindVertexBuffers(2, 1, @ptrCast(&chunk.instance_buffer.buffer), &.{0});
+        command_buffer.bindVertexBuffers(3, 1, @ptrCast(&chunk.instance_buffer.buffer), &.{0});
 
         // And then we draw our instances.
         command_buffer.drawIndexed(@intCast(self.mesh.count), @intCast(chunk.instance_count), 0, 0, 0);

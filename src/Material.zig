@@ -6,6 +6,8 @@ const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const Renderer = @import("render/Renderer.zig");
 const Self = @This();
 
+const rdr = Renderer.rdr;
+
 image: Image,
 pipeline: *GraphicsPipeline,
 descriptor_set: vk.DescriptorSet,
@@ -57,5 +59,5 @@ pub fn writeDescriptors(self: *Self) void {
         },
     };
 
-    Renderer.singleton.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
+    rdr().device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
 }

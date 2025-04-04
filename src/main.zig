@@ -104,6 +104,37 @@ pub fn main() !void {
         .{ 1.0, 1.0, 0.0 },
         .{ 1.0, 1.0, 1.0 },
     }, &.{
+        // front
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        .{ 0.0, 0.0, 1.0 },
+        // top
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        .{ 0.0, 1.0, 0.0 },
+        // back
+        .{ 0.0, 0.0, -1.0 },
+        .{ 0.0, 0.0, -1.0 },
+        .{ 0.0, 0.0, -1.0 },
+        .{ 0.0, 0.0, -1.0 },
+        // bottom
+        .{ 0.0, -1.0, 0.0 },
+        .{ 0.0, -1.0, 0.0 },
+        .{ 0.0, -1.0, 0.0 },
+        .{ 0.0, -1.0, 0.0 },
+        // left
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        .{ 1.0, 0.0, 0.0 },
+        // right
+        .{ -1.0, 0.0, 0.0 },
+        .{ -1.0, 0.0, 0.0 },
+        .{ -1.0, 0.0, 0.0 },
+        .{ -1.0, 0.0, 0.0 },
+    }, &.{
         .{ 0.0, 0.0 },
         .{ 1.0, 0.0 },
         .{ 1.0, 1.0 },
@@ -139,16 +170,19 @@ pub fn main() !void {
         .shaders = &.{},
         .buffers = &.{
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
+            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .instance },
         },
         .inputs = &.{
             ShaderModel.Input{ .binding = 0, .type = .vec3 },
-            ShaderModel.Input{ .binding = 1, .type = .vec2 },
-            ShaderModel.Input{ .binding = 2, .type = .vec3 },
+            ShaderModel.Input{ .binding = 1, .type = .vec3 },
+            ShaderModel.Input{ .binding = 2, .type = .vec2 },
+            ShaderModel.Input{ .binding = 3, .type = .vec3 },
         },
         .descriptors = &.{
-            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
+            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // albedo texture
+            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 1, .stage = .fragment }, // lighting data
         },
         .push_constants = &.{
             ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
@@ -159,7 +193,7 @@ pub fn main() !void {
     const pipeline = try allocator.create(GraphicsPipeline);
     pipeline.* = try GraphicsPipeline.create(allocator, shader_model);
 
-    const image = try Image.createFromFile(allocator, "assets/textures/None.png");
+    const image = try Image.createFromFile(allocator, "assets/textures/Grass_Top.png");
     const material = try Material.init(image, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
@@ -203,10 +237,10 @@ pub fn main() !void {
         rdr().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 
         if (std.time.milliTimestamp() - last_time >= 500) {
-            console.clear();
-            console.moveToStart();
+            // console.clear();
+            // console.moveToStart();
 
-            rdr().printDebugStats();
+            // rdr().printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }
