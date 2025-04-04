@@ -20,6 +20,9 @@ const RenderFrame = @import("render/RenderFrame.zig");
 const World = world.World;
 const Chunk = world.Chunk;
 const TrackingAllocator = @import("TrackingAllocator.zig");
+const TextureDatabase = @import("voxel/TextureDatabase.zig");
+const Block = @import("voxel/Block.zig");
+const BlockRegistry = @import("voxel/BlockRegistry.zig");
 
 const rdr = Renderer.rdr;
 
@@ -73,16 +76,18 @@ pub fn main() !void {
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .vec3, .rate = .instance },
+            ShaderModel.Buffer{ .element_type = .{ .buffer = &.{ .vec3, .vec3, .vec3 } }, .rate = .instance },
         },
         .inputs = &.{
-            ShaderModel.Input{ .binding = 0, .type = .vec3 },
-            ShaderModel.Input{ .binding = 1, .type = .vec3 },
-            ShaderModel.Input{ .binding = 2, .type = .vec2 },
-            ShaderModel.Input{ .binding = 3, .type = .vec3 },
+            ShaderModel.Input{ .binding = 0, .type = .vec3 }, // position
+            ShaderModel.Input{ .binding = 1, .type = .vec3 }, // normal
+            ShaderModel.Input{ .binding = 2, .type = .vec2 }, // texture coordinates
+            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 0 }, // instance position
+            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 3 * @sizeOf(f32) }, // instance texture indices 0
+            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 6 * @sizeOf(f32) }, // instance texture indices 1
         },
         .descriptors = &.{
-            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // albedo texture
+            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
             ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 1, .stage = .fragment }, // lighting data
         },
         .push_constants = &.{
@@ -94,11 +99,41 @@ pub fn main() !void {
     const pipeline = try allocator.create(GraphicsPipeline);
     pipeline.* = try GraphicsPipeline.create(allocator, shader_model);
 
-    const image = try Image.createFromFile(allocator, "assets/textures/Grass_Top.png");
-    const material = try Material.init(image, pipeline);
+    var texture_database = TextureDatabase.init(allocator);
+    var block_registry = BlockRegistry.init(allocator);
+
+    _ = try texture_database.getOrRegisterImage("assets/textures/None.png");
+
+    const dirt_block: Block = .{
+        .textures = .{
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+        },
+    };
+    const grass_block: Block = .{
+        .textures = .{
+            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Grass_Top.png"),
+            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
+        },
+    };
+
+    try block_registry.registerBlock(dirt_block);
+    try block_registry.registerBlock(grass_block);
+
+    try texture_database.createTexture();
+
+    const material = try Material.init(texture_database.image_array.?, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
-    var the_world = try world_gen.generateWorld(allocator, .{
+    var the_world = try world_gen.generateWorld(allocator, &block_registry, .{
         .seed = 0,
     });
     defer the_world.deinit();

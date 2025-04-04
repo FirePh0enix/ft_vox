@@ -15,8 +15,10 @@ const World = world.World;
 
 const rdr = Renderer.rdr;
 
-pub const BlockInstanceData = struct {
-    model_position: [3]f32,
+pub const BlockInstanceData = extern struct {
+    position: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    textures0: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    textures1: [3]f32 = .{ 0.0, 0.0, 0.0 },
 };
 
 pub const PushConstants = extern struct {
@@ -33,40 +35,11 @@ allocator: Allocator,
 mesh: Mesh,
 material: Material,
 
-light_buffer: Buffer,
-
 pub fn create(allocator: Allocator, mesh: Mesh, material: Material) !Self {
-    var light_buffer = try Buffer.create(@sizeOf(LightInfo), .{ .uniform_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only);
-    const light_buffer_info: vk.DescriptorBufferInfo = .{ .buffer = light_buffer.buffer, .offset = 0, .range = @sizeOf(LightInfo) };
-
-    const writes: []const vk.WriteDescriptorSet = &.{
-        vk.WriteDescriptorSet{
-            .dst_set = material.descriptor_set,
-            .dst_binding = 1,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_image_info = undefined,
-            .p_buffer_info = @ptrCast(&light_buffer_info),
-            .p_texel_buffer_view = undefined,
-        },
-    };
-
-    rdr().device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
-
-    // Update the light buffer
-    const light_info: LightInfo = .{
-        .sun_direction = zm.normalize3(.{ -1.0, -1.0, 0.0, 0.0 }),
-        .sun_color = .{ 1.0, 1.0, 1.0, 1.0 },
-    };
-
-    try light_buffer.update(LightInfo, &.{light_info});
-
     return .{
         .allocator = allocator,
         .mesh = mesh,
         .material = material,
-        .light_buffer = light_buffer,
     };
 }
 

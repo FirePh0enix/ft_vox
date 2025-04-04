@@ -16,10 +16,6 @@
             .url = "git+https://github.com/castholm/SDL#dbb1b96360658f5845ff6fac380c4f13d7276dc2",
             .hash = "sdl-0.2.0+3.2.8-7uIn9FxHfQE325TK7b0qpgt10G3x1xl-3ZMOfTzxUg3C",
         },
-        .zm = .{
-            .url = "git+https://github.com/griush/zm#319a44a9b0859214b9240a5c4ae0d8ae9ac16672",
-            .hash = "zm-0.3.0-AAAAAL3MAAA2du9TcSd0z2lFBF5_Qv-0zd7F566Z7B3K",
-        },
         .shader_compiler = .{
             .url = "git+https://github.com/Games-by-Mason/shader_compiler#c25b6138d0bb92c487dd48f1cf16a51a76bfd4ca",
             .hash = "shader_compiler-0.0.0-bOVsallvAAACTK0MWFoh3ooCW75QEMKV_UWBi9biXT8g",

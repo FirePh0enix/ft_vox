@@ -6,12 +6,13 @@ const math = @import("math.zig");
 const Allocator = std.mem.Allocator;
 const World = world.World;
 const Chunk = world.Chunk;
+const BlockRegistry = @import("voxel/BlockRegistry.zig");
 
 pub const Options = struct {
     seed: ?u64 = null,
 };
 
-pub fn generateWorld(allocator: Allocator, options: Options) !World {
+pub fn generateWorld(allocator: Allocator, block_registry: *const BlockRegistry, options: Options) !World {
     const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
     var the_world: World = .{ .allocator = allocator, .seed = seed };
 
@@ -28,20 +29,7 @@ pub fn generateWorld(allocator: Allocator, options: Options) !World {
     for (0..width) |x| {
         for (0..depth) |z| {
             const chunk = &the_world.chunks.items[x + z * width];
-
-            chunk.computeVisibilityForAllBlocks(
-                if (z > 0) &the_world.chunks.items[x + (z - 1) * width] else null,
-                if (z < depth - 1) &the_world.chunks.items[x + (z + 1) * width] else null,
-                if (x > 0) &the_world.chunks.items[(x - 1) + z * width] else null,
-                if (x < width - 1) &the_world.chunks.items[(x + 1) + z * width] else null,
-            );
-        }
-    }
-
-    for (0..width) |x| {
-        for (0..depth) |z| {
-            const chunk = &the_world.chunks.items[x + z * width];
-            try chunk.rebuildInstanceBuffer();
+            try chunk.rebuildInstanceBuffer(block_registry);
         }
     }
 
@@ -56,7 +44,7 @@ fn generateChunk(seed: u64, chunk_x: isize, chunk_z: isize) !Chunk {
             const height = generateHeight(seed, chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
             for (0..height) |y| {
-                chunk.setBlockState(x, y, z, .{ .id = 1, .can_be_seen = true });
+                chunk.setBlockState(x, y, z, .{ .id = 2 });
             }
         }
     }

@@ -17,7 +17,9 @@ pub const InputRate = enum(u32) {
 };
 
 pub const Type = union(enum) {
-    scalar: void,
+    float: void,
+    int: void,
+    uint: void,
 
     vec2: void,
     vec3: void,
@@ -33,7 +35,7 @@ pub const Type = union(enum) {
 
     pub fn slots(self: Type) usize {
         switch (self) {
-            .scalar, .vec2, .vec3, .vec4, .dvec2 => return 1,
+            .float, .int, .uint, .vec2, .vec3, .vec4, .dvec2 => return 1,
             .dvec3, .dvec4 => return 2,
             .mat4 => return 4,
             .buffer => |fields| {
@@ -46,7 +48,7 @@ pub const Type = union(enum) {
 
     pub fn byteSize(self: Type) usize {
         switch (self) {
-            .scalar => return @sizeOf(f32),
+            .float, .int, .uint => return @sizeOf(f32),
             .vec2 => return 2 * @sizeOf(f32),
             .vec3 => return 3 * @sizeOf(f32),
             .vec4 => return 4 * @sizeOf(f32),
@@ -222,7 +224,9 @@ fn convertToVkAttribs(allocator: Allocator, comptime inputs: []const Input) !std
             vk_attribs.appendAssumeCapacity(vk.VertexInputAttributeDescription{ .binding = @intCast(input.binding), .location = @intCast(location + 3), .format = .r32g32b32a32_sfloat, .offset = @intCast(input.offset + 48) });
         } else {
             const format: vk.Format = switch (input.type) {
-                .scalar => .r32g32_sfloat,
+                .float => .r32_sfloat,
+                .int => .r32_sint,
+                .uint => .r32_uint,
                 .vec2 => .r32g32_sfloat,
                 .vec3 => .r32g32b32_sfloat,
                 .vec4 => .r32g32b32a32_sfloat,

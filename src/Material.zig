@@ -14,7 +14,7 @@ descriptor_set: vk.DescriptorSet,
 sampler: vk.Sampler,
 
 pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
-    const sampler = try Renderer.singleton.device.createSampler(&vk.SamplerCreateInfo{
+    const sampler = try rdr().device.createSampler(&vk.SamplerCreateInfo{
         .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
         .min_filter = .nearest,
         .mipmap_mode = .nearest,

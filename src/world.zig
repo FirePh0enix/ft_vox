@@ -4,6 +4,8 @@ const zm = @import("zmath");
 const RenderFrame = @import("render/RenderFrame.zig");
 const Buffer = @import("render/Buffer.zig");
 const Allocator = std.mem.Allocator;
+const BlockInstanceData = RenderFrame.BlockInstanceData;
+const BlockRegistry = @import("voxel/BlockRegistry.zig");
 
 pub const World = struct {
     allocator: Allocator,
@@ -21,19 +23,21 @@ pub const World = struct {
 pub const BlockId = u16;
 
 pub const Direction = enum(u3) {
-    north,
-    south,
-    east,
-    west,
-    top,
-    down,
+    north = 0,
+    south = 1,
+    east = 2,
+    west = 3,
+    top = 4,
+    down = 5,
 };
 
 pub const BlockState = packed struct(u32) {
     id: BlockId = 0,
-    can_be_seen: bool = false,
+
+    visibility: u6 = ~@as(u6, 0),
     direction: Direction = .north,
-    _padding: u12 = 0,
+
+    _padding: u7 = 0,
 };
 
 pub const ChunkPos = struct {
@@ -50,12 +54,8 @@ pub const Chunk = struct {
     blocks: [length * height * length]BlockState = @splat(BlockState{}),
 
     /// GPU buffer used to store block instances.
-    instance_buffer: Buffer = std.mem.zeroes(Buffer),
+    instance_buffer: Buffer = .{ .buffer = .null_handle, .allocation = null, .size = 0 },
     instance_count: usize = 0,
-
-    pub const BlockInstance = extern struct {
-        position: [3]f32 = .{ 0.0, 0.0, 0.0 },
-    };
 
     pub fn getBlockState(self: *const Chunk, x: usize, y: usize, z: usize) ?BlockState {
         const block: BlockState = self.blocks[z * length * height + y * length + x];
@@ -67,19 +67,21 @@ pub const Chunk = struct {
         self.blocks[z * length * height + y * length + x] = state;
     }
 
-    pub fn rebuildInstanceBuffer(self: *Chunk) !void {
+    pub fn rebuildInstanceBuffer(self: *Chunk, block_registry: *const BlockRegistry) !void {
         if (self.instance_buffer.buffer == .null_handle)
-            self.instance_buffer = try Buffer.create(@sizeOf(BlockInstance) * block_count, .{ .transfer_dst_bit = true, .vertex_buffer_bit = true }, .gpu_only);
+            self.instance_buffer = try Buffer.create(@sizeOf(BlockInstanceData) * block_count, .{ .transfer_dst_bit = true, .vertex_buffer_bit = true }, .gpu_only);
 
         var index: usize = 0;
-        var instances: [block_count]BlockInstance = @splat(BlockInstance{});
+        var instances: [block_count]BlockInstanceData = @splat(BlockInstanceData{});
 
         for (0..length) |x| {
             for (0..height) |y| {
                 for (0..length) |z| {
                     const block: BlockState = self.blocks[z * length * height + y * length + x];
 
-                    if (block.id == 0 or !block.can_be_seen) continue;
+                    if (block.id == 0 or block.visibility == 0) continue;
+
+                    const textures = (block_registry.get(block.id) orelse unreachable).textures;
 
                     instances[index] = .{
                         .position = .{
@@ -87,6 +89,8 @@ pub const Chunk = struct {
                             @floatFromInt(y),
                             @floatFromInt(self.position.z * 16 + @as(isize, @intCast(z))),
                         },
+                        .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
+                        .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
                     };
                     index += 1;
                 }
@@ -94,41 +98,6 @@ pub const Chunk = struct {
         }
 
         self.instance_count = index;
-        try self.instance_buffer.update(BlockInstance, instances[0..index]);
-    }
-
-    pub fn computeVisibilityForAllBlocks(
-        self: *Chunk,
-        north: ?*const Chunk,
-        south: ?*const Chunk,
-        west: ?*const Chunk,
-        east: ?*const Chunk,
-    ) void {
-        _ = north;
-        _ = south;
-        _ = west;
-        _ = east;
-
-        var c: usize = 0;
-
-        for (0..length) |x| {
-            for (0..height) |y| {
-                for (0..length) |z| {
-                    var neighbour_count: usize = 0;
-
-                    if (x > 0 and self.getBlockState(x - 1, y, z) != null) neighbour_count += 1;
-                    if (x < length - 1 and self.getBlockState(x + 1, y, z) != null) neighbour_count += 1;
-
-                    if (y > 0 and self.getBlockState(x, y - 1, z) != null) neighbour_count += 1;
-                    if (y < height - 1 and self.getBlockState(x, y + 1, z) != null) neighbour_count += 1;
-
-                    if (z > 0 and self.getBlockState(x, y, z - 1) != null) neighbour_count += 1;
-                    if (z < length - 1 and self.getBlockState(x, y, z + 1) != null) neighbour_count += 1;
-
-                    self.blocks[z * length * height + y * length + x].can_be_seen = neighbour_count < 6;
-                    if (neighbour_count == 6) c += 1;
-                }
-            }
-        }
+        try self.instance_buffer.update(BlockInstanceData, instances[0..index]);
     }
 };
