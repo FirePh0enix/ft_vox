@@ -1,18 +1,17 @@
 const std = @import("std");
 const zm = @import("zmath");
-const world = @import("world.zig");
 const math = @import("math.zig");
 
 const Allocator = std.mem.Allocator;
-const World = world.World;
-const Chunk = world.Chunk;
-const BlockRegistry = @import("voxel/BlockRegistry.zig");
+const World = @import("voxel/World.zig");
+const Chunk = @import("voxel/Chunk.zig");
+const Registry = @import("voxel/Registry.zig");
 
 pub const Options = struct {
     seed: ?u64 = null,
 };
 
-pub fn generateWorld(allocator: Allocator, block_registry: *const BlockRegistry, options: Options) !World {
+pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: Options) !World {
     const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
     var the_world: World = .{ .allocator = allocator, .seed = seed };
 
@@ -29,7 +28,7 @@ pub fn generateWorld(allocator: Allocator, block_registry: *const BlockRegistry,
     for (0..width) |x| {
         for (0..depth) |z| {
             const chunk = &the_world.chunks.items[x + z * width];
-            try chunk.rebuildInstanceBuffer(block_registry);
+            try chunk.rebuildInstanceBuffer(registry);
         }
     }
 

@@ -4,7 +4,6 @@ const sdl = @import("sdl");
 const builtin = @import("builtin");
 const vma = @import("vma");
 const zm = @import("zmath");
-const world = @import("../world.zig");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
@@ -15,7 +14,7 @@ const Buffer = @import("Buffer.zig");
 const Material = @import("../Material.zig");
 const RenderFrame = @import("RenderFrame.zig");
 const Camera = @import("../Camera.zig");
-const World = world.World;
+const World = @import("../voxel/World.zig");
 
 pub const Base = vk.BaseWrapper;
 pub const Instance = vk.InstanceProxy;

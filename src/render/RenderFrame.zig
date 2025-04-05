@@ -1,7 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const zm = @import("zmath");
-const world = @import("../world.zig");
 
 const Allocator = std.mem.Allocator;
 const ShaderModel = @import("ShaderModel.zig");
@@ -11,7 +10,7 @@ const Self = @This();
 const Mesh = @import("../Mesh.zig");
 const Material = @import("../Material.zig");
 const Camera = @import("../Camera.zig");
-const World = world.World;
+const World = @import("../voxel/World.zig");
 
 const rdr = Renderer.rdr;
 

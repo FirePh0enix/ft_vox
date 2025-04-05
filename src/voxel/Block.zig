@@ -1,3 +1,12 @@
 const std = @import("std");
 
-textures: [6]u32,
+pub const VTable = struct {};
+
+pub const Visual = union(enum) {
+    cube: struct {
+        textures: [6]u32,
+    },
+};
+
+vtable: VTable,
+visual: Visual,

@@ -5,7 +5,6 @@ const builtin = @import("builtin");
 const console = @import("console.zig");
 const zm = @import("zmath");
 const input = @import("input.zig");
-const world = @import("world.zig");
 const world_gen = @import("world_gen.zig");
 
 const Renderer = @import("render/Renderer.zig");
@@ -17,12 +16,11 @@ const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Camera = @import("Camera.zig");
 const RenderFrame = @import("render/RenderFrame.zig");
-const World = world.World;
-const Chunk = world.Chunk;
+const World = @import("voxel/World.zig");
+const Chunk = @import("voxel/Chunk.zig");
 const TrackingAllocator = @import("TrackingAllocator.zig");
-const TextureDatabase = @import("voxel/TextureDatabase.zig");
 const Block = @import("voxel/Block.zig");
-const BlockRegistry = @import("voxel/BlockRegistry.zig");
+const Registry = @import("voxel/Registry.zig");
 
 const rdr = Renderer.rdr;
 
@@ -99,41 +97,38 @@ pub fn main() !void {
     const pipeline = try allocator.create(GraphicsPipeline);
     pipeline.* = try GraphicsPipeline.create(allocator, shader_model);
 
-    var texture_database = TextureDatabase.init(allocator);
-    var block_registry = BlockRegistry.init(allocator);
+    var registry = Registry.init(allocator);
 
-    _ = try texture_database.getOrRegisterImage("assets/textures/None.png");
+    try registry.registerBlock(.{
+        .name = "dirt",
+        .visual = .{ .cube = .{ .textures = .{
+            "assets/textures/Dirt.png",
+            "assets/textures/Dirt.png",
+            "assets/textures/Dirt.png",
+            "assets/textures/Dirt.png",
+            "assets/textures/Dirt.png",
+            "assets/textures/Dirt.png",
+        } } },
+    }, .{});
 
-    const dirt_block: Block = .{
-        .textures = .{
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-        },
-    };
-    const grass_block: Block = .{
-        .textures = .{
-            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Grass_Side.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Grass_Top.png"),
-            try texture_database.getOrRegisterImage("assets/textures/Dirt.png"),
-        },
-    };
+    try registry.registerBlock(.{
+        .name = "dirt",
+        .visual = .{ .cube = .{ .textures = .{
+            "assets/textures/Grass_Side.png",
+            "assets/textures/Grass_Side.png",
+            "assets/textures/Grass_Side.png",
+            "assets/textures/Grass_Side.png",
+            "assets/textures/Grass_Top.png",
+            "assets/textures/Dirt.png",
+        } } },
+    }, .{});
 
-    try block_registry.registerBlock(dirt_block);
-    try block_registry.registerBlock(grass_block);
+    try registry.lock();
 
-    try texture_database.createTexture();
-
-    const material = try Material.init(texture_database.image_array.?, pipeline);
+    const material = try Material.init(registry.image_array.?, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
-    var the_world = try world_gen.generateWorld(allocator, &block_registry, .{
+    var the_world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
     defer the_world.deinit();

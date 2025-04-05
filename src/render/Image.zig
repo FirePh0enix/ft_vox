@@ -110,6 +110,59 @@ pub fn createDepth(width: u32, height: u32) !Self {
     return image;
 }
 
+pub fn createMissing() !Self {
+    const image = try create(16, 16, 1, .r8g8b8a8_srgb, .optimal, .{ .sampled_bit = true, .transfer_dst_bit = true }, .{ .color_bit = true });
+    const pixels = createMissingPixels();
+
+    try image.transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
+    try image.store(0, &pixels);
+    try image.transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+
+    return image;
+}
+
+pub fn createMissingPixels() [16 * 16 * 4]u8 {
+    var pixels: [16 * 16 * 4]u8 = undefined;
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + y * 8 + x] = 0xcc;
+            pixels[1 * 4 * 8 + y * 8 + x] = 0x40;
+            pixels[2 * 4 * 8 + y * 8 + x] = 0xc4;
+            pixels[3 * 4 * 8 + y * 8 + x] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[1 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[2 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[3 * 4 * 8 + (y + 8) * 8 + x] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + y * 8 + (x + 8)] = 0xcc;
+            pixels[1 * 4 * 8 + y * 8 + (x + 8)] = 0x40;
+            pixels[2 * 4 * 8 + y * 8 + (x + 8)] = 0xc4;
+            pixels[3 * 4 * 8 + y * 8 + (x + 8)] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xcc;
+            pixels[1 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0x40;
+            pixels[2 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xc4;
+            pixels[3 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xff;
+        }
+    }
+
+    return pixels;
+}
+
 pub fn deinit(self: *const Self) void {
     Renderer.singleton.device.destroyImageView(self.image_view, null);
 }
