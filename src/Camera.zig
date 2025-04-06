@@ -6,6 +6,7 @@ const Self = @This();
 const Vec = zm.Vec;
 const Quat = zm.Quat;
 const Mat = zm.Mat;
+const World = @import("voxel/World.zig");
 
 speed: f32 = 0.15,
 position: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
@@ -29,7 +30,7 @@ pub fn rotate(self: *Self, x_rel: f32, y_rel: f32) void {
     if (self.rotation[1] < -std.math.tau) self.rotation[1] += std.math.tau;
 }
 
-pub fn updateCamera(self: *Self) void {
+pub fn updateCamera(self: *Self, world: *World) void {
     const forward_vec = self.forward();
     const right_vec = self.right();
     const up_vec = zm.f32x4(0.0, 1.0, 0.0, 0.0);
@@ -38,6 +39,14 @@ pub fn updateCamera(self: *Self) void {
     self.position += forward_vec * @as(zm.Vec, @splat(dir[2] * self.speed));
     self.position += up_vec * @as(zm.Vec, @splat(dir[1] * self.speed));
     self.position += right_vec * @as(zm.Vec, @splat(dir[0] * self.speed));
+
+    const attack_range: f32 = 5.0;
+
+    if (input.isActionJustPressed(.attack)) {
+        if (world.raycastBlock(.{ .from = self.position, .to = self.position + self.forward() * zm.f32x4s(attack_range) }, 0.1)) |result| {
+            world.setBlockState(result.block.pos.x, result.block.pos.y, result.block.pos.z, .{ .id = 0 });
+        }
+    }
 }
 
 pub fn getViewMatrix(self: *const Self) Mat {

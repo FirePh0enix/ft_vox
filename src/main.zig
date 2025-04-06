@@ -11,11 +11,11 @@ const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
 const Mesh = @import("Mesh.zig");
 const Image = @import("render/Image.zig");
-const Material = @import("Material.zig");
+const Material = @import("render/Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Camera = @import("Camera.zig");
-const RenderFrame = @import("render/RenderFrame.zig");
+const RenderFrame = @import("voxel/RenderFrame.zig");
 const World = @import("voxel/World.zig");
 const Chunk = @import("voxel/Chunk.zig");
 const TrackingAllocator = @import("TrackingAllocator.zig");
@@ -74,7 +74,7 @@ pub fn main() !void {
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .{ .buffer = &.{ .vec3, .vec3, .vec3 } }, .rate = .instance },
+            ShaderModel.Buffer{ .element_type = .{ .buffer = &.{ .vec3, .vec3, .vec3, .uint } }, .rate = .instance },
         },
         .inputs = &.{
             ShaderModel.Input{ .binding = 0, .type = .vec3 }, // position
@@ -83,6 +83,7 @@ pub fn main() !void {
             ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 0 }, // instance position
             ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 3 * @sizeOf(f32) }, // instance texture indices 0
             ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 6 * @sizeOf(f32) }, // instance texture indices 1
+            ShaderModel.Input{ .binding = 3, .type = .uint, .offset = 9 * @sizeOf(f32) }, // instance visibility
         },
         .descriptors = &.{
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
@@ -128,10 +129,10 @@ pub fn main() !void {
     const material = try Material.init(registry.image_array.?, pipeline);
 
     var render_frame: RenderFrame = try .create(allocator, mesh, material);
-    var the_world = try world_gen.generateWorld(allocator, &registry, .{
+    var world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
-    defer the_world.deinit();
+    defer world.deinit();
 
     input.init(window);
 
@@ -158,9 +159,9 @@ pub fn main() !void {
             }
         }
 
-        camera.updateCamera();
+        camera.updateCamera(&world);
 
-        try rdr().draw(&camera, &the_world, &render_frame);
+        try rdr().draw(&camera, &world, &render_frame);
 
         const time_after = std.time.microTimestamp();
         const elapsed = time_after - time_before;
@@ -168,10 +169,10 @@ pub fn main() !void {
         rdr().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 
         if (std.time.milliTimestamp() - last_time >= 500) {
-            // console.clear();
-            // console.moveToStart();
+            console.clear();
+            console.moveToStart();
 
-            // rdr().printDebugStats();
+            rdr().printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }

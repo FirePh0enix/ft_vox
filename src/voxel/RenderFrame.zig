@@ -3,12 +3,12 @@ const vk = @import("vulkan");
 const zm = @import("zmath");
 
 const Allocator = std.mem.Allocator;
-const ShaderModel = @import("ShaderModel.zig");
-const Buffer = @import("Buffer.zig");
-const Renderer = @import("Renderer.zig");
+const ShaderModel = @import("../render/ShaderModel.zig");
+const Buffer = @import("../render/Buffer.zig");
+const Renderer = @import("../render/Renderer.zig");
 const Self = @This();
 const Mesh = @import("../Mesh.zig");
-const Material = @import("../Material.zig");
+const Material = @import("../render/Material.zig");
 const Camera = @import("../Camera.zig");
 const World = @import("../voxel/World.zig");
 
@@ -18,6 +18,7 @@ pub const BlockInstanceData = extern struct {
     position: [3]f32 = .{ 0.0, 0.0, 0.0 },
     textures0: [3]f32 = .{ 0.0, 0.0, 0.0 },
     textures1: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    visibility: u32 = 0,
 };
 
 pub const PushConstants = extern struct {
@@ -46,7 +47,7 @@ pub fn recordCommandBuffer(
     self: *const Self,
     command_buffer: Renderer.CommandBuffer,
     camera: *const Camera,
-    the_world: *const World,
+    world: *const World,
     framebuffer: vk.Framebuffer,
 ) !void {
     // Begin a new render pass.
@@ -102,7 +103,7 @@ pub fn recordCommandBuffer(
 
     command_buffer.pushConstants(self.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), @ptrCast(&constants));
 
-    for (the_world.chunks.items) |*chunk| {
+    for (world.chunks.items) |*chunk| {
         command_buffer.bindVertexBuffers(3, 1, @ptrCast(&chunk.instance_buffer.buffer), &.{0});
 
         // And then we draw our instances.

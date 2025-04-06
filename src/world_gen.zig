@@ -13,7 +13,7 @@ pub const Options = struct {
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: Options) !World {
     const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
-    var the_world: World = .{ .allocator = allocator, .seed = seed };
+    var world: World = .{ .allocator = allocator, .seed = seed };
 
     const width = 32;
     const depth = 32;
@@ -21,18 +21,24 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: O
     for (0..width) |x| {
         for (0..depth) |z| {
             const chunk = try generateChunk(seed, @intCast(x), @intCast(z));
-            try the_world.chunks.append(the_world.allocator, chunk);
+            try world.chunks.append(world.allocator, chunk);
         }
     }
 
     for (0..width) |x| {
         for (0..depth) |z| {
-            const chunk = &the_world.chunks.items[x + z * width];
+            const chunk = &world.chunks.items[x + z * width];
+            chunk.computeVisibility(
+                if (z > 0) &world.chunks.items[x + (z - 1) * width] else null,
+                if (z < depth - 1) &world.chunks.items[x + (z + 1) * width] else null,
+                if (x > 0) &world.chunks.items[(x - 1) + z * width] else null,
+                if (x < width - 1) &world.chunks.items[(x + 1) + z * width] else null,
+            );
             try chunk.rebuildInstanceBuffer(registry);
         }
     }
 
-    return the_world;
+    return world;
 }
 
 fn generateChunk(seed: u64, chunk_x: isize, chunk_z: isize) !Chunk {

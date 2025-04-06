@@ -1,9 +1,9 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const Image = @import("render/Image.zig");
-const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
-const Renderer = @import("render/Renderer.zig");
+const Image = @import("Image.zig");
+const GraphicsPipeline = @import("GraphicsPipeline.zig");
+const Renderer = @import("Renderer.zig");
 const Self = @This();
 
 const rdr = Renderer.rdr;

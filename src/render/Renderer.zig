@@ -11,8 +11,8 @@ const Mesh = @import("../Mesh.zig");
 const Image = @import("Image.zig");
 const GraphicsPipeline = @import("GraphicsPipeline.zig");
 const Buffer = @import("Buffer.zig");
-const Material = @import("../Material.zig");
-const RenderFrame = @import("RenderFrame.zig");
+const Material = @import("Material.zig");
+const RenderFrame = @import("../voxel/RenderFrame.zig");
 const Camera = @import("../Camera.zig");
 const World = @import("../voxel/World.zig");
 
@@ -504,7 +504,7 @@ pub fn deinit(self: *const Self) void {
 pub fn draw(
     self: *Self,
     camera: *const Camera,
-    the_world: *const World,
+    world: *const World,
     render_frame: *const RenderFrame,
 ) !void {
     _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
@@ -531,7 +531,7 @@ pub fn draw(
         command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
     }
 
-    try render_frame.recordCommandBuffer(command_buffer, camera, the_world, self.swapchain_framebuffers[image_index]);
+    try render_frame.recordCommandBuffer(command_buffer, camera, world, self.swapchain_framebuffers[image_index]);
 
     if (!use_moltenvk) command_buffer.endQuery(self.primitives_query_pool, 0);
     command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
