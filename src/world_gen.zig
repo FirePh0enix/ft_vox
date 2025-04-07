@@ -18,8 +18,8 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: O
     const width = 32;
     const depth = 32;
 
-    for (0..width) |x| {
-        for (0..depth) |z| {
+    for (0..depth) |z| {
+        for (0..width) |x| {
             const chunk = try generateChunk(seed, @intCast(x), @intCast(z));
             try world.chunks.append(world.allocator, chunk);
         }

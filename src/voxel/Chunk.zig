@@ -39,30 +39,50 @@ pub fn computeVisibility(
     west: ?*const Self,
     east: ?*const Self,
 ) void {
-    // _ = north;
-    // _ = south;
-    _ = west;
-    _ = east;
-
     for (0..length) |x| {
         for (0..height) |y| {
             for (0..length) |z| {
                 var visibility: u6 = 0;
 
-                if (z == 0 and north != null and north.?.getBlockState(x, y, 15) == null) {
-                    visibility |= 1 << 0;
-                } else if (z == 0 or self.getBlockState(x, y, z - 1) == null) {
+                if (z == 0) {
+                    if (north) |chunk| {
+                        if (chunk.getBlockState(x, y, 15) == null) visibility |= 1 << 0;
+                    } else {
+                        visibility |= 1 << 0;
+                    }
+                } else if (self.getBlockState(x, y, z - 1) == null) {
                     visibility |= 1 << 0;
                 }
 
-                if (z == 15 and south != null and south.?.getBlockState(x, y, 0) == null) {
-                    visibility |= 1 << 1;
-                } else if (z == 15 or self.getBlockState(x, y, z + 1) == null) {
+                if (z == 15) {
+                    if (south) |chunk| {
+                        if (chunk.getBlockState(x, y, 0) == null) visibility |= 1 << 1;
+                    } else {
+                        visibility |= 1 << 1;
+                    }
+                } else if (self.getBlockState(x, y, z + 1) == null) {
                     visibility |= 1 << 1;
                 }
 
-                if (x == 0 or self.getBlockState(x - 1, y, z) == null) visibility |= 1 << 2;
-                if (x == 15 or self.getBlockState(x + 1, y, z) == null) visibility |= 1 << 3;
+                if (x == 0) {
+                    if (west) |chunk| {
+                        if (chunk.getBlockState(15, y, z) == null) visibility |= 1 << 2;
+                    } else {
+                        visibility |= 1 << 2;
+                    }
+                } else if (self.getBlockState(x - 1, y, z) == null) {
+                    visibility |= 1 << 2;
+                }
+
+                if (x == 15) {
+                    if (east) |chunk| {
+                        if (chunk.getBlockState(0, y, z) == null) visibility |= 1 << 3;
+                    } else {
+                        visibility |= 1 << 3;
+                    }
+                } else if (self.getBlockState(x + 1, y, z) == null) {
+                    visibility |= 1 << 3;
+                }
 
                 if (y == 255 or self.getBlockState(x, y + 1, z) == null) visibility |= 1 << 4;
                 if (y == 0 or self.getBlockState(x, y - 1, z) == null) visibility |= 1 << 5;
