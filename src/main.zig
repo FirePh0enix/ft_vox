@@ -14,6 +14,7 @@ const Image = @import("render/Image.zig");
 const Material = @import("render/Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
+const Window = @import("render/Window.zig");
 const Camera = @import("Camera.zig");
 const RenderFrame = @import("voxel/RenderFrame.zig");
 const World = @import("voxel/World.zig");
@@ -41,28 +42,17 @@ var camera = Camera{
 };
 
 pub fn main() !void {
-    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
-        std.log.err("SDL init failed", .{});
-        return;
-    }
-    // defer sdl.SDL_Quit();
+    var window = try Window.create(.{
+        .title = "ft_vox",
+        .width = 1280,
+        .height = 720,
+        .driver = .vulkan,
+        .resizable = true,
+    });
 
-    const window = sdl.SDL_CreateWindow("ft_vox", 1280, 720, sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_HIDDEN | sdl.SDL_WINDOW_RESIZABLE) orelse {
-        std.log.err("Create window failed", .{});
-        return;
-    };
-    defer sdl.SDL_DestroyWindow(window);
-
-    var instance_extensions_count: u32 = undefined;
-    const instance_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&instance_extensions_count);
-
-    Renderer.init(allocator, window, @ptrCast(sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable), instance_extensions, instance_extensions_count, .{ .vsync = .performance }) catch |e| {
-        std.log.err("Failed to initialize vulkan", .{});
-        return e;
-    };
-    // defer Renderer.singleton.deinit();
-
-    _ = sdl.SDL_ShowWindow(window);
+    try Renderer.create(allocator, .vulkan);
+    try rdr().createDevice(&window, null);
+    try rdr().createSwapchain(&window, .{ .vsync = .performance });
 
     var running = true;
 
@@ -134,7 +124,7 @@ pub fn main() !void {
     });
     defer world.deinit();
 
-    input.init(window);
+    input.init(&window);
 
     var last_time: i64 = 0;
 
@@ -154,25 +144,25 @@ pub fn main() !void {
         while (sdl.SDL_PollEvent(&event)) {
             switch (event.type) {
                 sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
-                sdl.SDL_EVENT_WINDOW_RESIZED => try Renderer.singleton.resize(),
+                sdl.SDL_EVENT_WINDOW_RESIZED => try rdr().createSwapchain(&window, .{ .vsync = .performance }),
                 else => try input.handleSDLEvent(event, &camera),
             }
         }
 
         camera.updateCamera(&world);
 
-        try rdr().draw(&camera, &world, &render_frame);
+        try rdr().asVk().draw(&camera, &world, &render_frame);
 
         const time_after = std.time.microTimestamp();
         const elapsed = time_after - time_before;
 
-        rdr().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
+        rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 
         if (std.time.milliTimestamp() - last_time >= 500) {
             console.clear();
             console.moveToStart();
 
-            rdr().printDebugStats();
+            rdr().asVk().printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }

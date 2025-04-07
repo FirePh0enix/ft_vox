@@ -12,6 +12,14 @@
             .url = "git+https://github.com/Snektron/vulkan-zig#40ad90a912eafb81581a121e585688fbbd7d8ddf",
             .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
         },
+        .vma = .{
+            .url = "git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator#29b35ea4232688c0f42cdff0c10848290760a417",
+            .hash = "N-V-__8AAEagQQA-UWlVvPJf78W4o-KcjTjV3WIYfUI81Zam",
+        },
+        .moltenvk = .{
+            .url = "https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11-artifacts/MoltenVK-macos.tar",
+            .hash = "N-V-__8AAHJVDAQ_Q3ypg6Itg72ll6Kh7CSfBCFzOCi5IUHf",
+        },
         .sdl = .{
             .url = "git+https://github.com/castholm/SDL#dbb1b96360658f5845ff6fac380c4f13d7276dc2",
             .hash = "sdl-0.2.0+3.2.8-7uIn9FxHfQE325TK7b0qpgt10G3x1xl-3ZMOfTzxUg3C",
@@ -20,17 +28,9 @@
             .url = "git+https://github.com/Games-by-Mason/shader_compiler#c25b6138d0bb92c487dd48f1cf16a51a76bfd4ca",
             .hash = "shader_compiler-0.0.0-bOVsallvAAACTK0MWFoh3ooCW75QEMKV_UWBi9biXT8g",
         },
-        .vma = .{
-            .url = "git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator#29b35ea4232688c0f42cdff0c10848290760a417",
-            .hash = "N-V-__8AAEagQQA-UWlVvPJf78W4o-KcjTjV3WIYfUI81Zam",
-        },
         .zigimg = .{
             .url = "git+https://github.com/TUSF/zigimg#31268548fe3276c0e95f318a6c0d2ab10565b58d",
             .hash = "zigimg-0.1.0-lly-O6N2EABOxke8dqyzCwhtUCAafqP35zC7wsZ4Ddxj",
-        },
-        .moltenvk = .{
-            .url = "https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11-artifacts/MoltenVK-macos.tar",
-            .hash = "N-V-__8AAHJVDAQ_Q3ypg6Itg72ll6Kh7CSfBCFzOCi5IUHf",
         },
         .zmath = .{
             .url = "git+https://github.com/zig-gamedev/zmath#ccf7297ef6c01e21b2d51ad81b5b6ce929e86a00",

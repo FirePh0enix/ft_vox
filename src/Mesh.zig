@@ -7,6 +7,8 @@ const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
 const Self = @This();
 
+const rdr = Renderer.rdr;
+
 pub const Vertex = [3]f32;
 
 index_buffer: Buffer,
@@ -24,10 +26,10 @@ pub fn init(
     texture_coords: []const [2]f32,
 ) !Self {
     return .{
-        .index_buffer = try Buffer.createFromData(IndexType, indices, .{ .index_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only),
-        .vertex_buffer = try Buffer.createFromData(Vertex, vertices, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only),
-        .normal_buffer = try Buffer.createFromData(Vertex, normals, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only),
-        .texture_buffer = try Buffer.createFromData([2]f32, texture_coords, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .gpu_only),
+        .index_buffer = try rdr().createBufferFromData(IndexType, indices, .gpu_only, .{ .index_buffer = true, .transfer_dst = true }),
+        .vertex_buffer = try rdr().createBufferFromData(Vertex, vertices, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
+        .normal_buffer = try rdr().createBufferFromData(Vertex, normals, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
+        .texture_buffer = try rdr().createBufferFromData([2]f32, texture_coords, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
         .count = indices.len,
         .index_type = switch (IndexType) {
             u16 => .uint16,

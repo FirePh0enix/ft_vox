@@ -18,11 +18,13 @@ pub fn init(allocator: Allocator) Self {
 
 pub fn addRenderPass(
     self: *Self,
+    pass: vk.RenderPass,
     target: RenderTarget,
 ) *RenderPass {
     const render_pass: *RenderPass = self.allocator.create(RenderPass);
     render_pass.* = .{
         .allocator = self.allocator,
+        .vk_pass = pass,
         .target = target,
     };
 
@@ -57,8 +59,8 @@ pub const Framebuffer = union(enum) {
 
 pub const RenderTarget = struct {
     framebuffer: Framebuffer = .native,
-    viewport: Rect = .native,
-    scissor: Rect = .native,
+    viewport: Viewport = .native,
+    scissor: Scissor = .native,
 };
 
 pub const RenderPass = struct {
@@ -66,6 +68,7 @@ pub const RenderPass = struct {
 
     next: ?*RenderPass = null,
 
+    vk_pass: vk.RenderPass,
     target: RenderTarget,
 
     // TODO: Use a tree here to manage multiple meshes and materials.

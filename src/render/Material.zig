@@ -14,7 +14,7 @@ descriptor_set: vk.DescriptorSet,
 sampler: vk.Sampler,
 
 pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
-    const sampler = try rdr().device.createSampler(&vk.SamplerCreateInfo{
+    const sampler = try rdr().asVk().device.createSampler(&vk.SamplerCreateInfo{
         .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
         .min_filter = .nearest,
         .mipmap_mode = .nearest,
@@ -44,7 +44,7 @@ pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
 }
 
 pub fn writeDescriptors(self: *Self) void {
-    const image_info: vk.DescriptorImageInfo = .{ .image_view = self.image.image_view, .sampler = self.sampler, .image_layout = .shader_read_only_optimal };
+    const image_info: vk.DescriptorImageInfo = .{ .image_view = self.image.asVkConst().image_view, .sampler = self.sampler, .image_layout = .shader_read_only_optimal };
 
     const writes: []const vk.WriteDescriptorSet = &.{
         vk.WriteDescriptorSet{
@@ -59,5 +59,5 @@ pub fn writeDescriptors(self: *Self) void {
         },
     };
 
-    rdr().device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
+    rdr().asVk().device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
 }
