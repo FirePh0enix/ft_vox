@@ -632,7 +632,7 @@ pub const VulkanRenderer = struct {
     fn processGraphVk(
         self: *VulkanRenderer,
         graph: *const Graph,
-    ) Renderer.ProcessGraphError!void {
+    ) !void {
         _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
         try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
@@ -649,8 +649,8 @@ pub const VulkanRenderer = struct {
 
         if (render_pass == null) unreachable; // A least one render pass is needed !
 
-        while (render_pass) |rp| : (render_pass = render_pass.next) {
-            self.processRenderPass(command_buffer, previous_pass, rp);
+        while (render_pass) |rp| : (render_pass = rp.next) {
+            try self.processRenderPass(command_buffer, self.swapchain_framebuffers[self.current_frame], previous_pass, rp);
             previous_pass = render_pass;
         }
 
@@ -685,6 +685,8 @@ pub const VulkanRenderer = struct {
         };
 
         _ = try self.graphics_queue.presentKHR(&present_info);
+
+        self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
     }
 
     fn processRenderPass(
@@ -694,7 +696,7 @@ pub const VulkanRenderer = struct {
         previous: ?*Graph.RenderPass,
         pass: *Graph.RenderPass,
     ) !void {
-        const clear_values: []const vk.ClearValue = .{ // TODO one per attachements.
+        const clear_values: []const vk.ClearValue = &.{ // TODO one per attachements.
             .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
             .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
         };
@@ -719,13 +721,15 @@ pub const VulkanRenderer = struct {
             cb.bindPipeline(.graphics, call.material.pipeline.pipeline);
             cb.bindDescriptorSets(.graphics, call.material.pipeline.layout, 0, 1, @ptrCast(&call.material.descriptor_set), 0, null);
 
-            cb.bindIndexBuffer(call.mesh.index_buffer.asVkConst().buffer, 0, self.mesh.index_type);
+            cb.bindIndexBuffer(call.mesh.index_buffer.asVkConst().buffer, 0, call.mesh.index_type);
 
             cb.bindVertexBuffers(0, 3, &.{
                 call.mesh.vertex_buffer.asVkConst().buffer,
                 call.mesh.normal_buffer.asVkConst().buffer,
                 call.mesh.texture_buffer.asVkConst().buffer,
             }, &.{ 0, 0, 0 });
+
+            if (call.instance_buffer) |ib| cb.bindVertexBuffers(0, 1, @ptrCast(&ib.asVkConst().buffer), &.{0});
 
             cb.setViewport(0, 1, @ptrCast(&vk.Viewport{
                 .x = 0.0,
@@ -740,6 +744,14 @@ pub const VulkanRenderer = struct {
                 .offset = .{ .x = 0, .y = 0 },
                 .extent = rdr().asVk().swapchain_extent,
             }));
+
+            const constants: Graph.PushConstants = .{
+                .view_matrix = pass.view_matrix,
+            };
+
+            cb.pushConstants(call.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
+
+            cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
 
             // const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
 

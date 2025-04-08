@@ -1,35 +1,21 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const zm = @import("zmath");
 
+const Self = @This();
 const Allocator = std.mem.Allocator;
 const Material = @import("Material.zig");
 const Mesh = @import("../Mesh.zig");
 const Buffer = @import("Buffer.zig");
-const Self = @This();
+const Image = @import("Image.zig");
 
 allocator: Allocator,
-root_render_pass: ?*RenderPass = null,
+main_render_pass: ?*RenderPass = null,
 
 pub fn init(allocator: Allocator) Self {
     return .{
         .allocator = allocator,
     };
-}
-
-pub fn addRenderPass(
-    self: *Self,
-    pass: vk.RenderPass,
-    target: RenderTarget,
-) *RenderPass {
-    const render_pass: *RenderPass = self.allocator.create(RenderPass);
-    render_pass.* = .{
-        .allocator = self.allocator,
-        .vk_pass = pass,
-        .target = target,
-    };
-
-    self.root_render_pass = render_pass;
-    return render_pass;
 }
 
 pub const Rect = struct {
@@ -63,16 +49,51 @@ pub const RenderTarget = struct {
     scissor: Scissor = .native,
 };
 
+pub const PushConstants = struct {
+    view_matrix: zm.Mat,
+};
+
+pub const RenderPassAttachments = packed struct {
+    color: bool = false,
+    depth: bool = false,
+};
+
+pub const RenderPassOptions = struct {
+    attachments: RenderPassAttachments = .{},
+    target: RenderTarget = .{},
+};
+
 pub const RenderPass = struct {
     allocator: Allocator,
 
-    next: ?*RenderPass = null,
+    dependencies: std.ArrayListUnmanaged(*RenderPass) = .empty,
 
-    vk_pass: vk.RenderPass,
+    vk_pass: vk.RenderPass, // TODO: Should be API agnostic
+
     target: RenderTarget,
+    attachments: RenderPassAttachments,
 
-    // TODO: Use a tree here to manage multiple meshes and materials.
+    framebuffer_info: struct {
+        image: Image,
+        framebuffer: vk.Framebuffer,
+    },
+
+    view_matrix: zm.Mat = zm.identity(),
+
+    // TODO: Use a tree here to manage multiple meshes and materials to minimize pipeline, descriptor and buffer bindings.
     draw_calls: std.ArrayListUnmanaged(DrawCall) = .empty,
+
+    pub fn create(allocator: Allocator, options: RenderPassOptions) !RenderPass {
+        return .{
+            .allocator = allocator,
+            .target = options.target,
+            .attachments = options.attachments,
+        };
+    }
+
+    pub fn dependsOn(self: *RenderPass, dep: *RenderPass) void {
+        self.dependencies.append(self.allocator, dep) catch unreachable;
+    }
 
     pub fn draw(
         self: *RenderPass,
