@@ -82,7 +82,6 @@ pub fn simplex2D(x: f32, y: f32) f32 {
         n1 = t1 * t1 * grad2D(gi1, x1, y1);
     }
 
-    // Calculate the contribution from the third corner
     var t2 = 0.5 - x2 * x2 - y2 * y2;
     if (t2 < 0.0) {
         n2 = 0.0;
@@ -91,12 +90,16 @@ pub fn simplex2D(x: f32, y: f32) f32 {
         n2 = t2 * t2 * grad2D(gi2, x2, y2);
     }
 
-    // Add contributions from each corner to get the final noise value.
     // The result is scaled to return values in the interval [-1,1].
     return 45.23065 * (n0 + n1 + n2);
 }
 
-fn fractalNoise(x: f32, z: f32, octaves: usize, frequency: f32, amplitude: f32, lacunarity: f32, persistence: f32) f32 {
+pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
+    const frequency: f32 = 1.0;
+    const amplitude: f32 = 1.0;
+    const lacunarity: f32 = 2.0;
+    const persistence: f32 = 1 / lacunarity;
+
     var output: f32 = 0.0;
     var denom: f32 = 0.0;
     var f: f32 = frequency;
@@ -104,7 +107,7 @@ fn fractalNoise(x: f32, z: f32, octaves: usize, frequency: f32, amplitude: f32, 
 
     for (0..octaves) |i| {
         _ = i;
-        output += a * simplex2D(x * f, z * f);
+        output += a * simplex2D(x * f, y * f);
         denom += a;
 
         f *= lacunarity;

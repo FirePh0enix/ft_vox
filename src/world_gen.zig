@@ -49,22 +49,22 @@ fn generateChunk(seed: u64, options: Options, chunk_x: isize, chunk_z: isize) !C
         for (0..16) |z| {
             const height = generateHeight(seed, chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
-            for (0..height) |y| {
-                const cave_noise = math.noise.simplex3D(
-                    @as(f32, chunk_x * 16 + x) / 25.0,
-                    @as(f32, y) / 25.0,
-                    @as(f32, chunk_z * 16 + z) / 25.0,
-                );
+            // for (0..height) |y| {
+            //     const cave_noise = math.noise.simplex3D(
+            //         @as(f32, chunk_x * 16 + x) / 25.0,
+            //         @as(f32, y) / 25.0,
+            //         @as(f32, chunk_z * 16 + z) / 25.0,
+            //     );
 
-                // 0 on video, probably need to decrease to -0.3, 0.4, 0.5...
-                if (cave_noise < 0) {
-                    // Air block (cave)
-                    chunk.setBlockState(x, y, z, .{ .id = 0 });
-                } else {
-                    // Solid block
-                    chunk.setBlockState(x, y, z, .{ .id = 1 });
-                }
-            }
+            //     // 0 on video, probably need to decrease to -0.3, 0.4, 0.5...
+            //     if (cave_noise < 0) {
+            //         // Air block (cave)
+            //         chunk.setBlockState(x, y, z, .{ .id = 0 });
+            //     } else {
+            //         // Solid block
+            //         chunk.setBlockState(x, y, z, .{ .id = 1 });
+            //     }
+            // }
 
             if (height < options.sea_level) {
                 for (height..options.sea_level) |y| {
@@ -96,12 +96,12 @@ pub fn generateHeight(seed: u64, x: isize, z: isize) usize {
     const density_multiplier: f32 = 10.0;
 
     // used to decide between ocean/beach/land biomes. Higher values correspond to more inland biomes.
-    const continentalness = math.noise.fractalNoise(fx / 150.0, fz / 150.0, 4);
+    const continentalness = math.noise.fractalNoise(4, fx / 150.0, fz / 150.0);
 
     // used to decide between flat and mountainous biomes. When erosion is high the landscape is generally flat.
-    const erosion = math.noise.fractalNoise(fx / 100.0, fz / 100.0, 3);
+    const erosion = math.noise.fractalNoise(3, fx / 100.0, fz / 100.0);
 
-    const peaks_valleys = math.noise.fractalNoise(fx / 50.0, fz / 50.0, 2);
+    const peaks_valleys = math.noise.fractalNoise(2, fx / 50.0, fz / 50.0);
 
     // Calculate the terrain shape, allow to create some weird world with small scale variation.
     const density = math.noise.simplex3D(fx / scale, fz / scale, (continentalness * c_weight + erosion * e_weight + peaks_valleys * pv_weight) * density_multiplier);

@@ -49,6 +49,7 @@ pub fn main() !void {
 
     const window = sdl.SDL_CreateWindow("ft_vox", 1280, 720, sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_HIDDEN | sdl.SDL_WINDOW_RESIZABLE) orelse {
         std.log.err("Create window failed", .{});
+        std.log.err("{s}", .{sdl.SDL_GetError()});
         return;
     };
     defer sdl.SDL_DestroyWindow(window);
