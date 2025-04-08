@@ -202,6 +202,7 @@ pub fn init(
         vk.extensions.khr_ray_tracing_pipeline.name.ptr,
 
         vk.extensions.ext_memory_budget.name.ptr,
+        vk.extensions.khr_portability_subset.name.ptr,
     };
 
     // According to gpuinfo support for hostQueryReset this is 99.5%.

@@ -49,32 +49,38 @@ fn generateChunk(seed: u64, options: Options, chunk_x: isize, chunk_z: isize) !C
         for (0..16) |z| {
             const height = generateHeight(seed, chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
-            if (height < options.sea_level) {
-                for (0..height) |y| {
-                    chunk.setBlockState(x, y, z, .{ .id = 1 });
-                }
+            for (0..height) |y| {
+                const cave_noise = math.noise.simplex3D(
+                    @as(f32, chunk_x * 16 + x) / 25.0,
+                    @as(f32, y) / 25.0,
+                    @as(f32, chunk_z * 16 + z) / 25.0,
+                );
 
-                for (height..options.sea_level) |y| {
-                    chunk.setBlockState(x, y, z, .{ .id = 2 });
-                }
-            } else {
-                for (0..height) |y| {
+                // 0 on video, probably need to decrease to -0.3, 0.4, 0.5...
+                if (cave_noise < 0) {
+                    // Air block (cave)
+                    chunk.setBlockState(x, y, z, .{ .id = 0 });
+                } else {
+                    // Solid block
                     chunk.setBlockState(x, y, z, .{ .id = 1 });
                 }
             }
 
-            // chunk.setBlockState(x, height - 1, z, .{ .id = 2 });
+            if (height < options.sea_level) {
+                for (height..options.sea_level) |y| {
+                    chunk.setBlockState(x, y, z, .{ .id = 2 });
+                }
+            }
         }
     }
 
     return chunk;
 }
 
-
 // https://www.youtube.com/watch?v=CSa5O6knuwI
 // https://minecraft.wiki/w/World_generation
-// TODO: Add continentalness, erosion, peak and valleys.
-// TODO: For details and biome, need 3d noise + temperature and humidity.
+// TODO: For details and biome -> temperature and humidity.
+
 pub fn generateHeight(seed: u64, x: isize, z: isize) usize {
     _ = seed;
 
@@ -84,22 +90,32 @@ pub fn generateHeight(seed: u64, x: isize, z: isize) usize {
     const scale: f32 = 20.0;
     const max_height: f32 = 20.0;
 
-    const y = (simplexOctaves(fx / scale, fz / scale, 3) + 1.0) / 2.0 * max_height;
+    const c_weight: f32 = 0.5;
+    const e_weight: f32 = 0.3;
+    const pv_weight: f32 = 0.1;
+    const density_multiplier: f32 = 10.0;
+
+    // used to decide between ocean/beach/land biomes. Higher values correspond to more inland biomes.
+    const continentalness = math.noise.fractalNoise(fx / 150.0, fz / 150.0, 4);
+
+    // used to decide between flat and mountainous biomes. When erosion is high the landscape is generally flat.
+    const erosion = math.noise.fractalNoise(fx / 100.0, fz / 100.0, 3);
+
+    const peaks_valleys = math.noise.fractalNoise(fx / 50.0, fz / 50.0, 2);
+
+    // Calculate the terrain shape, allow to create some weird world with small scale variation.
+    const density = math.noise.simplex3D(fx / scale, fz / scale, (continentalness * c_weight + erosion * e_weight + peaks_valleys * pv_weight) * density_multiplier);
+
+    // Define the shape of the terrain.
+    const squashing_factor = (continentalness * 0.5 + erosion * 0.3 + peaks_valleys * 0.1);
+
+    // Increase the base height map overall.
+    const height_offset = (continentalness * 0.5 - erosion * 0.3);
+
+    // Final normalized height.
+    const y = (squashing_factor + density * 0.1 + height_offset + 1.0) / 2.0 * max_height;
     const block_height: usize = @intFromFloat(y);
 
+    // Ensure there is at least one block.
     return 1 + block_height;
-}
-
-// TODO: Check how Octaves are actually made.
-fn simplexOctaves(x: f32, z: f32, num: usize) f32 {
-    var scale: f32 = 1.0;
-    var res: f32 = 1.0;
-
-    for (0..num) |index| {
-        _ = index;
-        res *= math.noise.simplex2D(x * scale, z * scale);
-        scale /= 2;
-    }
-
-    return res;
 }

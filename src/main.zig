@@ -60,6 +60,7 @@ pub fn main() !void {
         std.log.err("Failed to initialize vulkan", .{});
         return e;
     };
+
     // defer Renderer.singleton.deinit();
 
     _ = sdl.SDL_ShowWindow(window);
@@ -132,6 +133,7 @@ pub fn main() !void {
     var world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
+
     defer world.deinit();
 
     input.init(window);

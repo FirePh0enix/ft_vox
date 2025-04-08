@@ -14,6 +14,7 @@ descriptor_set: vk.DescriptorSet,
 sampler: vk.Sampler,
 
 pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
+
     const sampler = try rdr().device.createSampler(&vk.SamplerCreateInfo{
         .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
         .min_filter = .nearest,
@@ -38,6 +39,7 @@ pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
         .descriptor_set = try pipeline.descriptor_pool.createDescriptorSet(),
         .sampler = sampler,
     };
+
     self.writeDescriptors();
 
     return self;

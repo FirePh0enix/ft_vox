@@ -95,3 +95,21 @@ pub fn simplex2D(x: f32, y: f32) f32 {
     // The result is scaled to return values in the interval [-1,1].
     return 45.23065 * (n0 + n1 + n2);
 }
+
+fn fractalNoise(x: f32, z: f32, octaves: usize, frequency: f32, amplitude: f32, lacunarity: f32, persistence: f32) f32 {
+    var output: f32 = 0.0;
+    var denom: f32 = 0.0;
+    var f: f32 = frequency;
+    var a: f32 = amplitude;
+
+    for (0..octaves) |i| {
+        _ = i;
+        output += a * simplex2D(x * f, z * f);
+        denom += a;
+
+        f *= lacunarity;
+        a *= persistence;
+    }
+
+    return output / denom;
+}
