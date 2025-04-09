@@ -174,14 +174,14 @@ pub const VulkanRenderer = struct {
         defer physical_device_with_info.deinit(self.allocator);
 
         self.physical_device = physical_device_with_info.physical_device;
-        const device_properties = self.instance.getPhysicalDeviceProperties(self.physical_device);
+        self.physical_device_properties = self.instance.getPhysicalDeviceProperties(self.physical_device);
 
         const features: Features = .{
             .ray_tracing = containsExtension(physical_device_with_info.extensions, vk.extensions.khr_ray_tracing_pipeline.name),
             .vk_memory_budget = containsExtension(physical_device_with_info.extensions, vk.extensions.ext_memory_budget.name),
         };
 
-        std.log.info("GPU selected: {s}", .{device_properties.device_name});
+        std.log.info("GPU selected: {s}", .{self.physical_device_properties.device_name});
 
         inline for (@typeInfo(Features).@"struct".fields) |field| {
             if (@field(features, field.name)) std.log.info("Feature `{s}` is supported", .{field.name});
@@ -297,14 +297,12 @@ pub const VulkanRenderer = struct {
         if (vma.vmaCreateAllocator(&allocator_info, &self.vma_allocator) != vma.VK_SUCCESS) return error.Internal;
 
         // Allocate a command buffer to transfer data between buffers.
-        const transfer_cmd_buffer_info: vk.CommandBufferAllocateInfo = .{
+        var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
+        try self.device.allocateCommandBuffers(&vk.CommandBufferAllocateInfo{
             .command_pool = self.command_pool,
             .level = .primary,
             .command_buffer_count = 1,
-        };
-
-        var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
-        try self.device.allocateCommandBuffers(&transfer_cmd_buffer_info, @ptrCast(&transfer_command_buffer_handle));
+        }, @ptrCast(&transfer_command_buffer_handle));
 
         self.transfer_command_buffer = vk.CommandBufferProxy.init(transfer_command_buffer_handle, &device_wrapper);
 
@@ -314,7 +312,7 @@ pub const VulkanRenderer = struct {
             .query_count = max_frames_in_flight * 2,
         }, null);
 
-        self.primitives_query_pool = if (!use_moltenvk)
+        self.primitives_query_pool = if (device_features.pipeline_statistics_query == 1)
             try self.device.createQueryPool(&vk.QueryPoolCreateInfo{
                 .pipeline_statistics = .{ .input_assembly_primitives_bit = true },
                 .query_type = .pipeline_statistics,
@@ -325,7 +323,7 @@ pub const VulkanRenderer = struct {
 
         for (0..max_frames_in_flight) |index| {
             self.device.resetQueryPool(self.timestamp_query_pool, @intCast(index * 2), 2);
-            if (!use_moltenvk) self.device.resetQueryPool(self.primitives_query_pool, @intCast(index), 1);
+            if (device_features.pipeline_statistics_query == 1) self.device.resetQueryPool(self.primitives_query_pool, @intCast(index), 1); // TODO: Check and activate the feature
         }
 
         // Create the color pass
@@ -359,7 +357,7 @@ pub const VulkanRenderer = struct {
                 .final_layout = .present_src_khr,
             },
             .{
-                .format = .d32_sfloat, // TODO: same as `Image.createDepth`
+                .format = .d32_sfloat, // TODO: same as `Renderer.createDepthImage`
                 .samples = .{ .@"1_bit" = true },
                 .load_op = .clear,
                 .store_op = .dont_care,
@@ -392,7 +390,6 @@ pub const VulkanRenderer = struct {
         self.current_frame = 0;
         self.physical_device = physical_device_with_info.physical_device;
         self.swapchain = .null_handle;
-        self.physical_device_properties = physical_device_with_info.properties;
     }
 
     fn shutdown(self: *VulkanRenderer) void {
@@ -418,12 +415,6 @@ pub const VulkanRenderer = struct {
 
         const size = window.size();
 
-        const surface_formats = try self.instance.getPhysicalDeviceSurfaceFormatsAllocKHR(self.physical_device, self.surface, self.allocator);
-        defer self.allocator.free(surface_formats);
-
-        self.surface_present_modes = try self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator);
-        errdefer self.allocator.free(self.surface_present_modes);
-
         // Per the Vulkan spec only FIFO is guaranteed to be supported, so we fallback to this if others are not.
         const surface_present_mode: vk.PresentModeKHR = switch (options.vsync) {
             .off => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .immediate_khr)) .immediate_khr else .fifo_khr,
@@ -442,7 +433,7 @@ pub const VulkanRenderer = struct {
         else
             self.surface_capabilities.min_image_count + 1;
 
-        var swapchain_info: vk.SwapchainCreateInfoKHR = .{
+        const swapchain = try self.device.createSwapchainKHR(&vk.SwapchainCreateInfoKHR{
             .surface = self.surface,
             .min_image_count = image_count,
             .image_format = self.surface_format.format,
@@ -456,9 +447,7 @@ pub const VulkanRenderer = struct {
             .present_mode = surface_present_mode,
             .clipped = vk.TRUE,
             .old_swapchain = self.swapchain,
-        };
-
-        const swapchain = try self.device.createSwapchainKHR(&swapchain_info, null);
+        }, null);
         errdefer self.device.destroySwapchainKHR(swapchain, null);
 
         const swapchain_images = try self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator);
@@ -474,7 +463,7 @@ pub const VulkanRenderer = struct {
         errdefer depth_image.deinit();
 
         for (swapchain_images, 0..swapchain_images.len) |image, index| {
-            const image_view_info: vk.ImageViewCreateInfo = .{
+            const image_view = try self.device.createImageView(&vk.ImageViewCreateInfo{
                 .image = image,
                 .view_type = .@"2d",
                 .format = self.surface_format.format,
@@ -491,9 +480,7 @@ pub const VulkanRenderer = struct {
                     .base_array_layer = 0,
                     .layer_count = 1,
                 },
-            };
-
-            const image_view = try self.device.createImageView(&image_view_info, null);
+            }, null);
             swapchain_image_views[index] = image_view;
 
             const attachments: []const vk.ImageView = &.{ image_view, depth_image.asVkConst().image_view };
@@ -538,90 +525,6 @@ pub const VulkanRenderer = struct {
         }
     }
 
-    pub fn draw(
-        self: *VulkanRenderer,
-        camera: *const Camera,
-        world: *const World,
-        render_frame: *const RenderFrame,
-    ) !void {
-        _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
-        try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
-
-        const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
-        const image_index = image_index_result.image_index;
-
-        const command_buffer = self.command_buffers[self.current_frame];
-
-        try command_buffer.resetCommandBuffer(.{});
-
-        // Record the command buffer
-        try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
-        });
-
-        // Store the timestamp before drawing.
-        command_buffer.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
-        command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2));
-
-        if (!use_moltenvk) {
-            command_buffer.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
-            command_buffer.beginQuery(self.primitives_query_pool, 0, .{});
-        }
-
-        try render_frame.recordCommandBuffer(command_buffer, camera, world, self.swapchain_framebuffers[image_index]);
-
-        if (!use_moltenvk) command_buffer.endQuery(self.primitives_query_pool, 0);
-        command_buffer.writeTimestamp(.{ .top_of_pipe_bit = true }, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
-
-        try command_buffer.endCommandBuffer();
-
-        // Submit the frame
-        const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
-        const wait_stages: []const vk.PipelineStageFlags = &.{.{ .color_attachment_output_bit = true }};
-
-        const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
-
-        const submit_info: vk.SubmitInfo = .{
-            .wait_semaphore_count = @intCast(wait_semaphores.len),
-            .p_wait_semaphores = wait_semaphores.ptr,
-            .p_wait_dst_stage_mask = wait_stages.ptr,
-
-            .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&command_buffer),
-
-            .signal_semaphore_count = @intCast(signal_semaphores.len),
-            .p_signal_semaphores = signal_semaphores.ptr,
-        };
-
-        try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
-
-        const present_info: vk.PresentInfoKHR = .{
-            .wait_semaphore_count = @intCast(signal_semaphores.len),
-            .p_wait_semaphores = signal_semaphores.ptr,
-            .swapchain_count = 1,
-            .p_swapchains = @ptrCast(&self.swapchain),
-            .p_image_indices = @ptrCast(&image_index),
-        };
-
-        _ = try self.graphics_queue.presentKHR(&present_info);
-
-        var timestamp_buffer: [2]u64 = .{ 0, 0 };
-        if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-            if (timestamp_buffer[0] <= timestamp_buffer[1]) self.statistics.putGpuTimeValue(@as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) * self.physical_device_properties.limits.timestamp_period / 1000000.0);
-        }
-        self.device.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
-
-        if (!use_moltenvk) {
-            var primitives_count: u64 = 0;
-            if ((try self.device.getQueryPoolResults(self.primitives_query_pool, @intCast(self.current_frame), 1, @sizeOf(u64), @ptrCast(&primitives_count), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-                self.statistics.primitives = primitives_count;
-            }
-            self.device.resetQueryPool(self.primitives_query_pool, @intCast(self.current_frame), 1);
-        }
-
-        self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
-    }
-
     fn processGraph(
         self: *VulkanRenderer,
         graph: *const Graph,
@@ -639,22 +542,19 @@ pub const VulkanRenderer = struct {
         const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
         const image_index = image_index_result.image_index;
 
-        const command_buffer = self.command_buffers[self.current_frame];
+        const cb = self.command_buffers[self.current_frame];
+        const fb = self.swapchain_framebuffers[image_index];
 
-        try command_buffer.resetCommandBuffer(.{});
-        try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
+        try cb.resetCommandBuffer(.{});
+        try cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
 
-        var render_pass = graph.root_render_pass;
-        var previous_pass: ?*Graph.RenderPass = null;
-
-        if (render_pass == null) unreachable; // A least one render pass is needed !
-
-        while (render_pass) |rp| : (render_pass = rp.next) {
-            try self.processRenderPass(command_buffer, self.swapchain_framebuffers[self.current_frame], previous_pass, rp);
-            previous_pass = render_pass;
+        if (graph.main_render_pass) |rp| {
+            try self.processRenderPass(cb, fb, rp);
+        } else {
+            unreachable;
         }
 
-        try command_buffer.endCommandBuffer();
+        try cb.endCommandBuffer();
 
         // Submit the command buffer
         const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
@@ -662,29 +562,25 @@ pub const VulkanRenderer = struct {
 
         const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
 
-        const submit_info: vk.SubmitInfo = .{
+        try self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
             .wait_semaphore_count = @intCast(wait_semaphores.len),
             .p_wait_semaphores = wait_semaphores.ptr,
             .p_wait_dst_stage_mask = wait_stages.ptr,
 
             .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&command_buffer),
+            .p_command_buffers = @ptrCast(&cb),
 
             .signal_semaphore_count = @intCast(signal_semaphores.len),
             .p_signal_semaphores = signal_semaphores.ptr,
-        };
+        }), self.in_flight_fences[self.current_frame]);
 
-        try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
-
-        const present_info: vk.PresentInfoKHR = .{
+        _ = try self.graphics_queue.presentKHR(&vk.PresentInfoKHR{
             .wait_semaphore_count = @intCast(signal_semaphores.len),
             .p_wait_semaphores = signal_semaphores.ptr,
             .swapchain_count = 1,
             .p_swapchains = @ptrCast(&self.swapchain),
             .p_image_indices = @ptrCast(&image_index),
-        };
-
-        _ = try self.graphics_queue.presentKHR(&present_info);
+        });
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
     }
@@ -693,15 +589,12 @@ pub const VulkanRenderer = struct {
         self: *VulkanRenderer,
         cb: vk.CommandBufferProxy,
         fb: vk.Framebuffer,
-        previous: ?*Graph.RenderPass,
         pass: *Graph.RenderPass,
     ) !void {
         const clear_values: []const vk.ClearValue = &.{ // TODO one per attachements.
             .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
             .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
         };
-
-        _ = previous;
 
         cb.beginRenderPass(&vk.RenderPassBeginInfo{
             .render_pass = pass.vk_pass,
@@ -729,7 +622,7 @@ pub const VulkanRenderer = struct {
                 call.mesh.texture_buffer.asVkConst().buffer,
             }, &.{ 0, 0, 0 });
 
-            if (call.instance_buffer) |ib| cb.bindVertexBuffers(0, 1, @ptrCast(&ib.asVkConst().buffer), &.{0});
+            if (call.instance_buffer) |ib| cb.bindVertexBuffers(3, 1, @ptrCast(&ib.asVkConst().buffer), &.{0});
 
             cb.setViewport(0, 1, @ptrCast(&vk.Viewport{
                 .x = 0.0,
@@ -752,17 +645,6 @@ pub const VulkanRenderer = struct {
             cb.pushConstants(call.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
 
             cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
-
-            // const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
-
-            // var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
-            // projection_matrix[1][1] *= -1;
-
-            // const camera_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
-
-            // const constants: PushConstants = .{
-            //     .camera_matrix = camera_matrix,
-            // };
         }
 
         cb.endRenderPass();
@@ -796,9 +678,8 @@ pub const VulkanRenderer = struct {
         var vk_buffer: vk.Buffer = undefined;
         var allocation: vma.VmaAllocation = undefined;
 
-        if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&vk_buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
+        if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&vk_buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS)
             return Renderer.CreateBufferError.Fail;
-        }
 
         const buffer = try self.allocator.create(VulkanBuffer);
         buffer.* = .{

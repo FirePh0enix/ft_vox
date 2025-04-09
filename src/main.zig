@@ -15,6 +15,7 @@ const Material = @import("render/Material.zig");
 const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Window = @import("render/Window.zig");
+const Graph = @import("render/Graph.zig");
 const Camera = @import("Camera.zig");
 const RenderFrame = @import("voxel/RenderFrame.zig");
 const World = @import("voxel/World.zig");
@@ -53,6 +54,14 @@ pub fn main() !void {
     try Renderer.create(allocator, .vulkan);
     try rdr().createDevice(&window, null);
     try rdr().createSwapchain(&window, .{ .vsync = .performance });
+
+    var render_pass = try Graph.RenderPass.create(allocator, rdr().asVk().render_pass, .{
+        .attachments = .{ .color = true, .depth = true },
+        .max_draw_calls = 32 * 32,
+    });
+
+    var graph = Graph.init(allocator);
+    graph.main_render_pass = &render_pass;
 
     var running = true;
 
@@ -118,7 +127,7 @@ pub fn main() !void {
 
     const material = try Material.init(registry.image_array.?, pipeline);
 
-    var render_frame: RenderFrame = try .create(allocator, mesh, material);
+    // var render_frame: RenderFrame = try .create(allocator, mesh, material);
     var world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
@@ -151,7 +160,18 @@ pub fn main() !void {
 
         camera.updateCamera(&world);
 
-        try rdr().asVk().draw(&camera, &world, &render_frame);
+        // Rebuild the render pass
+        const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
+        var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
+        projection_matrix[1][1] *= -1;
+        const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
+
+        // Record draw calls into the render pass
+        render_pass.reset();
+        render_pass.view_matrix = view_matrix;
+        for (world.chunks.items) |*chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+
+        try rdr().processGraph(&graph);
 
         const time_after = std.time.microTimestamp();
         const elapsed = time_after - time_before;
@@ -159,10 +179,10 @@ pub fn main() !void {
         rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 
         if (std.time.milliTimestamp() - last_time >= 500) {
-            console.clear();
-            console.moveToStart();
+            // console.clear();
+            // console.moveToStart();
 
-            rdr().asVk().printDebugStats();
+            // rdr().asVk().printDebugStats();
 
             last_time = std.time.milliTimestamp();
         }

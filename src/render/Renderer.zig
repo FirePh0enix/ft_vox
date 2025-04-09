@@ -183,7 +183,7 @@ pub fn createSwapchain(self: *Self, window: *const Window, options: SwapchainOpt
 }
 
 pub fn processGraph(self: *Self, graph: *const Graph) ProcessGraphError!void {
-    return self.vtable.create_swapchain(self.ptr, graph);
+    return self.vtable.process_graph(self.ptr, graph);
 }
 
 pub fn getCurrentDevice(self: *Self) Device {
