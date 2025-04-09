@@ -131,5 +131,5 @@ pub fn rebuildInstanceBuffer(self: *Self, registry: *const Registry) !void {
     }
 
     self.instance_count = index;
-    try self.instance_buffer.update(std.mem.sliceAsBytes(instances[0..index]));
+    try self.instance_buffer.update(@as([*]const u8, @ptrCast(instances[0..index].ptr))[0 .. index * @sizeOf(BlockInstanceData)]);
 }

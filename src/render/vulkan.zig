@@ -1018,8 +1018,7 @@ pub const VulkanBuffer = struct {
             const map_data = try staging_buffer.asVk().map();
             defer staging_buffer.asVk().unmap();
 
-            const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..self.size];
-            @memcpy(map_data, data_bytes);
+            @memcpy(map_data[0..data.len], data);
         }
 
         // Record the command buffer

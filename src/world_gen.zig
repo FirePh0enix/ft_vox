@@ -49,22 +49,10 @@ fn generateChunk(seed: u64, options: Options, chunk_x: isize, chunk_z: isize) !C
         for (0..16) |z| {
             const height = generateHeight(seed, chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
-            // for (0..height) |y| {
-            //     const cave_noise = math.noise.simplex3D(
-            //         @as(f32, chunk_x * 16 + x) / 25.0,
-            //         @as(f32, y) / 25.0,
-            //         @as(f32, chunk_z * 16 + z) / 25.0,
-            //     );
-
-            //     // 0 on video, probably need to decrease to -0.3, 0.4, 0.5...
-            //     if (cave_noise < 0) {
-            //         // Air block (cave)
-            //         chunk.setBlockState(x, y, z, .{ .id = 0 });
-            //     } else {
-            //         // Solid block
-            //         chunk.setBlockState(x, y, z, .{ .id = 1 });
-            //     }
-            // }
+            for (0..height) |y| {
+                // Solid block
+                chunk.setBlockState(x, y, z, .{ .id = 1 });
+            }
 
             if (height < options.sea_level) {
                 for (height..options.sea_level) |y| {

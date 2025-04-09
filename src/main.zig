@@ -38,7 +38,7 @@ pub const allocator: std.mem.Allocator = tracking_allocator.allocator();
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
 var camera = Camera{
-    .position = .{ 10.0, 10.0, -10.0, 0.0 },
+    .position = .{ 10.0, 150.0, -10.0, 0.0 },
     .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
 };
 
