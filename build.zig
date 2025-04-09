@@ -1,4 +1,5 @@
 const std = @import("std");
+const cimgui = @import("cimgui_zig");
 
 const Build = std.Build;
 const Step = Build.Step;
@@ -75,15 +76,30 @@ pub fn build(b: *Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const zm_mod = zm.module("root");
-    exe.root_module.addImport("zmath", zm_mod);
+    exe.root_module.addImport("zmath", zm.module("root"));
 
     const zigimg = b.dependency("zigimg", .{
         .target = target,
         .optimize = optimize,
     });
-    const zigimg_mod = zigimg.module("zigimg");
-    exe.root_module.addImport("zigimg", zigimg_mod);
+    exe.root_module.addImport("zigimg", zigimg.module("zigimg"));
+
+    const cimgui_dep = b.dependency("cimgui_zig", .{
+        .target = target,
+        .optimize = optimize,
+        .platform = cimgui.Platform.SDL3,
+        .renderer = cimgui.Renderer.Vulkan,
+    });
+    exe.linkLibrary(cimgui_dep.artifact("cimgui"));
+
+    const cimgui_header = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/dcimgui.h"),
+    });
+    cimgui_header.addIncludePath(cimgui_dep.path("dcimgui"));
+    exe.root_module.addImport("dcimgui", cimgui_header.createModule());
+    exe.step.dependOn(&cimgui_header.step);
 
     const glslc = b.dependency("shader_compiler", .{}).artifact("shader_compiler");
     const flags: []const []const u8 = &.{

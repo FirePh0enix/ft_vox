@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const vma = @import("vma");
 const zm = @import("zmath");
 const zigimg = @import("zigimg");
+const dcimgui = @import("dcimgui");
 
 const Allocator = std.mem.Allocator;
 const VmaAllocator = vma.VmaAllocator;
@@ -17,16 +18,20 @@ const Graph = @import("Graph.zig");
 const Renderer = @import("Renderer.zig");
 const Buffer = @import("Buffer.zig");
 const Image = @import("Image.zig");
+const Material = @import("Material.zig");
 
 const rdr = Renderer.rdr;
 
-const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () void;
-const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () void;
+const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () callconv(.c) void;
+const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () callconv(.c) void;
 
 const use_moltenvk = builtin.os.tag.isDarwin();
 
 pub const VulkanRenderer = struct {
     allocator: Allocator,
+
+    get_instance_proc_addr: *const GetInstanceProcAddrFn,
+
     instance: vk.InstanceProxy,
     device: vk.DeviceProxy,
     surface: vk.SurfaceKHR,
@@ -68,6 +73,17 @@ pub const VulkanRenderer = struct {
 
     features: Features,
     statistics: Statistics = .{},
+
+    imgui_context: *dcimgui.ImGuiContext,
+
+    c_noise_image: Image,
+    c_noise_texture_id: dcimgui.ImTextureID,
+    e_noise_image: Image,
+    e_noise_texture_id: dcimgui.ImTextureID,
+    pv_noise_image: Image,
+    pv_noise_texture_id: dcimgui.ImTextureID,
+    h_noise_image: Image,
+    h_noise_texture_id: dcimgui.ImTextureID,
 
     const max_frames_in_flight: usize = 2;
 
@@ -111,6 +127,8 @@ pub const VulkanRenderer = struct {
     ) !void {
         const get_instance_proc_addr: *const GetInstanceProcAddrFn = @ptrCast(window.getVkGetInstanceProcAddr());
         const instance_extensions = window.getVkInstanceExtensions();
+
+        self.get_instance_proc_addr = get_instance_proc_addr;
 
         const vkb = vk.BaseWrapper.load(get_instance_proc_addr);
 
@@ -255,8 +273,10 @@ pub const VulkanRenderer = struct {
 
         self.device = vk.DeviceProxy.init(device_handle, &device_wrapper);
 
-        self.graphics_queue = vk.QueueProxy.init(self.device.getDeviceQueue(physical_device_with_info.queue_info.graphics_index orelse unreachable, 0), &device_wrapper);
-        self.compute_queue = vk.QueueProxy.init(self.device.getDeviceQueue(physical_device_with_info.queue_info.compute_index orelse unreachable, 0), &device_wrapper);
+        self.graphics_queue_index = physical_device_with_info.queue_info.graphics_index orelse unreachable;
+        self.graphics_queue = vk.QueueProxy.init(self.device.getDeviceQueue(self.graphics_queue_index, 0), &device_wrapper);
+        self.compute_queue_index = physical_device_with_info.queue_info.compute_index orelse unreachable;
+        self.compute_queue = vk.QueueProxy.init(self.device.getDeviceQueue(self.compute_queue_index, 0), &device_wrapper);
 
         // Allocate command buffers
         self.command_pool = try self.device.createCommandPool(&vk.CommandPoolCreateInfo{
@@ -390,6 +410,71 @@ pub const VulkanRenderer = struct {
         self.current_frame = 0;
         self.physical_device = physical_device_with_info.physical_device;
         self.swapchain = .null_handle;
+
+        // Initialize DearImGui
+        // TODO: Some of this should be in the main render pass creation.
+        self.imgui_context = dcimgui.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
+
+        var io: *dcimgui.ImGuiIO = dcimgui.ImGui_GetIO() orelse unreachable;
+        io.ConfigFlags |= dcimgui.ImGuiConfigFlags_NavEnableKeyboard;
+        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.handle));
+
+        var init_info: dcimgui.ImGui_ImplVulkan_InitInfo = .{
+            .Instance = @ptrFromInt(@intFromEnum(self.instance.handle)),
+            .PhysicalDevice = @ptrFromInt(@intFromEnum(self.physical_device)),
+            .Device = @ptrFromInt(@intFromEnum(self.device.handle)),
+            .QueueFamily = self.graphics_queue_index,
+            .Queue = @ptrFromInt(@intFromEnum(self.graphics_queue.handle)),
+            .RenderPass = @ptrFromInt(@intFromEnum(self.render_pass)),
+            .MinImageCount = @intCast(max_frames_in_flight),
+            .ImageCount = @intCast(max_frames_in_flight),
+            .MSAASamples = dcimgui.VK_SAMPLE_COUNT_1_BIT,
+        };
+
+        init_info.DescriptorPool = @ptrFromInt(@intFromEnum(try self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+            .max_sets = 16,
+            .pool_size_count = 1,
+            .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
+        }, null)));
+
+        const loader = struct {
+            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) dcimgui.PFN_vkVoidFunction {
+                return rdr().asVk().get_instance_proc_addr(rdr().asVk().instance.handle, name);
+            }
+        }.func;
+
+        _ = dcimgui.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
+        _ = dcimgui.cImGui_ImplVulkan_Init(&init_info);
+
+        const noise_sampler = try self.device.createSampler(&vk.SamplerCreateInfo{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .mipmap_mode = .nearest,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .address_mode_w = .clamp_to_edge,
+            .mip_lod_bias = 0.0,
+            .anisotropy_enable = vk.FALSE,
+            .max_anisotropy = 0.0,
+            .compare_enable = vk.FALSE,
+            .compare_op = .equal,
+            .min_lod = 0.0,
+            .max_lod = 0.0,
+            .border_color = .int_opaque_black,
+            .unnormalized_coordinates = vk.FALSE,
+        }, null);
+
+        self.c_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.c_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.c_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.e_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.e_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.e_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.pv_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.pv_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.pv_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.h_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.h_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.h_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 
     fn shutdown(self: *VulkanRenderer) void {
@@ -647,6 +732,26 @@ pub const VulkanRenderer = struct {
             cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
         }
 
+        // TODO: This sould be moved somewhere in the graph
+        dcimgui.cImGui_ImplSDL3_NewFrame();
+        dcimgui.cImGui_ImplVulkan_NewFrame();
+        dcimgui.ImGui_NewFrame();
+
+        dcimgui.ImGui_Text("Continentalness | Erosion\n");
+        dcimgui.ImGui_Image(self.c_noise_texture_id, .{ .x = 100, .y = 100 });
+
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(self.e_noise_texture_id, .{ .x = 100, .y = 100 });
+
+        dcimgui.ImGui_Text("Peak and Valley | Heightmap\n");
+        dcimgui.ImGui_Image(self.pv_noise_texture_id, .{ .x = 100, .y = 100 });
+
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(self.h_noise_texture_id, .{ .x = 100, .y = 100 });
+
+        dcimgui.ImGui_Render();
+        dcimgui.cImGui_ImplVulkan_RenderDrawData(dcimgui.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
+
         cb.endRenderPass();
     }
 
@@ -703,8 +808,9 @@ pub const VulkanRenderer = struct {
         format: Renderer.Format,
         usage: Renderer.ImageUsageFlags,
         aspect_mask: Renderer.ImageAspectFlags,
+        mapping: Renderer.PixelMapping,
     ) Renderer.CreateImageError!Image {
-        return self.createImageVk(width, height, layers, tiling, format, usage, aspect_mask) catch unreachable;
+        return self.createImageVk(width, height, layers, tiling, format, usage, aspect_mask, mapping) catch unreachable;
     }
 
     fn createImageVk(
@@ -716,7 +822,10 @@ pub const VulkanRenderer = struct {
         format: Renderer.Format,
         usage: Renderer.ImageUsageFlags,
         aspect_mask: Renderer.ImageAspectFlags,
+        mapping: Renderer.PixelMapping,
     ) !Image {
+        std.debug.assert(layers > 0);
+
         const image_info: vk.ImageCreateInfo = .{
             .image_type = .@"2d",
             .format = format.asVk(),
@@ -743,9 +852,12 @@ pub const VulkanRenderer = struct {
 
         const image_view = try self.device.createImageView(&vk.ImageViewCreateInfo{
             .image = vk_image,
-            .view_type = if (layers == 0) .@"2d" else .@"2d_array",
+            .view_type = if (layers == 1) .@"2d" else .@"2d_array",
             .format = format.asVk(),
-            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+            .components = switch (mapping) {
+                .identity => .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+                .grayscale => .{ .r = .identity, .g = .r, .b = .r, .a = .one },
+            },
             .subresource_range = .{
                 .aspect_mask = aspect_mask.asVk(),
                 .base_array_layer = 0,

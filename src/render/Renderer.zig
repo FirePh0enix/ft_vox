@@ -78,17 +78,24 @@ pub const ImageTiling = enum {
 };
 
 pub const Format = enum {
+    r8_srgb,
     r8g8b8a8_srgb,
     b8g8r8a8_srgb,
     d32_sfloat,
 
     pub fn asVk(self: Format) vk.Format {
         switch (self) {
+            .r8_srgb => return .r8_srgb,
             .r8g8b8a8_srgb => return .r8g8b8a8_srgb,
             .b8g8r8a8_srgb => return .b8g8r8a8_srgb,
             .d32_sfloat => return .d32_sfloat,
         }
     }
+};
+
+pub const PixelMapping = enum {
+    identity,
+    grayscale,
 };
 
 pub const ImageUsageFlags = packed struct {
@@ -146,7 +153,7 @@ pub const VTable = struct {
     create_buffer: *const fn (self: *anyopaque, size: usize, usage: BufferUsage, flags: BufferUsageFlags) CreateBufferError!Buffer,
 
     /// Create an image given its dimensions and usage.
-    create_image: *const fn (self: *anyopaque, width: usize, height: usize, layers: usize, tiling: ImageTiling, format: Format, usage: ImageUsageFlags, aspect_mask: ImageAspectFlags) CreateImageError!Image,
+    create_image: *const fn (self: *anyopaque, width: usize, height: usize, layers: usize, tiling: ImageTiling, format: Format, usage: ImageUsageFlags, aspect_mask: ImageAspectFlags, mapping: PixelMapping) CreateImageError!Image,
 };
 
 pub const CreateError = error{} || Allocator.Error;
@@ -215,8 +222,9 @@ pub fn createImage(
     format: Format,
     usage: ImageUsageFlags,
     aspect_mask: ImageAspectFlags,
+    mapping: PixelMapping,
 ) CreateImageError!Image {
-    return self.vtable.create_image(self.ptr, width, height, layers, tiling, format, usage, aspect_mask);
+    return self.vtable.create_image(self.ptr, width, height, layers, tiling, format, usage, aspect_mask, mapping);
 }
 
 pub fn createImageFromFile(
@@ -228,7 +236,7 @@ pub fn createImageFromFile(
     defer image_data.deinit();
 
     const format: Format = .r8g8b8a8_srgb; // TODO: Select the correct image format.
-    var image = try self.createImage(image_data.width, image_data.height, 1, .optimal, format, .{ .sampled = true, .transfer_dst = true }, .{ .color = true });
+    var image = try self.createImage(image_data.width, image_data.height, 1, .optimal, format, .{ .sampled = true, .transfer_dst = true }, .{ .color = true }, .identity);
 
     image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true }) catch unreachable;
     try image.update(0, image_data.rawBytes());
@@ -244,7 +252,7 @@ pub fn createDepthImage(
 ) CreateImageError!Image {
     const depth_format: Format = .d32_sfloat; // TODO: Check support for depth format.
 
-    var image = try self.createImage(width, height, 1, .optimal, depth_format, .{ .depth_stencil_attachment = true }, .{ .depth = true });
+    var image = try self.createImage(width, height, 1, .optimal, depth_format, .{ .depth_stencil_attachment = true }, .{ .depth = true }, .identity);
     image.asVk().transferLayout(.undefined, .depth_stencil_attachment_optimal, .{ .depth_bit = true }) catch unreachable;
 
     return image;

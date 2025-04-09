@@ -41,23 +41,24 @@ pub const RaycastResult = union(enum) {
     },
 };
 
+pub const ChunkPos = struct {
+    x: i64,
+    z: i64,
+};
+
 allocator: Allocator,
 
 seed: u64,
 
 /// Chunks loaded in memory that are updated and rendered to the player.
-chunks: std.ArrayListUnmanaged(Chunk) = .empty,
+chunks: std.AutoHashMapUnmanaged(ChunkPos, Chunk) = .empty,
 
 pub fn deinit(self: *Self) void {
     self.chunks.deinit(self.allocator);
 }
 
 pub fn getChunk(self: *const Self, x: i64, z: i64) ?*Chunk {
-    for (self.chunks.items) |*chunk| {
-        if (chunk.position.x == x and chunk.position.z == z)
-            return chunk;
-    }
-    return null;
+    return self.chunks.getPtr(.{ .x = x, .z = z });
 }
 
 pub fn getBlockState(self: *const Self, x: i64, y: i64, z: i64) ?BlockState {

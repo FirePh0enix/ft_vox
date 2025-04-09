@@ -183,7 +183,10 @@ pub fn main() !void {
         // Record draw calls into the render pass
         render_pass.reset();
         render_pass.view_matrix = view_matrix;
-        for (world.chunks.items) |*chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+
+        var chunk_iter = world.chunks.valueIterator();
+
+        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
 
         try rdr().processGraph(&graph);
 

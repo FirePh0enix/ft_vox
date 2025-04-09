@@ -106,7 +106,7 @@ pub fn getOrRegisterImage(
 }
 
 fn createTexture(self: *Self) !void {
-    var image_array = try rdr().createImage(16, 16, self.images.items.len + 1, .optimal, .r8g8b8a8_srgb, .{ .sampled = true, .transfer_dst = true }, .{ .color = true });
+    var image_array = try rdr().createImage(16, 16, self.images.items.len + 1, .optimal, .r8g8b8a8_srgb, .{ .sampled = true, .transfer_dst = true }, .{ .color = true }, .identity);
 
     try image_array.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
 
