@@ -9,7 +9,7 @@ const Registry = @import("voxel/Registry.zig");
 
 pub const Options = struct {
     seed: ?u64 = null,
-    sea_level: u64 = 50,
+    sea_level: u64 = 51,
 };
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: Options) !World {
@@ -81,29 +81,50 @@ fn generateChunk(options: Options, chunk_x: isize, chunk_z: isize) !Chunk {
 
 // https://www.youtube.com/watch?v=CSa5O6knuwI
 // https://minecraft.wiki/w/World_generation
-// TODO: For details and biome -> temperature and humidity.
-
 pub fn generateHeight(x: isize, z: isize) usize {
     const fx: f32 = @floatFromInt(x);
     const fz: f32 = @floatFromInt(z);
 
-    const max_height: f32 = 150.0;
+    // More scaling = more inlands.
+    const continentalness: f32 = math.noise.fractalNoise(4, fx / 400.0, fz / 400.0);
+    const base_height = calculateHeight(continentalness);
 
-    const continentalness: f32 = math.noise.fractalNoise(4, fx / 600.0, fz / 600.0);
-    const erosion: f32 = math.noise.fractalNoise(2, fx / 300.0, fz / 300.0);
-    const weirdness: f32 = math.noise.simplex3D(fx / 100.0, fz / 100.0, 0.0);
-
-    const n_cont = (continentalness + 1) / 2;
+    // More scaling = more flat.
+    const erosion: f32 = math.noise.fractalNoise(2, fx / 600.0, fz / 600.0);
     const n_ero = (erosion + 1) / 2;
-    const n_weird = (weirdness + 1) / 2;
-
     const roughness = 1 - n_ero;
-    const peaks_valleys = 1 - @abs(3 * @abs(n_weird) - 2.0);
-    const mountain_variation = peaks_valleys * roughness * 0.5;
 
-    const y = (n_cont + mountain_variation) * max_height;
+    // More scaling = more distance between valleys.
+    const peak_valley_noise: f32 = math.noise.simplex2D(fx / 200.0, fz / 200.0);
+    const weirdness = (peak_valley_noise + 1) / 2;
+    const peaks_valleys = 1 - (3 * (weirdness) - 2.0);
 
-    const final_height: usize = @intFromFloat(@max(y, 1.0));
+    var variation_scale: f32 = 0.1;
 
-    return final_height;
+    // For local bumpyness, local means it will affect this mountain or this hill, not other.
+    if (continentalness >= 0.4) {
+        // Mountains
+        variation_scale = 0.2;
+    } else if (continentalness >= 0.3) {
+        // Hills
+        variation_scale = 0.15;
+    }
+
+    // Variation scale ensure that value is not too high and so height is not out of bounds.
+    const variation = base_height * peaks_valleys * roughness * variation_scale;
+    
+    return @intFromFloat(@max(base_height + variation, 1.0));
+}
+
+fn calculateHeight(cont: f32) f32 {
+    if (cont >= -1 and cont < 0.3) {
+        return 50.0;
+    } else if (cont >= 0.3 and cont < 0.4) {
+        const t = (cont - 0.3) / 0.1;
+        return 50.0 + t * 50.0;
+    } else if (cont >= 0.4 and cont <= 1.0) {
+        const t = (cont - 0.4) / 0.6;
+        return 100.0 + t * 50.0;
+    }
+    return 50.0;
 }
