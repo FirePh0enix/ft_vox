@@ -87,35 +87,23 @@ pub fn generateHeight(seed: u64, x: isize, z: isize) usize {
     const fx: f32 = @floatFromInt(x);
     const fz: f32 = @floatFromInt(z);
 
-    const scale: f32 = 20.0;
-    const max_height: f32 = 20.0;
+    const max_height: f32 = 150.0;
 
-    const c_weight: f32 = 0.5;
-    const e_weight: f32 = 0.3;
-    const pv_weight: f32 = 0.1;
-    const density_multiplier: f32 = 10.0;
+    const continentalness: f32 = math.noise.fractalNoise(4, fx / 600.0, fz / 600.0);
+    const erosion: f32 = math.noise.fractalNoise(2, fx / 300.0, fz / 300.0);
+    const weirdness: f32 = math.noise.simplex3D(fx / 100.0, fz / 100.0, 0.0);
 
-    // used to decide between ocean/beach/land biomes. Higher values correspond to more inland biomes.
-    const continentalness = math.noise.fractalNoise(4, fx / 150.0, fz / 150.0);
+    const n_cont = (continentalness + 1) / 2;
+    const n_ero = (erosion + 1) / 2;
+    const n_weird = (weirdness + 1) / 2;
 
-    // used to decide between flat and mountainous biomes. When erosion is high the landscape is generally flat.
-    const erosion = math.noise.fractalNoise(3, fx / 100.0, fz / 100.0);
+    const roughness = 1 - n_ero;
+    const peaks_valleys = 1 - @abs(3 * @abs(n_weird) - 2.0);
+    const mountain_variation = peaks_valleys * roughness * 0.5;
 
-    const peaks_valleys = math.noise.fractalNoise(2, fx / 50.0, fz / 50.0);
+    const y = (n_cont + mountain_variation) * max_height;
 
-    // Calculate the terrain shape, allow to create some weird world with small scale variation.
-    const density = math.noise.simplex3D(fx / scale, fz / scale, (continentalness * c_weight + erosion * e_weight + peaks_valleys * pv_weight) * density_multiplier);
+    const final_height: usize = @intFromFloat(@max(y, 1.0));
 
-    // Define the shape of the terrain.
-    const squashing_factor = (continentalness * 0.5 + erosion * 0.3 + peaks_valleys * 0.1);
-
-    // Increase the base height map overall.
-    const height_offset = (continentalness * 0.5 - erosion * 0.3);
-
-    // Final normalized height.
-    const y = (squashing_factor + density * 0.1 + height_offset + 1.0) / 2.0 * max_height;
-    const block_height: usize = @intFromFloat(y);
-
-    // Ensure there is at least one block.
-    return 1 + block_height;
+    return final_height;
 }

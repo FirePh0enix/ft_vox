@@ -94,11 +94,148 @@ pub fn simplex2D(x: f32, y: f32) f32 {
     return 45.23065 * (n0 + n1 + n2);
 }
 
+fn grad3D(hash_value: i32, x: f32, y: f32, z: f32) f32 {
+    const h: i32 = hash_value & 15;
+    const u = if (h < 8) x else y;
+    const v = if (h < 4) y else if (h == 12 or h == 14) x else z;
+    return if ((h & 1) == 1) -u else u + if ((h & 2) > 0) -v else v;
+}
+
+pub fn simplex3D(x: f32, y: f32, z: f32) f32 {
+    var n0: f32 = 0.0;
+    var n1: f32 = 0.0;
+    var n2: f32 = 0.0;
+    var n3: f32 = 0.0;
+
+    const F3: f32 = 1.0 / 3.0;
+    const G3: f32 = 1.0 / 6.0;
+
+    const s: f32 = (x + y + z) * F3;
+
+    const i: f32 = @floor(x + s);
+    const j: f32 = @floor(y + s);
+    const k: f32 = @floor(z + s);
+
+    const t: f32 = (i + j + k) * G3;
+    const X0: f32 = i - t;
+    const Y0: f32 = j - t;
+    const Z0: f32 = k - t;
+    const x0: f32 = x - X0;
+    const y0: f32 = y - Y0;
+    const z0: f32 = z - Z0;
+
+    var @"i1": f32 = 0;
+    var j1: f32 = 0;
+    var k1: f32 = 0;
+
+    var @"i2": f32 = 0;
+    var j2: f32 = 0;
+    var k2: f32 = 0;
+
+    if (x0 >= y0) {
+        if (y0 >= z0) {
+            @"i1" = 1;
+            j1 = 0;
+            k1 = 0;
+            @"i2" = 1;
+            j2 = 1;
+            k2 = 0;
+        } else if (x0 >= z0) {
+            @"i1" = 1;
+            j1 = 0;
+            k1 = 0;
+            @"i2" = 1;
+            j2 = 0;
+            k2 = 1;
+        } else {
+            @"i1" = 0;
+            j1 = 0;
+            k1 = 1;
+            @"i2" = 1;
+            j2 = 0;
+            k2 = 1;
+        }
+    } else {
+        if (y0 < z0) {
+            @"i1" = 0;
+            j1 = 0;
+            k1 = 1;
+            @"i2" = 0;
+            j2 = 1;
+            k2 = 1;
+        } else if (x0 < z0) {
+            @"i1" = 0;
+            j1 = 1;
+            k1 = 0;
+            @"i2" = 0;
+            j2 = 1;
+            k2 = 1;
+        } else {
+            @"i1" = 0;
+            j1 = 1;
+            k1 = 0;
+            @"i2" = 1;
+            j2 = 1;
+            k2 = 0;
+        }
+    }
+
+    const x1: f32 = x0 - @"i1" + G3;
+    const y1: f32 = y0 - j1 + G3;
+    const z1: f32 = z0 - k1 + G3;
+    const x2: f32 = x0 - @"i2" + 2.0 * G3;
+    const y2: f32 = y0 - j2 + 2.0 * G3;
+    const z2: f32 = z0 - k2 + 2.0 * G3;
+    const x3: f32 = x0 - 1.0 + 3.0 * G3;
+    const y3: f32 = y0 - 1.0 + 3.0 * G3;
+    const z3: f32 = z0 - 1.0 + 3.0 * G3;
+
+    const gi0: i32 = hash(@as(i32, @intFromFloat(i)) + hash(intFromFloat(i32, j) + hash(@intFromFloat(k))));
+    const gi1: i32 = hash(@as(i32, @intFromFloat(i + @"i1")) + hash(intFromFloat(i32, j + j1) + hash(@intFromFloat(k + k1))));
+    const gi2: i32 = hash(@as(i32, @intFromFloat(i + @"i2")) + hash(@as(i32, @intFromFloat(j + j2)) + hash(@intFromFloat(k + k2))));
+    const gi3: i32 = hash(@as(i32, @intFromFloat(i + 1)) + hash(@as(i32, @intFromFloat(j + 1)) + hash(intFromFloat(i32, k) + 1)));
+
+    var t0: f32 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
+    if (t0 < 0) {
+        n0 = 0.0;
+    } else {
+        t0 *= t0;
+        n0 = t0 * t0 * grad3D(gi0, x0, y0, z0);
+    }
+    var t1: f32 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
+    if (t1 < 0) {
+        n1 = 0.0;
+    } else {
+        t1 *= t1;
+        n1 = t1 * t1 * grad3D(gi1, x1, y1, z1);
+    }
+    var t2: f32 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
+    if (t2 < 0) {
+        n2 = 0.0;
+    } else {
+        t2 *= t2;
+        n2 = t2 * t2 * grad3D(gi2, x2, y2, z2);
+    }
+    var t3: f32 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
+    if (t3 < 0) {
+        n3 = 0.0;
+    } else {
+        t3 *= t3;
+        n3 = t3 * t3 * grad3D(gi3, x3, y3, z3);
+    }
+
+    return 32.0 * (n0 + n1 + n2 + n3);
+}
+
+fn intFromFloat(comptime T: type, f: anytype) T {
+    return @intFromFloat(f);
+}
+
 pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
     const frequency: f32 = 1.0;
     const amplitude: f32 = 1.0;
     const lacunarity: f32 = 2.0;
-    const persistence: f32 = 1 / lacunarity;
+    const persistence: f32 = 0.5;
 
     var output: f32 = 0.0;
     var denom: f32 = 0.0;
@@ -107,7 +244,7 @@ pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
 
     for (0..octaves) |i| {
         _ = i;
-        output += a * simplex2D(x * f, y * f);
+        output += a * simplex2D(x *  f, y * f);
         denom += a;
 
         f *= lacunarity;
