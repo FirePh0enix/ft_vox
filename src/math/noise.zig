@@ -1,6 +1,7 @@
 // https://github.com/SRombauts/SimplexNoise/blob/master/src/SimplexNoise.cpp
+const std = @import("std");
 
-const perm: [256]u8 = .{
+const default_perm: [256]u8 = .{
     151, 160, 137, 91,  90,  15,  131, 13,  201, 95,  96,  53,  194, 233, 7,   225, 140, 36,  103, 30,  69,  142,
     8,   99,  37,  240, 21,  10,  23,  190, 6,   148, 247, 120, 234, 75,  0,   26,  197, 62,  94,  252, 219, 203,
     117, 35,  11,  32,  57,  177, 33,  88,  237, 149, 56,  87,  174, 20,  125, 136, 171, 168, 68,  175, 74,  165,
@@ -14,6 +15,17 @@ const perm: [256]u8 = .{
     181, 199, 106, 157, 184, 84,  204, 176, 115, 121, 50,  45,  127, 4,   150, 254, 138, 236, 205, 93,  222, 114,
     67,  29,  24,  72,  243, 141, 128, 195, 78,  66,  215, 61,  156, 180,
 };
+
+var perm: [256]u8 = default_perm;
+
+pub fn seed(seed_value: u64) void {
+    var rng = std.Random.DefaultPrng.init(seed_value);
+
+    for (0..256) |index| {
+        const v: u8 = @truncate(rng.next());
+        perm[index] = v;
+    }
+}
 
 inline fn hash(v: i32) i32 {
     @setRuntimeSafety(false);
@@ -244,7 +256,7 @@ pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
 
     for (0..octaves) |i| {
         _ = i;
-        output += a * simplex2D(x *  f, y * f);
+        output += a * simplex2D(x * f, y * f);
         denom += a;
 
         f *= lacunarity;

@@ -38,8 +38,9 @@ pub const allocator: std.mem.Allocator = tracking_allocator.allocator();
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
 var camera = Camera{
-    .position = .{ 10.0, 150.0, -10.0, 0.0 },
+    .position = .{ 10.0, 100.0, -10.0, 0.0 },
     .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
+    .speed = 0.5,
 };
 
 pub fn main() !void {
@@ -120,6 +121,18 @@ pub fn main() !void {
             "assets/textures/Grass_Side.png",
             "assets/textures/Grass_Top.png",
             "assets/textures/Dirt.png",
+        } } },
+    }, .{});
+
+    try registry.registerBlock(.{
+        .name = "water",
+        .visual = .{ .cube = .{ .textures = .{
+            "assets/textures/Water.png",
+            "assets/textures/Water.png",
+            "assets/textures/Water.png",
+            "assets/textures/Water.png",
+            "assets/textures/Water.png",
+            "assets/textures/Water.png",
         } } },
     }, .{});
 

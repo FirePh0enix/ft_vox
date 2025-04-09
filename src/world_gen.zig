@@ -9,32 +9,33 @@ const Registry = @import("voxel/Registry.zig");
 
 pub const Options = struct {
     seed: ?u64 = null,
-    sea_level: u64 = 10,
+    sea_level: u64 = 50,
 };
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: Options) !World {
     const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
     var world: World = .{ .allocator = allocator, .seed = seed };
 
-    const width = 21;
-    const depth = 21;
+    const width = 22;
+    const depth = 22;
+
+    // math.noise.seed(seed);
+
+    var mutex: std.Thread.Mutex = .{};
+    var jobs: std.ArrayList(std.Thread) = try .initCapacity(allocator, width * depth);
 
     for (0..depth) |z| {
         for (0..width) |x| {
-            const chunk = try generateChunk(seed, options, @intCast(x), @intCast(z));
-            try world.chunks.append(world.allocator, chunk);
+            const job = try std.Thread.spawn(.{}, processChunk, .{ options, @as(isize, @intCast(x)), @as(isize, @intCast(z)), &world, &mutex });
+            try jobs.append(job);
         }
     }
+
+    for (jobs.items) |job| job.join();
 
     for (0..depth) |z| {
         for (0..width) |x| {
             const chunk = &world.chunks.items[x + z * width];
-            chunk.computeVisibility(
-                if (z > 0) &world.chunks.items[x + (z - 1) * width] else null,
-                if (z < depth - 1) &world.chunks.items[x + (z + 1) * width] else null,
-                if (x > 0) &world.chunks.items[(x - 1) + z * width] else null,
-                if (x < width - 1) &world.chunks.items[(x + 1) + z * width] else null,
-            );
             try chunk.rebuildInstanceBuffer(registry);
         }
     }
@@ -42,21 +43,34 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: O
     return world;
 }
 
-fn generateChunk(seed: u64, options: Options, chunk_x: isize, chunk_z: isize) !Chunk {
+fn processChunk(options: Options, x: isize, z: isize, world: *World, world_mutex: *std.Thread.Mutex) void {
+    var chunk = try generateChunk(options, x, z);
+    chunk.computeVisibility(null, null, null, null);
+
+    world_mutex.lock();
+    defer world_mutex.unlock();
+
+    world.chunks.append(world.allocator, chunk) catch unreachable;
+}
+
+fn generateChunk(options: Options, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
     for (0..16) |x| {
         for (0..16) |z| {
-            const height = generateHeight(seed, chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
+            const height = generateHeight(chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
             for (0..height) |y| {
-                // Solid block
                 chunk.setBlockState(x, y, z, .{ .id = 1 });
+
+                if (y == height - 1) {
+                    chunk.setBlockState(x, y, z, .{ .id = 2 });
+                }
             }
 
             if (height < options.sea_level) {
                 for (height..options.sea_level) |y| {
-                    chunk.setBlockState(x, y, z, .{ .id = 2 });
+                    chunk.setBlockState(x, y, z, .{ .id = 3 });
                 }
             }
         }
@@ -69,9 +83,7 @@ fn generateChunk(seed: u64, options: Options, chunk_x: isize, chunk_z: isize) !C
 // https://minecraft.wiki/w/World_generation
 // TODO: For details and biome -> temperature and humidity.
 
-pub fn generateHeight(seed: u64, x: isize, z: isize) usize {
-    _ = seed;
-
+pub fn generateHeight(x: isize, z: isize) usize {
     const fx: f32 = @floatFromInt(x);
     const fz: f32 = @floatFromInt(z);
 
