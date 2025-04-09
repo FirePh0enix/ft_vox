@@ -9,6 +9,8 @@ const Mesh = @import("../Mesh.zig");
 const Allocator = std.mem.Allocator;
 const ShaderModel = @import("ShaderModel.zig");
 
+const rdr = Renderer.rdr;
+
 pipeline: vk.Pipeline,
 layout: vk.PipelineLayout,
 descriptor_pool: MaterialDescriptorPool,
@@ -22,7 +24,7 @@ pub const MaterialDescriptorPool = struct {
     const pool_size: usize = 16;
 
     pub fn init(allocator: Allocator, shader_model: ShaderModel) !MaterialDescriptorPool {
-        const descriptor_set_layout = try Renderer.singleton.device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
+        const descriptor_set_layout = try rdr().asVk().device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
             .binding_count = @intCast(shader_model.vk_descriptor_bindings.items.len),
             .p_bindings = shader_model.vk_descriptor_bindings.items.ptr,
         }, null);
@@ -36,7 +38,7 @@ pub const MaterialDescriptorPool = struct {
     }
 
     pub fn deinit(self: *const MaterialDescriptorPool) void {
-        for (self.pools.items) |pool| Renderer.singleton.device.destroyQueryPool(pool, null);
+        for (self.pools.items) |pool| rdr().asVk().device.destroyQueryPool(pool, null);
         self.pools.deinit();
     }
 
@@ -45,7 +47,7 @@ pub const MaterialDescriptorPool = struct {
             // TODO: Should probably allocate as much of each bindings.
 
             const sizes: []const vk.DescriptorPoolSize = &.{.{ .type = .combined_image_sampler, .descriptor_count = pool_size }};
-            const pool = try Renderer.singleton.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+            const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
                 .pool_size_count = @intCast(sizes.len),
                 .p_pool_sizes = sizes.ptr,
                 .max_sets = 1,
@@ -58,7 +60,7 @@ pub const MaterialDescriptorPool = struct {
         self.count += 1;
 
         var descriptor_set: vk.DescriptorSet = undefined;
-        try Renderer.singleton.device.allocateDescriptorSets(&vk.DescriptorSetAllocateInfo{ .descriptor_pool = pool, .descriptor_set_count = 1, .p_set_layouts = @ptrCast(&self.descriptor_set_layout) }, @ptrCast(&descriptor_set));
+        try rdr().asVk().device.allocateDescriptorSets(&vk.DescriptorSetAllocateInfo{ .descriptor_pool = pool, .descriptor_set_count = 1, .p_set_layouts = @ptrCast(&self.descriptor_set_layout) }, @ptrCast(&descriptor_set));
 
         return descriptor_set;
     }
@@ -74,12 +76,12 @@ pub fn create(
     const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
         .{
             .stage = .{ .vertex_bit = true },
-            .module = try Renderer.singleton.createShaderModule(&basic_cube_vert),
+            .module = try rdr().asVk().createShaderModule(&basic_cube_vert),
             .p_name = "main",
         },
         .{
             .stage = .{ .fragment_bit = true },
-            .module = try Renderer.singleton.createShaderModule(&basic_cube_frag),
+            .module = try rdr().asVk().createShaderModule(&basic_cube_frag),
             .p_name = "main",
         },
     };
@@ -169,7 +171,7 @@ pub fn create(
         .p_push_constant_ranges = shader_model.vk_push_constants.items.ptr,
     };
 
-    const pipeline_layout = try Renderer.singleton.device.createPipelineLayout(&layout_info, null);
+    const pipeline_layout = try rdr().asVk().device.createPipelineLayout(&layout_info, null);
 
     const pipeline_info: vk.GraphicsPipelineCreateInfo = .{
         .stage_count = @intCast(shader_stages.len),
@@ -183,15 +185,15 @@ pub fn create(
         .p_color_blend_state = &blend_info,
         .p_dynamic_state = &dynamic_state_info,
         .layout = pipeline_layout,
-        .render_pass = Renderer.singleton.render_pass,
+        .render_pass = rdr().asVk().render_pass,
         .subpass = 0,
         .base_pipeline_handle = .null_handle,
         .base_pipeline_index = -1,
     };
 
     var pipeline: vk.Pipeline = .null_handle;
-    _ = try Renderer.singleton.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&pipeline_info), null, @ptrCast(&pipeline));
-    errdefer Renderer.singleton.device.destroyPipeline(pipeline, null);
+    _ = try rdr().asVk().device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&pipeline_info), null, @ptrCast(&pipeline));
+    errdefer rdr().asVk().device.destroyPipeline(pipeline, null);
 
     return .{
         .pipeline = pipeline,

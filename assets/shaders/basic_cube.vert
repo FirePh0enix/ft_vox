@@ -16,7 +16,7 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out uint textureIndex;
 
 layout(push_constant) uniform PushConstants {
-    mat4 cameraMatrix;
+    mat4 viewMatrix;
 };
 
 void main() {
@@ -41,7 +41,7 @@ void main() {
         instancePosition.x, instancePosition.y, instancePosition.z, 1.0
     );
 
-    gl_Position = cameraMatrix * modelMatrix * vec4(position, 1.0);
+    gl_Position = viewMatrix * modelMatrix * vec4(position, 1.0);
     fragTextureCoords = textureCoords;
     fragNormal = normal;
 

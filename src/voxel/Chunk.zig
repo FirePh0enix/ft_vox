@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const Self = @This();
 const World = @import("World.zig");
 const BlockState = World.BlockState;
@@ -5,6 +7,9 @@ const Buffer = @import("../render/Buffer.zig");
 const Registry = @import("../voxel/Registry.zig");
 const RenderFrame = @import("../voxel/RenderFrame.zig");
 const BlockInstanceData = RenderFrame.BlockInstanceData;
+const Renderer = @import("../render/Renderer.zig");
+
+const rdr = Renderer.rdr;
 
 pub const length = 16;
 pub const height = 256;
@@ -19,7 +24,8 @@ position: Pos,
 blocks: [block_count]BlockState = @splat(BlockState{}),
 
 /// GPU buffer used to store block instances.
-instance_buffer: Buffer = .{ .buffer = .null_handle, .allocation = null, .size = 0 },
+instance_buffer_created: bool = false,
+instance_buffer: Buffer = undefined,
 instance_count: usize = 0,
 
 pub fn getBlockState(self: *const Self, x: usize, y: usize, z: usize) ?BlockState {
@@ -94,8 +100,8 @@ pub fn computeVisibility(
 }
 
 pub fn rebuildInstanceBuffer(self: *Self, registry: *const Registry) !void {
-    if (self.instance_buffer.buffer == .null_handle)
-        self.instance_buffer = try Buffer.create(@sizeOf(BlockInstanceData) * block_count, .{ .transfer_dst_bit = true, .vertex_buffer_bit = true }, .gpu_only);
+    if (!self.instance_buffer_created)
+        self.instance_buffer = try rdr().createBuffer(@sizeOf(BlockInstanceData) * block_count, .gpu_only, .{ .transfer_dst = true, .vertex_buffer = true });
 
     var index: usize = 0;
     var instances: [block_count]BlockInstanceData = @splat(BlockInstanceData{});
@@ -125,5 +131,5 @@ pub fn rebuildInstanceBuffer(self: *Self, registry: *const Registry) !void {
     }
 
     self.instance_count = index;
-    try self.instance_buffer.update(BlockInstanceData, instances[0..index]);
+    try self.instance_buffer.update(std.mem.sliceAsBytes(instances[0..index]));
 }

@@ -1,33 +1,21 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const zm = @import("zmath");
 
+const Self = @This();
 const Allocator = std.mem.Allocator;
 const Material = @import("Material.zig");
 const Mesh = @import("../Mesh.zig");
 const Buffer = @import("Buffer.zig");
-const Self = @This();
+const Image = @import("Image.zig");
 
 allocator: Allocator,
-root_render_pass: ?*RenderPass = null,
+main_render_pass: ?*RenderPass = null,
 
 pub fn init(allocator: Allocator) Self {
     return .{
         .allocator = allocator,
     };
-}
-
-pub fn addRenderPass(
-    self: *Self,
-    target: RenderTarget,
-) *RenderPass {
-    const render_pass: *RenderPass = self.allocator.create(RenderPass);
-    render_pass.* = .{
-        .allocator = self.allocator,
-        .target = target,
-    };
-
-    self.root_render_pass = render_pass;
-    return render_pass;
 }
 
 pub const Rect = struct {
@@ -57,24 +45,64 @@ pub const Framebuffer = union(enum) {
 
 pub const RenderTarget = struct {
     framebuffer: Framebuffer = .native,
-    viewport: Rect = .native,
-    scissor: Rect = .native,
+    viewport: Viewport = .native,
+    scissor: Scissor = .native,
+};
+
+pub const PushConstants = struct {
+    view_matrix: zm.Mat,
+};
+
+pub const RenderPassAttachments = packed struct {
+    color: bool = false,
+    depth: bool = false,
+};
+
+pub const RenderPassOptions = struct {
+    attachments: RenderPassAttachments = .{},
+    target: RenderTarget = .{},
+    max_draw_calls: usize = 0,
 };
 
 pub const RenderPass = struct {
     allocator: Allocator,
 
-    next: ?*RenderPass = null,
+    dependencies: std.ArrayListUnmanaged(*RenderPass) = .empty,
+
+    vk_pass: vk.RenderPass, // TODO: Should be API agnostic
 
     target: RenderTarget,
+    attachments: RenderPassAttachments,
 
-    // TODO: Use a tree here to manage multiple meshes and materials.
-    draw_calls: std.ArrayListUnmanaged(DrawCall) = .empty,
+    view_matrix: zm.Mat = zm.identity(),
+
+    // TODO: Use a tree here to manage multiple meshes and materials to minimize pipeline, descriptor and buffer bindings.
+    draw_calls: std.ArrayListUnmanaged(DrawCall),
+
+    pub fn create(allocator: Allocator, pass: vk.RenderPass, options: RenderPassOptions) !RenderPass {
+        const draw_calls: std.ArrayListUnmanaged(DrawCall) = if (options.max_draw_calls > 0) try .initCapacity(allocator, options.max_draw_calls) else .empty;
+
+        return .{
+            .allocator = allocator,
+            .target = options.target,
+            .attachments = options.attachments,
+            .draw_calls = draw_calls,
+            .vk_pass = pass,
+        };
+    }
+
+    pub fn dependsOn(self: *RenderPass, dep: *RenderPass) void {
+        self.dependencies.append(self.allocator, dep) catch unreachable;
+    }
+
+    pub fn reset(self: *RenderPass) void {
+        self.draw_calls.clearRetainingCapacity();
+    }
 
     pub fn draw(
         self: *RenderPass,
-        mesh: *Mesh,
-        material: *Material,
+        mesh: *const Mesh,
+        material: *const Material,
         first_vertex: usize,
         vertex_count: usize,
     ) void {
@@ -90,9 +118,9 @@ pub const RenderPass = struct {
 
     pub fn drawInstanced(
         self: *RenderPass,
-        mesh: *Mesh,
-        material: *Material,
-        instance_buffer: *Buffer,
+        mesh: *const Mesh,
+        material: *const Material,
+        instance_buffer: *const Buffer,
         first_vertex: usize,
         vertex_count: usize,
         first_instance: usize,
@@ -113,9 +141,9 @@ pub const RenderPass = struct {
 };
 
 pub const DrawCall = struct {
-    material: *Material,
-    mesh: *Mesh,
-    instance_buffer: ?*Buffer = null,
+    material: *const Material,
+    mesh: *const Mesh,
+    instance_buffer: ?*const Buffer = null,
 
     first_vertex: usize,
     vertex_count: usize,

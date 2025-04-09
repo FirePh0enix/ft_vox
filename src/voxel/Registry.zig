@@ -5,6 +5,9 @@ const Allocator = std.mem.Allocator;
 const Self = @This();
 const Block = @import("Block.zig");
 const Image = @import("../render/Image.zig");
+const Renderer = @import("../render/Renderer.zig");
+
+const rdr = Renderer.rdr;
 
 pub const BlockZon = struct {
     /// An unique identifiable identifier.
@@ -103,18 +106,18 @@ pub fn getOrRegisterImage(
 }
 
 fn createTexture(self: *Self) !void {
-    var image_array = try Image.create(16, 16, @intCast(self.images.items.len + 1), .r8g8b8a8_srgb, .optimal, .{ .sampled_bit = true, .transfer_dst_bit = true }, .{ .color_bit = true });
+    var image_array = try rdr().createImage(16, 16, self.images.items.len + 1, .optimal, .r8g8b8a8_srgb, .{ .sampled = true, .transfer_dst = true }, .{ .color = true });
 
-    try image_array.transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
+    try image_array.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
 
-    var missing = Image.createMissingPixels();
-    try image_array.store(0, &missing);
+    var missing = @import("../render/vulkan.zig").VulkanImage.getMissingPixels();
+    try image_array.update(0, &missing);
 
     for (self.images.items, 0..self.images.items.len) |image, index| {
-        try image_array.store(@intCast(index + 1), image.rawBytes());
+        try image_array.update(index + 1, image.rawBytes());
     }
 
-    try image_array.transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    try image_array.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
 
     self.image_array = image_array;
 }

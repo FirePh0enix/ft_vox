@@ -4,6 +4,7 @@ const zm = @import("zmath");
 
 const Vec = zm.Vec;
 const Camera = @import("Camera.zig");
+const Window = @import("render/Window.zig");
 
 const rdr = @import("render/Renderer.zig").rdr;
 
@@ -32,12 +33,12 @@ pub const mouse_right_button: u8 = 3;
 pub var mouse_sensibility: f32 = 0.01;
 
 var actions: std.EnumArray(Action, Status) = .initFill(.{});
-var window: *sdl.SDL_Window = undefined;
+var window: *Window = undefined;
 var mouse_grabbed: bool = false;
 var fullscreen: bool = false;
 
-pub fn init(sdl_window: *sdl.SDL_Window) void {
-    window = sdl_window;
+pub fn init(_window: *Window) void {
+    window = _window;
 }
 
 pub fn isActionPressed(action: Action) bool {
@@ -78,7 +79,7 @@ pub fn getMovementVector() Vec {
 
 pub fn setMouseGrab(value: bool) void {
     mouse_grabbed = value;
-    _ = sdl.SDL_SetWindowRelativeMouseMode(window, value);
+    _ = sdl.SDL_SetWindowRelativeMouseMode(window.handle, value);
 }
 
 pub fn isMouseGrabbed() bool {
@@ -90,9 +91,9 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
         sdl.SDL_EVENT_KEY_DOWN => {
             switch (event.key.key) {
                 sdl.SDLK_F => {
-                    _ = sdl.SDL_SetWindowFullscreen(window, !fullscreen);
+                    _ = sdl.SDL_SetWindowFullscreen(window.handle, !fullscreen);
                     fullscreen = !fullscreen;
-                    try rdr().resize();
+                    try rdr().createSwapchain(window, .{ .vsync = .performance });
                 },
                 sdl.SDLK_ESCAPE => setMouseGrab(false),
 
