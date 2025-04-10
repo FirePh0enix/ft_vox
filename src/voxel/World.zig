@@ -10,6 +10,8 @@ const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
 const Ray = @import("../math.zig").Ray;
 
+const world_directory: []const u8 = "user_data/worlds";
+
 pub const Direction = enum(u3) {
     north = 0,
     south = 1,
@@ -113,4 +115,43 @@ pub fn raycastBlock(self: *const Self, ray: Ray, precision: f32) ?RaycastResult 
     }
 
     return null;
+}
+
+pub fn save(self: *const Self, name: []const u8) !void {
+    var worlds_dir = std.fs.cwd().openDir(world_directory, .{}) catch a: {
+        try std.fs.cwd().makePath(world_directory);
+        break :a try std.fs.cwd().openDir(world_directory, .{});
+    };
+    defer worlds_dir.close();
+
+    var buf: [128]u8 = undefined;
+
+    try worlds_dir.makePath(name);
+    const chunks_path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ name, "chunks" });
+
+    try worlds_dir.makePath(chunks_path);
+
+    const dir = try worlds_dir.openDir(chunks_path, .{});
+
+    var chunks_iter = self.chunks.iterator();
+    while (chunks_iter.next()) |entry| {
+        try saveChunk(entry.key_ptr.x, entry.key_ptr.z, entry.value_ptr, dir);
+    }
+}
+
+fn saveChunk(x: i64, z: i64, chunk: *const Chunk, chunks_dir: std.fs.Dir) !void {
+    var buf: [128]u8 = undefined;
+    const file = try chunks_dir.createFile(try std.fmt.bufPrint(&buf, "{}${}.chunkdata", .{ x, z }), .{});
+
+    var blocks: [Chunk.length * Chunk.height * Chunk.length]u16 = undefined;
+
+    for (0..Chunk.length) |bx| {
+        for (0..Chunk.height) |by| {
+            for (0..Chunk.length) |bz| {
+                blocks[bz * Chunk.length * Chunk.height + by * Chunk.length + bx] = (chunk.getBlockState(bx, by, bz) orelse BlockState{}).id;
+            }
+        }
+    }
+
+    try file.writeAll(std.mem.sliceAsBytes(blocks[0..]));
 }
