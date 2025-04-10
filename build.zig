@@ -98,6 +98,7 @@ pub fn build(b: *Build) void {
         .root_source_file = b.path("src/dcimgui.h"),
     });
     cimgui_header.addIncludePath(cimgui_dep.path("dcimgui"));
+    cimgui_header.addIncludePath(sdl.path("include"));
     exe.root_module.addImport("dcimgui", cimgui_header.createModule());
     exe.step.dependOn(&cimgui_header.step);
 
