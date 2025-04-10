@@ -99,6 +99,7 @@ pub fn build(b: *Build) void {
     });
     cimgui_header.addIncludePath(cimgui_dep.path("dcimgui"));
     cimgui_header.addIncludePath(sdl.path("include"));
+    cimgui_header.addIncludePath(vulkan_headers.path("include"));
     exe.root_module.addImport("dcimgui", cimgui_header.createModule());
     exe.step.dependOn(&cimgui_header.step);
 
