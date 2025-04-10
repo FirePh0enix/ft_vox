@@ -168,9 +168,16 @@ pub const VulkanRenderer = struct {
         // Select the best physical device.
         const required_features: vk.PhysicalDeviceFeatures = .{};
         const optional_features: vk.PhysicalDeviceFeatures = .{};
-        const required_extensions: []const [*:0]const u8 = &.{
+
+        var required_extensions: std.ArrayList([*:0]const u8) = .init(self.allocator);
+        defer required_extensions.deinit();
+
+        try required_extensions.appendSlice(&.{
             vk.extensions.khr_swapchain.name.ptr,
-        };
+        });
+
+        if (use_moltenvk) required_extensions.append(vk.extensions.khr_portability_subset.name.ptr);
+
         const optional_extensions: []const [*:0]const u8 = &.{
             vk.extensions.khr_deferred_host_operations.name.ptr,
             vk.extensions.khr_acceleration_structure.name.ptr,
@@ -188,7 +195,7 @@ pub const VulkanRenderer = struct {
         const physical_devices = try self.instance.enumeratePhysicalDevicesAlloc(self.allocator);
         defer self.allocator.free(physical_devices);
 
-        const physical_device_with_info = (try getBestDevice(self.allocator, self.instance, self.surface, physical_devices, required_features, optional_features, required_extensions, optional_extensions)) orelse return error.NoSuitableDevice;
+        const physical_device_with_info = (try getBestDevice(self.allocator, self.instance, self.surface, physical_devices, required_features, optional_features, required_extensions.items, optional_extensions)) orelse return error.NoSuitableDevice;
         defer physical_device_with_info.deinit(self.allocator);
 
         self.physical_device = physical_device_with_info.physical_device;
@@ -232,7 +239,7 @@ pub const VulkanRenderer = struct {
         const device_extensions = combine_extensions: {
             var extensions = std.ArrayList([*:0]const u8).init(self.allocator);
 
-            for (required_extensions) |ext| {
+            for (required_extensions.items) |ext| {
                 try extensions.append(ext);
             }
 
