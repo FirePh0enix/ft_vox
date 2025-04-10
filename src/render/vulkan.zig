@@ -176,7 +176,7 @@ pub const VulkanRenderer = struct {
             vk.extensions.khr_swapchain.name.ptr,
         });
 
-        if (use_moltenvk) required_extensions.append(vk.extensions.khr_portability_subset.name.ptr);
+        if (use_moltenvk) try required_extensions.append(vk.extensions.khr_portability_subset.name.ptr);
 
         const optional_extensions: []const [*:0]const u8 = &.{
             vk.extensions.khr_deferred_host_operations.name.ptr,
@@ -188,9 +188,16 @@ pub const VulkanRenderer = struct {
 
         // According to gpuinfo support for hostQueryReset this is 99.5%.
         // TODO: Probably better to set this features as optional since it is only used for debugging purpose.
-        const host_query_reset_features: vk.PhysicalDeviceHostQueryResetFeatures = .{
+        var host_query_reset_features: vk.PhysicalDeviceHostQueryResetFeatures = .{
             .host_query_reset = vk.TRUE,
         };
+
+        if (use_moltenvk) {
+            var portability_subset_features: vk.PhysicalDevicePortabilitySubsetFeaturesKHR = .{
+                .image_view_format_swizzle = vk.TRUE,
+            };
+            host_query_reset_features.p_next = @ptrCast(&portability_subset_features);
+        }
 
         const physical_devices = try self.instance.enumeratePhysicalDevicesAlloc(self.allocator);
         defer self.allocator.free(physical_devices);

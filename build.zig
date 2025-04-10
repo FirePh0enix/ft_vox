@@ -151,6 +151,21 @@ pub fn build(b: *Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const lldb_path = if (@import("builtin").os.tag.isDarwin())
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb"
+    else
+        "lldb";
+
+    const lldb_cmd = b.addSystemCommand(&.{ lldb_path, "./zig-out/bin/ft_vox" });
+    lldb_cmd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    const lldb_step = b.step("lldb", "Run the app with lldb");
+    lldb_step.dependOn(&lldb_cmd.step);
+
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
     });

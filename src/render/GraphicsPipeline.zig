@@ -46,7 +46,12 @@ pub const MaterialDescriptorPool = struct {
         if (self.count >= self.pools.items.len * pool_size) {
             // TODO: Should probably allocate as much of each bindings.
 
-            const sizes: []const vk.DescriptorPoolSize = &.{.{ .type = .combined_image_sampler, .descriptor_count = pool_size }};
+            // Funnily enough, on linux it seems that it does not care about what we are giving it here, but it crash
+            // with moltenvk if we don't correctly specify the pool size.
+            const sizes: []const vk.DescriptorPoolSize = &.{
+                .{ .type = .combined_image_sampler, .descriptor_count = pool_size },
+                .{ .type = .uniform_buffer, .descriptor_count = pool_size },
+            };
             const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
                 .pool_size_count = @intCast(sizes.len),
                 .p_pool_sizes = sizes.ptr,
