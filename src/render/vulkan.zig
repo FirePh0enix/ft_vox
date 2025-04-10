@@ -76,12 +76,19 @@ pub const VulkanRenderer = struct {
 
     imgui_context: *dcimgui.ImGuiContext,
 
+    temp_noise_image: Image,
+    temp_noise_texture_id: dcimgui.ImTextureID,
+    hum_noise_image: Image,
+    hum_noise_texture_id: dcimgui.ImTextureID,
     c_noise_image: Image,
     c_noise_texture_id: dcimgui.ImTextureID,
     e_noise_image: Image,
     e_noise_texture_id: dcimgui.ImTextureID,
+    w_noise_image: Image,
+    w_noise_texture_id: dcimgui.ImTextureID,
     pv_noise_image: Image,
     pv_noise_texture_id: dcimgui.ImTextureID,
+
     h_noise_image: Image,
     h_noise_texture_id: dcimgui.ImTextureID,
 
@@ -478,11 +485,20 @@ pub const VulkanRenderer = struct {
             .unnormalized_coordinates = vk.FALSE,
         }, null);
 
+        self.temp_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.temp_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.temp_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.hum_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.hum_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.hum_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
         self.c_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
         self.c_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.c_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
 
         self.e_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
         self.e_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.e_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.w_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.w_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.w_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
 
         self.pv_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
         self.pv_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.pv_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
@@ -751,16 +767,43 @@ pub const VulkanRenderer = struct {
         dcimgui.cImGui_ImplVulkan_NewFrame();
         dcimgui.ImGui_NewFrame();
 
-        dcimgui.ImGui_Text("Continentalness | Erosion\n");
-        dcimgui.ImGui_Image(self.c_noise_texture_id, .{ .x = 100, .y = 100 });
+        const x = -pass.view_matrix[0][3];
+        const z = -pass.view_matrix[2][3];
 
+        const noise = @import("../world_gen.zig").getNoise(x, z);
+        dcimgui.ImGui_Text(
+            "t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n",
+            noise.temperature,
+            noise.humidity,
+            noise.continentalness,
+            noise.erosion,
+        );
+        dcimgui.ImGui_Text(
+            "w = %.2f | pv = %.2f | as = ??? | n = ???\n",
+            noise.weirdness,
+            noise.peaks_and_valleys,
+        );
+
+        dcimgui.ImGui_Text(
+            "el = %d\n",
+            @import("../world_gen.zig").getErosionLevel(noise.erosion),
+        );
+
+        dcimgui.ImGui_Text("Temperature | Humidity\n");
+        dcimgui.ImGui_Image(self.temp_noise_texture_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(self.hum_noise_texture_id, .{ .x = 100, .y = 100 });
+
+        dcimgui.ImGui_Text("Continentalness | Erosion | Weirdness | Peaks & Valleys\n");
+        dcimgui.ImGui_Image(self.c_noise_texture_id, .{ .x = 100, .y = 100 });
         dcimgui.ImGui_SameLine();
         dcimgui.ImGui_Image(self.e_noise_texture_id, .{ .x = 100, .y = 100 });
-
-        dcimgui.ImGui_Text("Peak and Valley | Heightmap\n");
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(self.w_noise_texture_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
         dcimgui.ImGui_Image(self.pv_noise_texture_id, .{ .x = 100, .y = 100 });
 
-        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Text("Final heightmap\n");
         dcimgui.ImGui_Image(self.h_noise_texture_id, .{ .x = 100, .y = 100 });
 
         dcimgui.ImGui_Render();

@@ -6,6 +6,7 @@ const console = @import("console.zig");
 const zm = @import("zmath");
 const input = @import("input.zig");
 const world_gen = @import("world_gen.zig");
+const dcimgui = @import("dcimgui");
 
 const Renderer = @import("render/Renderer.zig");
 const Buffer = @import("render/Buffer.zig");
@@ -166,6 +167,8 @@ pub fn main() !void {
         var event: sdl.SDL_Event = undefined;
 
         while (sdl.SDL_PollEvent(&event)) {
+            _ = dcimgui.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
+
             switch (event.type) {
                 sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
                 sdl.SDL_EVENT_WINDOW_RESIZED => try rdr().createSwapchain(&window, .{ .vsync = .performance }),
