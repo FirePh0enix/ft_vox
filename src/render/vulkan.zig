@@ -56,8 +56,11 @@ pub const VulkanRenderer = struct {
     primitives_query_pool: vk.QueryPool,
 
     graphics_queue: vk.QueueProxy,
+    graphics_queue_mutex: std.Thread.Mutex = .{},
     graphics_queue_index: u32,
+
     compute_queue: vk.QueueProxy,
+    compute_queue_mutex: std.Thread.Mutex = .{},
     compute_queue_index: u32,
 
     current_frame: usize = 0,
@@ -661,6 +664,9 @@ pub const VulkanRenderer = struct {
         const cb = self.command_buffers[self.current_frame];
         const fb = self.swapchain_framebuffers[image_index];
 
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
         try cb.resetCommandBuffer(.{});
         try cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
 
@@ -1199,6 +1205,9 @@ pub const VulkanBuffer = struct {
         }
 
         // Record the command buffer
+        rdr().asVk().graphics_queue_mutex.lock();
+        defer rdr().asVk().graphics_queue_mutex.unlock();
+
         try rdr().asVk().transfer_command_buffer.resetCommandBuffer(.{});
         try rdr().asVk().transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
             .flags = .{ .one_time_submit_bit = true },
@@ -1322,6 +1331,9 @@ pub const VulkanImage = struct {
         }
 
         // Record the command buffer
+        rdr().asVk().graphics_queue_mutex.lock();
+        defer rdr().asVk().graphics_queue_mutex.unlock();
+
         try rdr().asVk().transfer_command_buffer.resetCommandBuffer(.{});
         try rdr().asVk().transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
             .flags = .{ .one_time_submit_bit = true },
@@ -1360,6 +1372,9 @@ pub const VulkanImage = struct {
         aspect_mask: vk.ImageAspectFlags,
     ) !void {
         const command_buffer = rdr().asVk().transfer_command_buffer;
+
+        rdr().asVk().graphics_queue_mutex.lock();
+        defer rdr().asVk().graphics_queue_mutex.unlock();
 
         try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{});
 
