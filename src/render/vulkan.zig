@@ -108,6 +108,7 @@ pub const VulkanRenderer = struct {
         .create_swapchain = @ptrCast(&createSwapchain),
         .process_graph = @ptrCast(&processGraph),
         .create_buffer = @ptrCast(&createBuffer),
+        .destroy_buffer = @ptrCast(&destroyBuffer),
         .create_image = @ptrCast(&createImage),
     };
 
@@ -854,6 +855,13 @@ pub const VulkanRenderer = struct {
             .ptr = buffer,
             .vtable = &VulkanBuffer.vtable,
         };
+    }
+
+    fn destroyBuffer(
+        self: *VulkanRenderer,
+        buffer: Buffer,
+    ) void {
+        vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.asVkConst().buffer)), buffer.asVkConst().allocation);
     }
 
     fn createImage(

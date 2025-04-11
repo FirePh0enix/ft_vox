@@ -145,7 +145,8 @@ pub fn main() !void {
     var world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
-    try world.save("new-world");
+    try world.startWorkers(&registry);
+    // try world.save("new-world");
 
     defer world.deinit();
 

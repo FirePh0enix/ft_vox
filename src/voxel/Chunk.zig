@@ -34,6 +34,12 @@ instance_buffer_created: bool = false,
 instance_buffer: Buffer = undefined,
 instance_count: usize = 0,
 
+pub fn deinit(self: *const Self) void {
+    self.instance_buffer_created = false;
+    self.instance_count = 0;
+    rdr().destroyBuffer(self.instance_buffer);
+}
+
 pub fn getBlockState(self: *const Self, x: usize, y: usize, z: usize) ?BlockState {
     const block: BlockState = self.blocks[z * length * height + y * length + x];
     if (block.id == 0) return null;

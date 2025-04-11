@@ -10,36 +10,21 @@ const Renderer = @import("render/Renderer.zig");
 
 const rdr = Renderer.rdr;
 
-pub const Options = struct {
-    seed: ?u64 = null,
-    sea_level: u64 = 51,
-};
-
-pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: Options) !World {
-    const seed = options.seed orelse @as(u64, @bitCast(std.time.timestamp()));
-    var world: World = .{ .allocator = allocator, .seed = seed };
+pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
+    const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
+    var world = World.initEmpty(allocator, seed, settings);
 
     const width = 22;
     const depth = 22;
 
     // math.noise.seed(seed);
 
-    var mutex: std.Thread.Mutex = .{};
-    var jobs: std.ArrayList(std.Thread) = try .initCapacity(allocator, width * depth);
+    _ = registry;
 
     for (0..depth) |z| {
         for (0..width) |x| {
-            const job = try std.Thread.spawn(.{}, processChunk, .{ options, @as(isize, @intCast(x)), @as(isize, @intCast(z)), &world, &mutex });
-            try jobs.append(job);
+            try world.loadChunk(.{ .x = @intCast(x), .z = @intCast(z) });
         }
-    }
-
-    for (jobs.items) |job| job.join();
-
-    var chunk_iter = world.chunks.iterator();
-
-    while (chunk_iter.next()) |entry| {
-        try entry.value_ptr.rebuildInstanceBuffer(registry);
     }
 
     var temp_pixels: [width * 16 * depth * 16]u8 = undefined;
@@ -104,24 +89,24 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, options: O
     try rdr().asVk().h_noise_image.update(0, &h_pixels);
     try rdr().asVk().h_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
 
-    try rdr().asVk().biome_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().biome_noise_image.update(0, &biome_pixels);
-    try rdr().asVk().biome_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    // try rdr().asVk().biome_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
+    // try rdr().asVk().biome_noise_image.update(0, &biome_pixels);
+    // try rdr().asVk().biome_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
 
     return world;
 }
 
-fn processChunk(options: Options, x: isize, z: isize, world: *World, world_mutex: *std.Thread.Mutex) void {
-    var chunk = try generateChunk(options, x, z);
-    chunk.computeVisibility(null, null, null, null);
+// fn processChunk(settings: World.GenerationSettings, x: isize, z: isize, world: *World, world_mutex: *std.Thread.Mutex) void {
+//     var chunk = try generateChunk(settings, x, z);
+//     chunk.computeVisibility(null, null, null, null);
 
-    world_mutex.lock();
-    defer world_mutex.unlock();
+//     world_mutex.lock();
+//     defer world_mutex.unlock();
 
-    world.chunks.put(world.allocator, .{ .x = @intCast(x), .z = @intCast(z) }, chunk) catch unreachable;
-}
+//     world.chunks.put(world.allocator, .{ .x = @intCast(x), .z = @intCast(z) }, chunk) catch unreachable;
+// }
 
-fn generateChunk(options: Options, chunk_x: isize, chunk_z: isize) !Chunk {
+pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
     for (0..16) |x| {
@@ -136,8 +121,8 @@ fn generateChunk(options: Options, chunk_x: isize, chunk_z: isize) !Chunk {
                 }
             }
 
-            if (height < options.sea_level) {
-                for (height..options.sea_level) |y| {
+            if (height < settings.sea_level) {
+                for (height..settings.sea_level) |y| {
                     chunk.setBlockState(x, y, z, .{ .id = 3 });
                 }
             }

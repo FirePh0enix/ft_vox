@@ -1,5 +1,6 @@
 const std = @import("std");
 const zm = @import("zmath");
+const world_gen = @import("../world_gen.zig");
 
 const Self = @This();
 const RenderFrame = @import("../voxel/RenderFrame.zig");
@@ -48,14 +49,49 @@ pub const ChunkPos = struct {
     z: i64,
 };
 
+pub const GenerationSettings = struct {
+    seed: ?u64 = null,
+    sea_level: usize = 50,
+};
+
 allocator: Allocator,
 
 seed: u64,
+generation_settings: GenerationSettings,
 
 /// Chunks loaded in memory that are updated and rendered to the player.
 chunks: std.AutoHashMapUnmanaged(ChunkPos, Chunk) = .empty,
+chunks_lock: std.Thread.Mutex = .{},
+
+chunk_worker_state: std.atomic.Value(bool) = .init(false),
+chunk_load_worker: ChunkLoadWorker = .{},
+
+pub fn initEmpty(
+    allocator: Allocator,
+    seed: u64,
+    settings: GenerationSettings,
+) Self {
+    return .{
+        .allocator = allocator,
+        .seed = seed,
+        .generation_settings = settings,
+    };
+}
+
+pub fn startWorkers(self: *Self, registry: *const Registry) !void {
+    self.chunk_worker_state.store(true, .release);
+    self.chunk_load_worker.thread = try std.Thread.spawn(.{}, ChunkLoadWorker.worker, .{ &self.chunk_load_worker, self, registry });
+}
 
 pub fn deinit(self: *Self) void {
+    self.chunk_worker_state.store(false, .release);
+
+    if (self.chunk_load_worker.thread) |thread| {
+        self.chunk_load_worker.sleep_semaphore.post();
+        thread.join();
+        self.chunk_load_worker.orders.deinit(self.allocator);
+    }
+
     self.chunks.deinit(self.allocator);
 }
 
@@ -116,6 +152,49 @@ pub fn raycastBlock(self: *const Self, ray: Ray, precision: f32) ?RaycastResult 
 
     return null;
 }
+
+/// Load a chunk on a separate thread.
+pub fn loadChunk(self: *Self, pos: ChunkPos) !void {
+    self.chunk_load_worker.orders_mutex.lock();
+    defer self.chunk_load_worker.orders_mutex.unlock();
+
+    try self.chunk_load_worker.orders.append(self.allocator, pos);
+    self.chunk_load_worker.sleep_semaphore.post();
+}
+
+const ChunkLoadWorker = struct {
+    thread: ?std.Thread = null,
+    sleep_semaphore: std.Thread.Semaphore = .{},
+    orders_mutex: std.Thread.Mutex = .{},
+    orders: std.ArrayListUnmanaged(ChunkPos) = .empty,
+
+    fn worker(self: *ChunkLoadWorker, world: *Self, registry: *const Registry) void {
+        var remaining: usize = 0;
+
+        while (world.chunk_worker_state.load(.acquire)) {
+            if (remaining == 0) self.sleep_semaphore.wait();
+
+            self.orders_mutex.lock();
+            const chunk_pos = self.orders.pop();
+            remaining = self.orders.items.len;
+            self.orders_mutex.unlock();
+
+            if (chunk_pos) |pos| {
+                // TODO: How should chunk generation/load errors should be threated ?
+                var chunk = world_gen.generateChunk(world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
+                chunk.computeVisibility(null, null, null, null);
+                chunk.rebuildInstanceBuffer(registry) catch unreachable;
+
+                world.chunks_lock.lock();
+                defer world.chunks_lock.unlock();
+
+                world.chunks.put(world.allocator, pos, chunk) catch unreachable;
+            }
+        }
+    }
+
+    fn processChunkLoad() void {}
+};
 
 pub const ConfigZon = struct {
     seed: u64,

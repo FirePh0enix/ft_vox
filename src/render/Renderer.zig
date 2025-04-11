@@ -152,6 +152,9 @@ pub const VTable = struct {
     /// Create a buffer given its size and usage.
     create_buffer: *const fn (self: *anyopaque, size: usize, usage: BufferUsage, flags: BufferUsageFlags) CreateBufferError!Buffer,
 
+    /// Destroy a previously created buffer.
+    destroy_buffer: *const fn (self: *anyopaque, buffer: Buffer) void,
+
     /// Create an image given its dimensions and usage.
     create_image: *const fn (self: *anyopaque, width: usize, height: usize, layers: usize, tiling: ImageTiling, format: Format, usage: ImageUsageFlags, aspect_mask: ImageAspectFlags, mapping: PixelMapping) CreateImageError!Image,
 };
@@ -193,9 +196,9 @@ pub fn processGraph(self: *Self, graph: *const Graph) ProcessGraphError!void {
     return self.vtable.process_graph(self.ptr, graph);
 }
 
-pub fn getCurrentDevice(self: *Self) Device {
-    return self.vtable.get_current_device(self.ptr);
-}
+// pub fn getCurrentDevice(self: *Self) Device {
+//     return self.vtable.get_current_device(self.ptr);
+// }
 
 pub fn createBuffer(self: *Self, size: usize, usage: BufferUsage, flags: BufferUsageFlags) CreateBufferError!Buffer {
     return self.vtable.create_buffer(self.ptr, size, usage, flags);
@@ -211,6 +214,10 @@ pub fn createBufferFromData(
     var buffer = try self.createBuffer(@sizeOf(T) * data.len, usage, flags);
     try buffer.update(std.mem.sliceAsBytes(data));
     return buffer;
+}
+
+pub fn destroyBuffer(self: *Self, buffer: Buffer) void {
+    return self.vtable.destroy_buffer(self.ptr, buffer);
 }
 
 pub fn createImage(
