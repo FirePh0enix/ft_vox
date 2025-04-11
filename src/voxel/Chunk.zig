@@ -20,6 +20,12 @@ pub const Pos = struct {
     z: i64,
 };
 
+pub const LocalPos = packed struct(u16) {
+    x: u4,
+    y: u8,
+    z: u4,
+};
+
 position: Pos,
 blocks: [block_count]BlockState = @splat(BlockState{}),
 

@@ -117,6 +117,10 @@ pub fn raycastBlock(self: *const Self, ray: Ray, precision: f32) ?RaycastResult 
     return null;
 }
 
+pub const ConfigZon = struct {
+    seed: u64,
+};
+
 pub fn save(self: *const Self, name: []const u8) !void {
     var worlds_dir = std.fs.cwd().openDir(world_directory, .{}) catch a: {
         try std.fs.cwd().makePath(world_directory);
@@ -127,6 +131,17 @@ pub fn save(self: *const Self, name: []const u8) !void {
     var buf: [128]u8 = undefined;
 
     try worlds_dir.makePath(name);
+    const world_path = try worlds_dir.openDir(name, .{});
+
+    // Save the world config
+    const config: ConfigZon = .{
+        .seed = self.seed,
+    };
+
+    const config_file = try world_path.createFile("config.zon", .{});
+    try std.zon.stringify.serialize(config, .{}, config_file.writer());
+
+    // Save each chunks
     const chunks_path = try std.fmt.bufPrint(&buf, "{s}/{s}", .{ name, "chunks" });
 
     try worlds_dir.makePath(chunks_path);
@@ -143,15 +158,20 @@ fn saveChunk(x: i64, z: i64, chunk: *const Chunk, chunks_dir: std.fs.Dir) !void 
     var buf: [128]u8 = undefined;
     const file = try chunks_dir.createFile(try std.fmt.bufPrint(&buf, "{}${}.chunkdata", .{ x, z }), .{});
 
-    var blocks: [Chunk.length * Chunk.height * Chunk.length]u16 = undefined;
+    var blocks: [Chunk.length * Chunk.height * Chunk.length]struct { local_pos: Chunk.LocalPos, block_id: u16 } = undefined;
+    var block_count: usize = 0;
 
     for (0..Chunk.length) |bx| {
         for (0..Chunk.height) |by| {
             for (0..Chunk.length) |bz| {
-                blocks[bz * Chunk.length * Chunk.height + by * Chunk.length + bx] = (chunk.getBlockState(bx, by, bz) orelse BlockState{}).id;
+                if (chunk.getBlockState(bx, by, bz)) |state| {
+                    blocks[block_count] = .{ .local_pos = .{ .x = @intCast(bx), .y = @intCast(by), .z = @intCast(bz) }, .block_id = state.id };
+                    block_count += 1;
+                }
             }
         }
     }
 
-    try file.writeAll(std.mem.sliceAsBytes(blocks[0..]));
+    var stream = std.io.fixedBufferStream(std.mem.sliceAsBytes(blocks[0..block_count]));
+    try std.compress.zlib.compress(stream.reader(), file.writer(), .{});
 }
