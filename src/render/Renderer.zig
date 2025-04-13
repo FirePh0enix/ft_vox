@@ -128,6 +128,12 @@ pub const ImageAspectFlags = packed struct {
     }
 };
 
+pub const Statistics = struct {
+    gpu_time: f32 = 0.0,
+    primitives_drawn: usize = 0,
+    vram_used: usize = 0,
+};
+
 pub const VTable = struct {
     /// Initialize the driver and create the rendering device. If `index` is not null then the driver will try to use it, otherwise the most
     /// suitable device will be selected.
@@ -157,6 +163,8 @@ pub const VTable = struct {
 
     /// Create an image given its dimensions and usage.
     create_image: *const fn (self: *anyopaque, width: usize, height: usize, layers: usize, tiling: ImageTiling, format: Format, usage: ImageUsageFlags, aspect_mask: ImageAspectFlags, mapping: PixelMapping) CreateImageError!Image,
+
+    get_statistics: *const fn (self: *const anyopaque) Statistics,
 };
 
 pub const CreateError = error{} || Allocator.Error;
@@ -263,4 +271,8 @@ pub fn createDepthImage(
     image.asVk().transferLayout(.undefined, .depth_stencil_attachment_optimal, .{ .depth_bit = true }) catch unreachable;
 
     return image;
+}
+
+pub fn getStatistics(self: *const Self) Statistics {
+    return self.vtable.get_statistics(self.ptr);
 }

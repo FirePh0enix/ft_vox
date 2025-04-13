@@ -40,6 +40,9 @@
             .url = "git+https://github.com/tiawl/cimgui.zig#8fc2044d2612a26776f486c0cf7903017f3c2cec",
             .hash = "cimgui_zig-1.0.0-2XubkpBDUACzQsCsU7P5qTB-JSFZgXuzwhGLwtA1c9Do",
         },
+        .webgpu = .{
+            .path = "deps/webgpu.zig",
+        },
     },
     .paths = .{
         "build.zig",

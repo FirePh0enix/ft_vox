@@ -1,5 +1,5 @@
-/.zig-cache
-/zig-out
+.zig-cache
+zig-out
 .DS_Store
 imgui.ini
 /user_data

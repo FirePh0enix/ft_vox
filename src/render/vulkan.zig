@@ -75,7 +75,7 @@ pub const VulkanRenderer = struct {
     vma_allocator: VmaAllocator,
 
     features: Features,
-    statistics: Statistics = .{},
+    statistics: Renderer.Statistics = .{},
 
     imgui_context: *dcimgui.ImGuiContext,
 
@@ -113,6 +113,7 @@ pub const VulkanRenderer = struct {
         .create_buffer = @ptrCast(&createBuffer),
         .destroy_buffer = @ptrCast(&destroyBuffer),
         .create_image = @ptrCast(&createImage),
+        .get_statistics = @ptrCast(&getStatistics),
     };
 
     pub fn create(allocator: Allocator) Allocator.Error!*VulkanRenderer {
@@ -956,6 +957,23 @@ pub const VulkanRenderer = struct {
         };
     }
 
+    fn getStatistics(self: *const VulkanRenderer) Renderer.Statistics {
+        var total_vram: usize = 0;
+
+        var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
+        vma.vmaGetHeapBudgets(self.vma_allocator, &budgets);
+        var index: usize = 0;
+        while (index < @as(usize, @intCast(vma.VK_MAX_MEMORY_HEAPS))) : (index += 1) {
+            total_vram += budgets[index].statistics.allocationBytes;
+        }
+
+        return .{
+            .gpu_time = self.statistics.gpu_time,
+            .primitives_drawn = self.statistics.primitives_drawn,
+            .vram_used = total_vram,
+        };
+    }
+
     pub fn printDebugStats(self: *const VulkanRenderer) void {
         // Calculate the total GPU memory allocated by VMA.
         // TODO: Add other types of memory like swapchain images to the total.
@@ -1150,32 +1168,32 @@ pub const Features = struct {
     vk_memory_budget: bool = false,
 };
 
-pub const Statistics = struct {
-    prv_gpu_time: f32 = 0.0,
-    acc_gpu_time: f32 = 0.0,
-    min_gpu_time: f32 = std.math.inf(f32),
-    max_gpu_time: f32 = 0.0,
+// pub const Statistics = struct {
+//     prv_gpu_time: f32 = 0.0,
+//     acc_gpu_time: f32 = 0.0,
+//     min_gpu_time: f32 = std.math.inf(f32),
+//     max_gpu_time: f32 = 0.0,
 
-    prv_cpu_time: f32 = 0.0,
+//     prv_cpu_time: f32 = 0.0,
 
-    frames_recorded: usize = 0,
+//     frames_recorded: usize = 0,
 
-    /// Number of primitives drawn during last frame.
-    primitives: u64 = 0,
+//     /// Number of primitives drawn during last frame.
+//     primitives: u64 = 0,
 
-    pub fn putGpuTimeValue(self: *Statistics, value: f32) void {
-        self.prv_gpu_time = value;
-        if (value > self.max_gpu_time) self.max_gpu_time = value;
-        if (value < self.min_gpu_time) self.min_gpu_time = value;
-        self.acc_gpu_time += value;
-        self.frames_recorded += 1;
-    }
+//     pub fn putGpuTimeValue(self: *Statistics, value: f32) void {
+//         self.prv_gpu_time = value;
+//         if (value > self.max_gpu_time) self.max_gpu_time = value;
+//         if (value < self.min_gpu_time) self.min_gpu_time = value;
+//         self.acc_gpu_time += value;
+//         self.frames_recorded += 1;
+//     }
 
-    pub fn getAverageGpuTime(self: *const Statistics) f32 {
-        if (self.frames_recorded > 0) return self.acc_gpu_time / @as(f32, @floatFromInt(self.frames_recorded));
-        return 0;
-    }
-};
+//     pub fn getAverageGpuTime(self: *const Statistics) f32 {
+//         if (self.frames_recorded > 0) return self.acc_gpu_time / @as(f32, @floatFromInt(self.frames_recorded));
+//         return 0;
+//     }
+// };
 
 pub const VulkanBuffer = struct {
     const Self = @This();

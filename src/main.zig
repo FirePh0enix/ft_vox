@@ -44,7 +44,17 @@ var camera = Camera{
     .speed = 0.5,
 };
 
-pub fn main() !void {
+var running = false;
+var last_update_time: i64 = 0;
+var time_between_update: i64 = 1000000 / 60;
+
+var mesh: Mesh = undefined;
+var material: Material = undefined;
+
+var graph: Graph = undefined;
+var render_pass: Graph.RenderPass = undefined;
+
+pub fn mainDesktop() !void {
     var window = try Window.create(.{
         .title = "ft_vox",
         .width = 1280,
@@ -57,17 +67,15 @@ pub fn main() !void {
     try rdr().createDevice(&window, null);
     try rdr().createSwapchain(&window, .{ .vsync = .performance });
 
-    var render_pass = try Graph.RenderPass.create(allocator, rdr().asVk().render_pass, .{
+    render_pass = try Graph.RenderPass.create(allocator, rdr().asVk().render_pass, .{
         .attachments = .{ .color = true, .depth = true },
         .max_draw_calls = 32 * 32,
     });
 
-    var graph = Graph.init(allocator);
+    graph = Graph.init(allocator);
     graph.main_render_pass = &render_pass;
 
-    var running = true;
-
-    const mesh = try Mesh.createCube();
+    mesh = try Mesh.createCube();
 
     const shader_model = try ShaderModel.init(allocator, .{
         .shaders = &.{},
@@ -139,7 +147,7 @@ pub fn main() !void {
 
     try registry.lock();
 
-    const material = try Material.init(registry.image_array.?, pipeline);
+    material = try Material.init(registry.image_array.?, pipeline);
 
     // var render_frame: RenderFrame = try .create(allocator, mesh, material);
     var world = try world_gen.generateWorld(allocator, &registry, .{
@@ -152,63 +160,66 @@ pub fn main() !void {
 
     input.init(&window);
 
-    var last_time: i64 = 0;
-
-    const time_between_update: i64 = 1000000 / 60;
-    var last_update_time: i64 = 0;
-
     while (running) {
-        if (std.time.microTimestamp() - last_update_time < time_between_update) {
-            continue;
-        }
-        last_update_time = std.time.microTimestamp();
+        update(&window, &world);
+    }
+}
 
-        const time_before = std.time.microTimestamp();
+fn update(window: *Window, world: *World) void {
+    if (std.time.microTimestamp() - last_update_time < time_between_update) {
+        return;
+    }
+    last_update_time = std.time.microTimestamp();
 
-        var event: sdl.SDL_Event = undefined;
+    // const time_before = std.time.microTimestamp();
 
-        while (sdl.SDL_PollEvent(&event)) {
-            _ = dcimgui.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
+    var event: sdl.SDL_Event = undefined;
 
-            switch (event.type) {
-                sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
-                sdl.SDL_EVENT_WINDOW_RESIZED => try rdr().createSwapchain(&window, .{ .vsync = .performance }),
-                else => try input.handleSDLEvent(event, &camera),
-            }
-        }
+    while (sdl.SDL_PollEvent(&event)) {
+        _ = dcimgui.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
 
-        camera.updateCamera(&world);
-
-        // Rebuild the render pass
-        const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
-        var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
-        projection_matrix[1][1] *= -1;
-        const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
-
-        // Record draw calls into the render pass
-        render_pass.reset();
-        render_pass.view_matrix = view_matrix;
-
-        var chunk_iter = world.chunks.valueIterator();
-
-        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
-
-        try rdr().processGraph(&graph);
-
-        const time_after = std.time.microTimestamp();
-        const elapsed = time_after - time_before;
-
-        rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
-
-        if (std.time.milliTimestamp() - last_time >= 500) {
-            // console.clear();
-            // console.moveToStart();
-
-            // rdr().asVk().printDebugStats();
-
-            last_time = std.time.milliTimestamp();
+        switch (event.type) {
+            sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
+            sdl.SDL_EVENT_WINDOW_RESIZED => try rdr().createSwapchain(window, .{ .vsync = .performance }),
+            else => try input.handleSDLEvent(event, &camera),
         }
     }
 
-    // if (@import("builtin").mode == .Debug) _ = debug_allocator.detectLeaks();
+    camera.updateCamera(&world);
+
+    // Rebuild the render pass
+    const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
+    var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
+    projection_matrix[1][1] *= -1;
+    const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
+
+    // Record draw calls into the render pass
+    render_pass.reset();
+    render_pass.view_matrix = view_matrix;
+
+    var chunk_iter = world.chunks.valueIterator();
+
+    while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+
+    try rdr().processGraph(&graph);
+
+    // const time_after = std.time.microTimestamp();
+    // const elapsed = time_after - time_before;
+
+    // rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 }
+
+const wgpu = @import("webgpu");
+
+pub fn mainWasi() !void {
+    std.debug.print("Hello world!\n", .{});
+
+    const instance = wgpu.createInstance(null);
+
+    std.debug.print("{*}\n", .{instance});
+}
+
+pub const main = if (builtin.cpu.arch.isWasm())
+    mainWasi
+else
+    mainDesktop;
