@@ -192,8 +192,6 @@ const ChunkLoadWorker = struct {
             }
         }
     }
-
-    fn processChunkLoad() void {}
 };
 
 pub const ConfigZon = struct {

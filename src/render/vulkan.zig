@@ -94,6 +94,8 @@ pub const VulkanRenderer = struct {
 
     h_noise_image: Image,
     h_noise_texture_id: dcimgui.ImTextureID,
+    biome_noise_image: Image,
+    biome_noise_texture_id: dcimgui.ImTextureID,
 
     const max_frames_in_flight: usize = 2;
 
@@ -490,7 +492,7 @@ pub const VulkanRenderer = struct {
             .unnormalized_coordinates = vk.FALSE,
         }, null);
 
-        self.temp_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
+        self.temp_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .b8g8r8a8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .identity);
         self.temp_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.temp_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
 
         self.hum_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
@@ -510,6 +512,9 @@ pub const VulkanRenderer = struct {
 
         self.h_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
         self.h_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.h_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+
+        self.biome_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .b8g8r8a8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .identity);
+        self.biome_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.biome_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 
     fn shutdown(self: *VulkanRenderer) void {
@@ -811,7 +816,9 @@ pub const VulkanRenderer = struct {
         dcimgui.ImGui_SameLine();
         dcimgui.ImGui_Image(self.pv_noise_texture_id, .{ .x = 100, .y = 100 });
 
-        dcimgui.ImGui_Text("Final heightmap\n");
+        dcimgui.ImGui_Text("Biome | Final heightmap\n");
+        dcimgui.ImGui_Image(self.biome_noise_texture_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
         dcimgui.ImGui_Image(self.h_noise_texture_id, .{ .x = 100, .y = 100 });
 
         dcimgui.ImGui_Render();
