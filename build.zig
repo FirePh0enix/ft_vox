@@ -54,10 +54,6 @@ pub fn build(b: *Build) !void {
     });
     sdl_header.addIncludePath(sdl.path("include"));
 
-    if (target_is_emscripten) {
-        sdl_header.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ b.sysroot orelse unreachable, "cache", "sysroot", "include" }) });
-    }
-
     exe.root_module.addImport("sdl", sdl_header.createModule());
     exe.step.dependOn(&sdl_header.step);
 
@@ -115,10 +111,6 @@ pub fn build(b: *Build) !void {
         exe.root_module.addIncludePath(vma.path("include"));
         exe.root_module.addIncludePath(vulkan_headers.path("include"));
         exe.linkLibCpp();
-    }
-
-    if (target_is_emscripten) {
-        exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ b.sysroot orelse unreachable, "cache", "sysroot", "include" }) });
     }
 
     // For now WebGPU is imported unconditionally or else zls does not provide completions. In the future webgpu
@@ -182,7 +174,14 @@ pub fn build(b: *Build) !void {
         const zemscripten_dep = b.dependency("zemscripten", .{});
         exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
 
-        const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
+        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+        exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+        sdl_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+
+        var emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
+        try emcc_flags.put("--pre-js", {}); // FIXME: does not work
+        try emcc_flags.put(std.fs.realpathAlloc(b.allocator, "web/pre.js") catch unreachable, {});
+
         var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
             .optimize = optimize,
         });
@@ -231,12 +230,14 @@ pub fn build(b: *Build) !void {
 
         run_step.dependOn(&run_cmd.step);
     } else {
-        const run_emrun = b.addSystemCommand(&.{b.pathJoin(&.{ b.sysroot orelse unreachable, "emrun" })});
-        run_emrun.addArg(b.pathJoin(&.{ b.install_path, "www", "index.html" }));
-        if (b.args) |args| run_emrun.addArgs(args);
-        run_emrun.step.dependOn(b.getInstallStep());
+        const args = if (b.args) |args|
+            args
+        else
+            &.{};
 
-        run_step.dependOn(&run_emrun.step);
+        const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
+        // if (b.args) |args| emrun_step.addArgs(args);
+        run_step.dependOn(emrun_step);
     }
 
     if (!target_is_emscripten) {

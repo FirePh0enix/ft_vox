@@ -12,7 +12,7 @@ const rdr = Renderer.rdr;
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
     const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
-    const world = World.initEmpty(allocator, seed, settings);
+    var world = World.initEmpty(allocator, seed, settings);
 
     const width = 22;
     const depth = 22;
@@ -21,11 +21,11 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
 
     _ = registry;
 
-    // for (0..depth) |z| {
-    //     for (0..width) |x| {
-    //         try world.loadChunk(.{ .x = @intCast(x), .z = @intCast(z) });
-    //     }
-    // }
+    for (0..depth) |z| {
+        for (0..width) |x| {
+            try world.loadChunk(.{ .x = @intCast(x), .z = @intCast(z) });
+        }
+    }
 
     var temp_pixels: [width * 16 * depth * 16]u32 = undefined;
     var hum_pixels: [width * 16 * depth * 16]u8 = undefined;
@@ -60,7 +60,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
 
             h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@intCast(x), @intCast(z)));
 
-            const biome = getBiome(fx, fz);
+            const biome = getBiome(noise);
             biome_pixels[x + z * (width * 16)] = biome.getColor();
         }
     }
@@ -145,7 +145,7 @@ pub fn generateHeight(x: isize, z: isize) usize {
     const noise = getNoise(fx, fz);
     const biome = getBiome(noise);
 
-    const y  = 0;
+    const y = 0;
 
     _ = biome;
 
