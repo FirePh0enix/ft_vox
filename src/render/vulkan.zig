@@ -133,6 +133,7 @@ pub const VulkanRenderer = struct {
             Allocator.Error.OutOfMemory => return Renderer.CreateDeviceError.OutOfMemory,
             else => return Renderer.CreateDeviceError.NoSuitableDevice,
         };
+        self.graphics_queue_mutex = .{};
     }
 
     fn createDeviceVk(
