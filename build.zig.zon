@@ -43,6 +43,11 @@
         .webgpu = .{
             .path = "deps/webgpu.zig",
         },
+        .zemscripten = .{
+            .url = "git+https://github.com/zig-gamedev/zemscripten#f84993abf86b2a56831b72802b61f6824971a93e",
+            .hash = "zemscripten-0.2.0-dev-sRlDqOFGAADOXHCvUR6QlLIipow7gyRwTGp6kVtNnhF4",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",

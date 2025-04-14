@@ -44,7 +44,7 @@ var camera = Camera{
     .speed = 0.5,
 };
 
-var running = false;
+var running = true;
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
 
@@ -161,11 +161,11 @@ pub fn mainDesktop() !void {
     input.init(&window);
 
     while (running) {
-        update(&window, &world);
+        try update(&window, &world);
     }
 }
 
-fn update(window: *Window, world: *World) void {
+fn update(window: *Window, world: *World) !void {
     if (std.time.microTimestamp() - last_update_time < time_between_update) {
         return;
     }
@@ -185,7 +185,7 @@ fn update(window: *Window, world: *World) void {
         }
     }
 
-    camera.updateCamera(&world);
+    camera.updateCamera(world);
 
     // Rebuild the render pass
     const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));

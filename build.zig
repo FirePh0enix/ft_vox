@@ -1,6 +1,7 @@
 const std = @import("std");
 const cimgui = @import("cimgui_zig");
 const builtin = @import("builtin");
+const zemscripten = @import("zemscripten");
 
 const Build = std.Build;
 const Step = Build.Step;
@@ -8,7 +9,7 @@ const LazyPath = Build.LazyPath;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const Optimize = std.builtin.OptimizeMode;
 
-pub fn build(b: *Build) void {
+pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -57,6 +58,7 @@ pub fn build(b: *Build) void {
         sdl_header.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ b.sysroot orelse unreachable, "cache", "sysroot", "include" }) });
     }
 
+    exe.root_module.addImport("sdl", sdl_header.createModule());
     exe.step.dependOn(&sdl_header.step);
 
     // Vulkan is only supported on desktop.
@@ -175,67 +177,37 @@ pub fn build(b: *Build) void {
     if (!target_is_emscripten) {
         b.installArtifact(exe);
     } else {
-        // Compiling for emscripten requires using `emcc` to link the project.
+        const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
 
-        const run_emcc = b.addSystemCommand(&.{b.pathJoin(&.{ b.sysroot orelse unreachable, "emcc" })});
+        const zemscripten_dep = b.dependency("zemscripten", .{});
+        exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
 
-        for (exe.getCompileDependencies(false)) |compile| {
-            run_emcc.addArtifactArg(compile);
-        }
-
-        run_emcc.addArg("--use-port=sdl3");
-
-        if (target.result.cpu.arch == .wasm64) {
-            run_emcc.addArg("-sMEMORY64");
-        }
-
-        run_emcc.addArgs(switch (optimize) {
-            .Debug => &.{
-                "-O0",
-                // Preserve DWARF debug information.
-                "-g",
-                // Use UBSan (full runtime).
-                "-fsanitize=undefined",
-            },
-            .ReleaseSafe => &.{
-                "-O3",
-                // Use UBSan (minimal runtime).
-                "-fsanitize=undefined",
-                "-fsanitize-minimal-runtime",
-            },
-            .ReleaseFast => &.{
-                "-O3",
-            },
-            .ReleaseSmall => &.{
-                "-Oz",
-            },
+        const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
+        var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
+            .optimize = optimize,
         });
 
-        if (optimize != .Debug) {
-            // Perform link time optimization.
-            run_emcc.addArg("-flto");
-            // Minify JavaScript code.
-            run_emcc.addArgs(&.{ "--closure", "1" });
-        }
+        try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
+        try emcc_settings.put("USE_WEBGPU", "1");
+        try emcc_settings.put("LEGACY_RUNTIME", "1");
 
-        run_emcc.addArg("-sUSE_WEBGPU");
-        run_emcc.addArg("-sLEGACY_RUNTIME"); // Currently required by SDL
+        const emcc_step = zemscripten.emccStep(
+            b,
+            exe,
+            .{
+                .optimize = optimize,
+                .flags = emcc_flags,
+                .settings = emcc_settings,
+                .use_preload_plugins = true,
+                .embed_paths = &.{},
+                .preload_paths = &.{},
+                .install_dir = .{ .custom = "www" },
+                // .shell_file_path = "path/to/html/file"
+            },
+        );
+        emcc_step.dependOn(activate_emsdk_step);
 
-        // Patch the default HTML shell to also display messages printed to stderr.
-        run_emcc.addArg("--pre-js");
-        run_emcc.addFileArg(b.addWriteFiles().add("pre.js", (
-            \\Module['printErr'] ??= Module['print'];
-            \\
-        )));
-
-        run_emcc.addArg("-o");
-        const app_html = run_emcc.addOutputFileArg("index.html");
-
-        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
-            .source_dir = app_html.dirname(),
-            .install_dir = .{ .custom = "www" },
-            .install_subdir = "",
-        }).step);
+        b.getInstallStep().dependOn(emcc_step);
     }
 
     // Add a run step
