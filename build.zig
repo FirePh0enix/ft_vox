@@ -13,6 +13,8 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const sanitize_thread = b.option(bool, "sanitize-thread", "Enable the thread sanitizer");
+
     const target_is_emscripten = target.result.os.tag == .emscripten;
 
     const exe_mod = b.createModule(.{
@@ -20,6 +22,7 @@ pub fn build(b: *Build) !void {
         .target = target,
         .optimize = optimize,
         .link_libc = target_is_emscripten,
+        .sanitize_thread = sanitize_thread,
     });
 
     const exe = if (target_is_emscripten) a: {

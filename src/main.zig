@@ -197,9 +197,14 @@ fn update(window: *Window, world: *World) !void {
     render_pass.reset();
     render_pass.view_matrix = view_matrix;
 
-    var chunk_iter = world.chunks.valueIterator();
+    {
+        world.chunks_lock.lock();
+        defer world.chunks_lock.unlock();
 
-    while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+        var chunk_iter = world.chunks.valueIterator();
+
+        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+    }
 
     try rdr().processGraph(&graph);
 
