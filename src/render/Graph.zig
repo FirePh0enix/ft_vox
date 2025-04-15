@@ -6,8 +6,10 @@ const Self = @This();
 const Allocator = std.mem.Allocator;
 const Material = @import("Material.zig");
 const Mesh = @import("../Mesh.zig");
-const Buffer = @import("Buffer.zig");
 const Image = @import("Image.zig");
+const Renderer = @import("Renderer.zig");
+const RID = Renderer.RID;
+const Rect = Renderer.Rect;
 
 allocator: Allocator,
 main_render_pass: ?*RenderPass = null,
@@ -17,13 +19,6 @@ pub fn init(allocator: Allocator) Self {
         .allocator = allocator,
     };
 }
-
-pub const Rect = struct {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-};
 
 pub const Viewport = union(enum) {
     /// Use the swapchain extent as viewport.
@@ -40,16 +35,16 @@ pub const Scissor = union(enum) {
 pub const Framebuffer = union(enum) {
     /// Use the swapchain framebuffer.
     native: void,
-    custom: vk.Framebuffer,
+    custom: RID,
 };
 
 pub const RenderTarget = struct {
-    framebuffer: Framebuffer = .native,
     viewport: Viewport = .native,
     scissor: Scissor = .native,
+    framebuffer: Framebuffer = .native,
 };
 
-pub const PushConstants = struct {
+pub const PushConstants = extern struct {
     view_matrix: zm.Mat,
 };
 
@@ -69,7 +64,7 @@ pub const RenderPass = struct {
 
     dependencies: std.ArrayListUnmanaged(*RenderPass) = .empty,
 
-    vk_pass: vk.RenderPass, // TODO: Should be API agnostic
+    render_pass: RID,
 
     target: RenderTarget,
     attachments: RenderPassAttachments,
@@ -79,7 +74,11 @@ pub const RenderPass = struct {
     // TODO: Use a tree here to manage multiple meshes and materials to minimize pipeline, descriptor and buffer bindings.
     draw_calls: std.ArrayListUnmanaged(DrawCall),
 
-    pub fn create(allocator: Allocator, pass: vk.RenderPass, options: RenderPassOptions) !RenderPass {
+    hooks: std.ArrayListUnmanaged(Hook) = .empty,
+
+    pub const Hook = *const fn (self: *RenderPass) void;
+
+    pub fn create(allocator: Allocator, render_pass: RID, options: RenderPassOptions) !RenderPass {
         const draw_calls: std.ArrayListUnmanaged(DrawCall) = if (options.max_draw_calls > 0) try .initCapacity(allocator, options.max_draw_calls) else .empty;
 
         return .{
@@ -87,12 +86,16 @@ pub const RenderPass = struct {
             .target = options.target,
             .attachments = options.attachments,
             .draw_calls = draw_calls,
-            .vk_pass = pass,
+            .render_pass = render_pass,
         };
     }
 
     pub fn dependsOn(self: *RenderPass, dep: *RenderPass) void {
         self.dependencies.append(self.allocator, dep) catch unreachable;
+    }
+
+    pub fn addHook(self: *RenderPass, hook: Hook) void {
+        self.hooks.append(self.allocator, hook) catch unreachable;
     }
 
     pub fn reset(self: *RenderPass) void {
@@ -120,7 +123,7 @@ pub const RenderPass = struct {
         self: *RenderPass,
         mesh: *const Mesh,
         material: *const Material,
-        instance_buffer: *const Buffer,
+        instance_buffer: RID,
         first_vertex: usize,
         vertex_count: usize,
         first_instance: usize,
@@ -143,7 +146,7 @@ pub const RenderPass = struct {
 pub const DrawCall = struct {
     material: *const Material,
     mesh: *const Mesh,
-    instance_buffer: ?*const Buffer = null,
+    instance_buffer: ?RID = null,
 
     first_vertex: usize,
     vertex_count: usize,

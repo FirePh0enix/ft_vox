@@ -1,14 +1,35 @@
 const std = @import("std");
 const zm = @import("zmath");
 const math = @import("math.zig");
+const dcimgui = @import("dcimgui");
 
 const Allocator = std.mem.Allocator;
 const World = @import("voxel/World.zig");
 const Chunk = @import("voxel/Chunk.zig");
 const Registry = @import("voxel/Registry.zig");
 const Renderer = @import("render/Renderer.zig");
+const RID = Renderer.RID;
+const Graph = @import("render/Graph.zig");
 
 const rdr = Renderer.rdr;
+
+var temp_image_rid: RID = undefined;
+var hum_image_rid: RID = undefined;
+var c_image_rid: RID = undefined;
+var e_image_rid: RID = undefined;
+var w_image_rid: RID = undefined;
+var pv_image_rid: RID = undefined;
+var h_image_rid: RID = undefined;
+var biome_image_rid: RID = undefined;
+
+var temp_imgui_id: c_ulonglong = undefined;
+var hum_imgui_id: c_ulonglong = undefined;
+var c_imgui_id: c_ulonglong = undefined;
+var e_imgui_id: c_ulonglong = undefined;
+var w_imgui_id: c_ulonglong = undefined;
+var pv_imgui_id: c_ulonglong = undefined;
+var h_imgui_id: c_ulonglong = undefined;
+var biome_imgui_id: c_ulonglong = undefined;
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
     const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
@@ -65,50 +86,91 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
         }
     }
 
-    try rdr().asVk().temp_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().temp_noise_image.update(0, std.mem.sliceAsBytes(&temp_pixels));
-    try rdr().asVk().temp_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    const w = 16 * 22;
 
-    try rdr().asVk().hum_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().hum_noise_image.update(0, &hum_pixels);
-    try rdr().asVk().hum_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    temp_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .b8g8r8a8_srgb });
+    temp_imgui_id = try rdr().imguiAddTexture(temp_image_rid);
+    try rdr().imageSetLayout(temp_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(temp_image_rid, std.mem.sliceAsBytes(&temp_pixels), 0, 0);
+    try rdr().imageSetLayout(temp_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().c_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().c_noise_image.update(0, &c_pixels);
-    try rdr().asVk().c_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    hum_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    hum_imgui_id = try rdr().imguiAddTexture(hum_image_rid);
+    try rdr().imageSetLayout(hum_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(hum_image_rid, std.mem.sliceAsBytes(&hum_pixels), 0, 0);
+    try rdr().imageSetLayout(hum_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().e_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().e_noise_image.update(0, &e_pixels);
-    try rdr().asVk().e_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    c_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    c_imgui_id = try rdr().imguiAddTexture(c_image_rid);
+    try rdr().imageSetLayout(c_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(c_image_rid, std.mem.sliceAsBytes(&c_pixels), 0, 0);
+    try rdr().imageSetLayout(c_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().w_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().w_noise_image.update(0, &w_pixels);
-    try rdr().asVk().w_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    e_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    e_imgui_id = try rdr().imguiAddTexture(e_image_rid);
+    try rdr().imageSetLayout(e_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(e_image_rid, std.mem.sliceAsBytes(&e_pixels), 0, 0);
+    try rdr().imageSetLayout(e_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().pv_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().pv_noise_image.update(0, &pv_pixels);
-    try rdr().asVk().pv_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    w_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    w_imgui_id = try rdr().imguiAddTexture(w_image_rid);
+    try rdr().imageSetLayout(w_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(w_image_rid, std.mem.sliceAsBytes(&w_pixels), 0, 0);
+    try rdr().imageSetLayout(w_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().h_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().h_noise_image.update(0, &h_pixels);
-    try rdr().asVk().h_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    pv_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    pv_imgui_id = try rdr().imguiAddTexture(pv_image_rid);
+    try rdr().imageSetLayout(pv_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(pv_image_rid, std.mem.sliceAsBytes(&pv_pixels), 0, 0);
+    try rdr().imageSetLayout(pv_image_rid, .shader_read_only_optimal);
 
-    try rdr().asVk().biome_noise_image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
-    try rdr().asVk().biome_noise_image.update(0, std.mem.sliceAsBytes(&biome_pixels));
-    try rdr().asVk().biome_noise_image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    biome_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .b8g8r8a8_srgb });
+    biome_imgui_id = try rdr().imguiAddTexture(biome_image_rid);
+    try rdr().imageSetLayout(biome_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(biome_image_rid, std.mem.sliceAsBytes(&biome_pixels), 0, 0);
+    try rdr().imageSetLayout(biome_image_rid, .shader_read_only_optimal);
+
+    h_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
+    h_imgui_id = try rdr().imguiAddTexture(h_image_rid);
+    try rdr().imageSetLayout(h_image_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(h_image_rid, std.mem.sliceAsBytes(&h_pixels), 0, 0);
+    try rdr().imageSetLayout(h_image_rid, .shader_read_only_optimal);
+
+    @import("root").render_pass.addHook(&debugHook);
 
     return world;
 }
 
-// fn processChunk(settings: World.GenerationSettings, x: isize, z: isize, world: *World, world_mutex: *std.Thread.Mutex) void {
-//     var chunk = try generateChunk(settings, x, z);
-//     chunk.computeVisibility(null, null, null, null);
+fn debugHook(render_pass: *Graph.RenderPass) void {
+    const x = -render_pass.view_matrix[0][3];
+    const z = -render_pass.view_matrix[2][3];
 
-//     world_mutex.lock();
-//     defer world_mutex.unlock();
+    const noise = getNoise(x, z);
 
-//     world.chunks.put(world.allocator, .{ .x = @intCast(x), .z = @intCast(z) }, chunk) catch unreachable;
-// }
+    dcimgui.ImGui_Text("t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n", noise.temperature, noise.humidity, noise.continentalness, noise.erosion);
+    dcimgui.ImGui_Text("w = %.2f | pv = %.2f | as = ??? | n = ???\n", noise.weirdness, noise.peaks_and_valleys);
+
+    dcimgui.ImGui_Text("el = %d\n", getErosionLevel(noise.erosion));
+
+    dcimgui.ImGui_Text("Temperature | Humidity\n");
+    dcimgui.ImGui_Image(temp_imgui_id, .{ .x = 100, .y = 100 });
+    dcimgui.ImGui_SameLine();
+    dcimgui.ImGui_Image(hum_imgui_id, .{ .x = 100, .y = 100 });
+
+    dcimgui.ImGui_Text("Continentalness | Erosion | Weirdness | Peaks & Valleys\n");
+    dcimgui.ImGui_Image(c_imgui_id, .{ .x = 100, .y = 100 });
+    dcimgui.ImGui_SameLine();
+    dcimgui.ImGui_Image(e_imgui_id, .{ .x = 100, .y = 100 });
+    dcimgui.ImGui_SameLine();
+    dcimgui.ImGui_Image(w_imgui_id, .{ .x = 100, .y = 100 });
+    dcimgui.ImGui_SameLine();
+    dcimgui.ImGui_Image(pv_imgui_id, .{ .x = 100, .y = 100 });
+
+    dcimgui.ImGui_Text("Biome | Final heightmap\n");
+    dcimgui.ImGui_Image(biome_imgui_id, .{ .x = 100, .y = 100 });
+    dcimgui.ImGui_SameLine();
+    dcimgui.ImGui_Image(h_imgui_id, .{ .x = 100, .y = 100 });
+}
 
 pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };

@@ -6,6 +6,7 @@ const Self = @This();
 const Block = @import("Block.zig");
 const Image = @import("../render/Image.zig");
 const Renderer = @import("../render/Renderer.zig");
+const RID = Renderer.RID;
 
 const rdr = Renderer.rdr;
 
@@ -28,7 +29,7 @@ block_ids: std.StringArrayHashMapUnmanaged(u16) = .empty,
 
 images: std.ArrayListUnmanaged(zigimg.ImageUnmanaged) = .empty,
 images_ids: std.StringArrayHashMapUnmanaged(u32) = .empty,
-image_array: ?Image = null,
+image_array: ?RID = null,
 
 pub fn init(allocator: Allocator) Self {
     return .{
@@ -106,18 +107,67 @@ pub fn getOrRegisterImage(
 }
 
 fn createTexture(self: *Self) !void {
-    var image_array = try rdr().createImage(16, 16, self.images.items.len + 1, .optimal, .r8g8b8a8_srgb, .{ .sampled = true, .transfer_dst = true }, .{ .color = true }, .identity);
+    const image_array_rid = try rdr().imageCreate(.{
+        .width = 16,
+        .height = 16,
+        .layers = self.images.items.len + 1,
+        .format = .r8g8b8a8_srgb,
+        .usage = .{ .sampled = true, .transfer_dst = true },
+        .aspect_mask = .{ .color = true },
+    });
 
-    try image_array.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true });
+    try rdr().imageSetLayout(image_array_rid, .transfer_dst_optimal);
 
-    var missing = @import("../render/vulkan.zig").VulkanImage.getMissingPixels();
-    try image_array.update(0, &missing);
+    var missing = getMissingPixels();
+    try rdr().imageUpdate(image_array_rid, std.mem.sliceAsBytes(&missing), 0, 0);
 
     for (self.images.items, 0..self.images.items.len) |image, index| {
-        try image_array.update(index + 1, image.rawBytes());
+        try rdr().imageUpdate(image_array_rid, image.rawBytes(), 0, index + 1);
     }
 
-    try image_array.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true });
+    try rdr().imageSetLayout(image_array_rid, .shader_read_only_optimal);
 
-    self.image_array = image_array;
+    self.image_array = image_array_rid;
+}
+
+fn getMissingPixels() [16 * 16 * 4]u8 {
+    var pixels: [16 * 16 * 4]u8 = undefined;
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + y * 8 + x] = 0xcc;
+            pixels[1 * 4 * 8 + y * 8 + x] = 0x40;
+            pixels[2 * 4 * 8 + y * 8 + x] = 0xc4;
+            pixels[3 * 4 * 8 + y * 8 + x] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[1 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[2 * 4 * 8 + (y + 8) * 8 + x] = 0;
+            pixels[3 * 4 * 8 + (y + 8) * 8 + x] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + y * 8 + (x + 8)] = 0xcc;
+            pixels[1 * 4 * 8 + y * 8 + (x + 8)] = 0x40;
+            pixels[2 * 4 * 8 + y * 8 + (x + 8)] = 0xc4;
+            pixels[3 * 4 * 8 + y * 8 + (x + 8)] = 0xff;
+        }
+    }
+
+    for (0..8) |x| {
+        for (0..8) |y| {
+            pixels[0 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xcc;
+            pixels[1 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0x40;
+            pixels[2 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xc4;
+            pixels[3 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xff;
+        }
+    }
+
+    return pixels;
 }

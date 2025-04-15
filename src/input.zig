@@ -93,7 +93,10 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
                 sdl.SDLK_F => {
                     _ = sdl.SDL_SetWindowFullscreen(window.handle, !fullscreen);
                     fullscreen = !fullscreen;
-                    try rdr().createSwapchain(window, .{ .vsync = .performance });
+
+                    const size = window.size();
+
+                    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
                 },
                 sdl.SDLK_ESCAPE => setMouseGrab(false),
 

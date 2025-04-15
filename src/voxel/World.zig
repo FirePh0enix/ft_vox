@@ -3,10 +3,7 @@ const zm = @import("zmath");
 const world_gen = @import("../world_gen.zig");
 
 const Self = @This();
-const RenderFrame = @import("../voxel/RenderFrame.zig");
-const Buffer = @import("../render/Buffer.zig");
 const Allocator = std.mem.Allocator;
-const BlockInstanceData = RenderFrame.BlockInstanceData;
 const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
 const Ray = @import("../math.zig").Ray;

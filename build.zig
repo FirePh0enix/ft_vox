@@ -181,9 +181,9 @@ pub fn build(b: *Build) !void {
         exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
         sdl_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
 
-        var emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
-        try emcc_flags.put("--pre-js", {}); // FIXME: does not work
-        try emcc_flags.put(std.fs.realpathAlloc(b.allocator, "web/pre.js") catch unreachable, {});
+        const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
+        // try emcc_flags.put("--pre-js", {}); // FIXME: does not work
+        // try emcc_flags.put(std.fs.realpathAlloc(b.allocator, "web/pre.js") catch unreachable, {});
 
         var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
             .optimize = optimize,
@@ -233,12 +233,15 @@ pub fn build(b: *Build) !void {
 
         run_step.dependOn(&run_cmd.step);
     } else {
-        const args = if (b.args) |args|
-            args
-        else
-            &.{};
+        // const args = if (b.args) |args|
+        //     args
+        // else
+        //     &.{};
+        const args: []const []const u8 = &.{ "--browser", "chromium" };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
+        emrun_step.dependOn(b.getInstallStep());
+
         // if (b.args) |args| emrun_step.addArgs(args);
         run_step.dependOn(emrun_step);
     }

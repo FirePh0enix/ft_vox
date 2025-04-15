@@ -2,23 +2,19 @@ const std = @import("std");
 const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
-const console = @import("console.zig");
 const zm = @import("zmath");
 const input = @import("input.zig");
 const world_gen = @import("world_gen.zig");
 const dcimgui = @import("dcimgui");
 
 const Renderer = @import("render/Renderer.zig");
-const Buffer = @import("render/Buffer.zig");
 const Mesh = @import("Mesh.zig");
 const Image = @import("render/Image.zig");
 const Material = @import("render/Material.zig");
-const GraphicsPipeline = @import("render/GraphicsPipeline.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Window = @import("render/Window.zig");
 const Graph = @import("render/Graph.zig");
 const Camera = @import("Camera.zig");
-const RenderFrame = @import("voxel/RenderFrame.zig");
 const World = @import("voxel/World.zig");
 const Chunk = @import("voxel/Chunk.zig");
 const TrackingAllocator = @import("TrackingAllocator.zig");
@@ -52,7 +48,7 @@ var mesh: Mesh = undefined;
 var material: Material = undefined;
 
 var graph: Graph = undefined;
-var render_pass: Graph.RenderPass = undefined;
+pub var render_pass: Graph.RenderPass = undefined;
 
 pub fn mainDesktop() !void {
     var window = try Window.create(.{
@@ -65,9 +61,13 @@ pub fn mainDesktop() !void {
 
     try Renderer.create(allocator, .vulkan);
     try rdr().createDevice(&window, null);
-    try rdr().createSwapchain(&window, .{ .vsync = .performance });
+    try rdr().imguiInit(&window, rdr().getOutputRenderPass());
 
-    render_pass = try Graph.RenderPass.create(allocator, rdr().asVk().render_pass, .{
+    const size = window.size();
+
+    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
+
+    render_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
         .attachments = .{ .color = true, .depth = true },
         .max_draw_calls = 32 * 32,
     });
@@ -104,8 +104,7 @@ pub fn mainDesktop() !void {
     });
     defer shader_model.deinit();
 
-    const pipeline = try allocator.create(GraphicsPipeline);
-    pipeline.* = try GraphicsPipeline.create(allocator, shader_model);
+    const pipeline = try rdr().pipelineCreateGraphics(.{ .shader_model = shader_model, .render_pass = rdr().getOutputRenderPass() });
 
     var registry = Registry.init(allocator);
 
@@ -149,7 +148,6 @@ pub fn mainDesktop() !void {
 
     material = try Material.init(registry.image_array.?, pipeline);
 
-    // var render_frame: RenderFrame = try .create(allocator, mesh, material);
     var world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
@@ -180,7 +178,10 @@ fn update(window: *Window, world: *World) !void {
 
         switch (event.type) {
             sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
-            sdl.SDL_EVENT_WINDOW_RESIZED => try rdr().createSwapchain(window, .{ .vsync = .performance }),
+            sdl.SDL_EVENT_WINDOW_RESIZED => {
+                const size = window.size();
+                try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
+            },
             else => try input.handleSDLEvent(event, &camera),
         }
     }
@@ -188,7 +189,8 @@ fn update(window: *Window, world: *World) !void {
     camera.updateCamera(world);
 
     // Rebuild the render pass
-    const aspect_ratio = @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.width)) / @as(f32, @floatFromInt(rdr().asVk().swapchain_extent.height));
+    const surface_size = rdr().getSize();
+    const aspect_ratio = @as(f32, @floatFromInt(surface_size.width)) / @as(f32, @floatFromInt(surface_size.height));
     var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
     projection_matrix[1][1] *= -1;
     const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
@@ -203,7 +205,7 @@ fn update(window: *Window, world: *World) !void {
 
         var chunk_iter = world.chunks.valueIterator();
 
-        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, &chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
     }
 
     try rdr().processGraph(&graph);
@@ -216,15 +218,11 @@ fn update(window: *Window, world: *World) !void {
 
 const wgpu = @import("webgpu");
 
-pub fn mainWasi() !void {
+pub fn mainEmscripten() !void {
     std.debug.print("Hello world!\n", .{});
-
-    const instance = wgpu.createInstance(null);
-
-    std.debug.print("{*}\n", .{instance});
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())
-    mainWasi
+    mainEmscripten
 else
     mainDesktop;

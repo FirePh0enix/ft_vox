@@ -2,21 +2,22 @@ const std = @import("std");
 const vk = @import("vulkan");
 const vma = @import("vma");
 const zm = @import("zmath");
-const Renderer = @import("render/Renderer.zig");
 
-const Buffer = @import("render/Buffer.zig");
+const Renderer = @import("render/Renderer.zig");
+const RID = Renderer.RID;
 const Self = @This();
 
 const rdr = Renderer.rdr;
 
 pub const Vertex = [3]f32;
 
-index_buffer: Buffer,
-vertex_buffer: Buffer,
-normal_buffer: Buffer,
-texture_buffer: Buffer,
+index_buffer: RID,
+vertex_buffer: RID,
+normal_buffer: RID,
+texture_buffer: RID,
+
 count: usize,
-index_type: vk.IndexType,
+index_type: Renderer.IndexType,
 
 pub fn init(
     comptime IndexType: type,
@@ -25,17 +26,30 @@ pub fn init(
     normals: []const Vertex,
     texture_coords: []const [2]f32,
 ) !Self {
+    const index_buffer = try rdr().bufferCreate(.{ .size = @sizeOf(IndexType) * indices.len, .usage = .{ .index_buffer = true, .transfer_dst = true } });
+    const vertex_buffer = try rdr().bufferCreate(.{ .size = @sizeOf(Vertex) * vertices.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+    const normal_buffer = try rdr().bufferCreate(.{ .size = @sizeOf(Vertex) * normals.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+    const texture_buffer = try rdr().bufferCreate(.{ .size = @sizeOf([2]f32) * texture_coords.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+
+    // TODO: Add a method to update multiple buffers at the same time.
+    try rdr().bufferUpdate(index_buffer, std.mem.sliceAsBytes(indices), 0);
+    try rdr().bufferUpdate(vertex_buffer, std.mem.sliceAsBytes(vertices), 0);
+    try rdr().bufferUpdate(normal_buffer, std.mem.sliceAsBytes(normals), 0);
+    try rdr().bufferUpdate(texture_buffer, std.mem.sliceAsBytes(texture_coords), 0);
+
+    const index_type: Renderer.IndexType = switch (IndexType) {
+        u16 => .uint16,
+        u32 => .uint32,
+        else => @compileError("Only u16 and u32 indices are supported"),
+    };
+
     return .{
-        .index_buffer = try rdr().createBufferFromData(IndexType, indices, .gpu_only, .{ .index_buffer = true, .transfer_dst = true }),
-        .vertex_buffer = try rdr().createBufferFromData(Vertex, vertices, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
-        .normal_buffer = try rdr().createBufferFromData(Vertex, normals, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
-        .texture_buffer = try rdr().createBufferFromData([2]f32, texture_coords, .gpu_only, .{ .vertex_buffer = true, .transfer_dst = true }),
+        .index_buffer = index_buffer,
+        .vertex_buffer = vertex_buffer,
+        .normal_buffer = normal_buffer,
+        .texture_buffer = texture_buffer,
         .count = indices.len,
-        .index_type = switch (IndexType) {
-            u16 => .uint16,
-            u32 => .uint32,
-            else => @compileError("Only u16 and u32 are supported"),
-        },
+        .index_type = index_type,
     };
 }
 

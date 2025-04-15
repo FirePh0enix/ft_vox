@@ -2,18 +2,20 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const Image = @import("Image.zig");
-const GraphicsPipeline = @import("GraphicsPipeline.zig");
 const Renderer = @import("Renderer.zig");
+const RID = Renderer.RID;
+const VulkanImage = @import("vulkan.zig").VulkanImage;
+const VulkanPipeline = @import("vulkan.zig").VulkanPipeline;
 const Self = @This();
 
 const rdr = Renderer.rdr;
 
-image: Image,
-pipeline: *GraphicsPipeline,
+image_rid: RID,
+pipeline: RID,
 descriptor_set: vk.DescriptorSet,
 sampler: vk.Sampler,
 
-pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
+pub fn init(image_rid: RID, pipeline: RID) !Self {
     const sampler = try rdr().asVk().device.createSampler(&vk.SamplerCreateInfo{
         .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
         .min_filter = .nearest,
@@ -33,9 +35,9 @@ pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
     }, null);
 
     var self: Self = .{
-        .image = image,
+        .image_rid = image_rid,
         .pipeline = pipeline,
-        .descriptor_set = try pipeline.descriptor_pool.createDescriptorSet(),
+        .descriptor_set = try pipeline.as(VulkanPipeline).descriptor_pool.createDescriptorSet(), // TODO
         .sampler = sampler,
     };
 
@@ -45,7 +47,8 @@ pub fn init(image: Image, pipeline: *GraphicsPipeline) !Self {
 }
 
 pub fn writeDescriptors(self: *Self) void {
-    const image_info: vk.DescriptorImageInfo = .{ .image_view = self.image.asVkConst().image_view, .sampler = self.sampler, .image_layout = .shader_read_only_optimal };
+    const image = self.image_rid.as(VulkanImage);
+    const image_info: vk.DescriptorImageInfo = .{ .image_view = image.view, .sampler = self.sampler, .image_layout = .shader_read_only_optimal };
 
     const writes: []const vk.WriteDescriptorSet = &.{
         vk.WriteDescriptorSet{

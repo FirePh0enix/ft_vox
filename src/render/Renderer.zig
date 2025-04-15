@@ -1,5 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const dcimgui = @import("dcimgui");
+const vk = @import("vulkan");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -7,11 +9,7 @@ const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
 const Window = @import("Window.zig");
 const Image = @import("Image.zig");
-const Buffer = @import("Buffer.zig");
-
-const zigimg = @import("zigimg");
-
-const vk = @import("vulkan");
+const ShaderModel = @import("ShaderModel.zig");
 const VulkanRenderer = @import("vulkan.zig").VulkanRenderer;
 
 ptr: *anyopaque,
@@ -28,11 +26,6 @@ pub const VSync = enum {
     efficient,
 };
 
-pub const CreateDeviceError = error{
-    /// No device are suitable to run the engine.
-    NoSuitableDevice,
-} || Allocator.Error;
-
 pub const CreateSwapchainError = error{
     Unknown,
 } || Allocator.Error;
@@ -43,26 +36,13 @@ pub const SwapchainOptions = struct {
 
 pub const ProcessGraphError = error{} || Allocator.Error;
 
-pub const CreateBufferError = error{
-    Fail,
-} || Allocator.Error;
-
-pub const BufferUsage = enum {
+pub const AllocUsage = enum {
     gpu_only,
     cpu_to_gpu,
 };
 
-// Flags are lifted from `vk.BufferUsageFlags`.
-pub const BufferUsageFlags = packed struct {
-    transfer_src: bool = false,
-    transfer_dst: bool = false,
-    uniform_buffer: bool = false,
-    index_buffer: bool = false,
-    vertex_buffer: bool = false,
-};
-
-pub const CreateImageError = error{
-    AllocationFailed,
+pub const UpdateImageError = error{
+    Failed,
 } || Allocator.Error;
 
 pub const ImageTiling = enum {
@@ -90,6 +70,13 @@ pub const Format = enum {
             .b8g8r8a8_srgb => return .b8g8r8a8_srgb,
             .d32_sfloat => return .d32_sfloat,
         }
+    }
+
+    pub fn sizeBytes(self: Format) usize {
+        return switch (self) {
+            .r8_srgb => 1,
+            .r8g8b8a8_srgb, .b8g8r8a8_srgb, .d32_sfloat => 4,
+        };
     }
 };
 
@@ -128,10 +115,95 @@ pub const ImageAspectFlags = packed struct {
     }
 };
 
+pub const BufferUsageFlags = packed struct {
+    transfer_src: bool = false,
+    transfer_dst: bool = false,
+    uniform_buffer: bool = false,
+    index_buffer: bool = false,
+    vertex_buffer: bool = false,
+
+    pub fn asVk(self: BufferUsageFlags) vk.BufferUsageFlags {
+        return .{
+            .transfer_src_bit = self.transfer_src,
+            .transfer_dst_bit = self.transfer_dst,
+            .uniform_buffer_bit = self.uniform_buffer,
+            .index_buffer_bit = self.index_buffer,
+            .vertex_buffer_bit = self.vertex_buffer,
+        };
+    }
+};
+
+pub const IndexType = enum {
+    uint16,
+    uint32,
+
+    pub fn asVk(self: IndexType) vk.IndexType {
+        return switch (self) {
+            .uint16 => .uint16,
+            .uint32 => .uint32,
+        };
+    }
+};
+
+pub const Size = struct {
+    width: usize,
+    height: usize,
+};
+
+pub const Rect = struct {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+};
+
 pub const Statistics = struct {
     gpu_time: f32 = 0.0,
     primitives_drawn: usize = 0,
     vram_used: usize = 0,
+};
+
+pub const BufferOptions = struct {
+    size: usize,
+    usage: BufferUsageFlags,
+    alloc_usage: AllocUsage = .gpu_only,
+};
+
+pub const ImageOptions = struct {
+    width: usize,
+    height: usize,
+    layers: usize = 1,
+    tiling: ImageTiling = .optimal,
+    format: Format,
+    usage: ImageUsageFlags = .{ .sampled = true, .transfer_dst = true },
+    aspect_mask: ImageAspectFlags = .{ .color = true },
+    pixel_mapping: PixelMapping = .identity,
+};
+
+/// An opaque value used to interact with GPU resources.
+pub const RID = extern struct {
+    inner: usize,
+
+    pub fn as(self: RID, comptime T: type) *T {
+        if (!@hasDecl(T, "resource_signature") or !@hasField(T, "signature"))
+            @compileError(std.fmt.comptimePrint("{s} is not a valid conversion from a RID", .{@typeName(T)}));
+
+        if (builtin.mode == .Debug) {
+            const ptr: *T = @ptrFromInt(self.inner);
+            if (ptr.signature != T.resource_signature) std.debug.panic("Mismatch signature, expected {x} but got {x}", .{ T.resource_signature, ptr.signature });
+            return ptr;
+        } else {
+            return @ptrFromInt(self.inner);
+        }
+    }
+
+    pub fn tryAs(self: RID, comptime T: type) ?*T {
+        const ptr: *T = @ptrFromInt(self.inner);
+        if (ptr.signature == T.resource_signature) {
+            return ptr;
+        }
+        return null;
+    }
 };
 
 pub const VTable = struct {
@@ -139,32 +211,70 @@ pub const VTable = struct {
     /// suitable device will be selected.
     create_device: *const fn (self: *anyopaque, window: *const Window, index: ?usize) CreateDeviceError!void,
 
-    /// Shutdown the driver, freeing all related resources.
-    shutdown: *const fn (self: *anyopaque) void,
-
-    /// Create or recreate the swapchain.
-    ///
-    /// The swapchain will be invalidated and must be recreated when:
-    /// - The window is resized
-    /// - Enabling or disabling V-Sync
-    create_swapchain: *const fn (self: *anyopaque, window: *const Window, options: SwapchainOptions) CreateSwapchainError!void,
+    /// Free resources directly held by the renderer. Does not free RIDs.
+    destroy: *const fn (self: *anyopaque) void,
 
     /// Process a render graph, displaying an image to the window at the end.
     process_graph: *const fn (self: *anyopaque, graph: *const Graph) ProcessGraphError!void,
 
-    /// Return the currently used device.
-    // get_current_device: *const fn (self: *anyopaque) Device,
-
-    /// Create a buffer given its size and usage.
-    create_buffer: *const fn (self: *anyopaque, size: usize, usage: BufferUsage, flags: BufferUsageFlags) CreateBufferError!Buffer,
-
-    /// Destroy a previously created buffer.
-    destroy_buffer: *const fn (self: *anyopaque, buffer: Buffer) void,
-
-    /// Create an image given its dimensions and usage.
-    create_image: *const fn (self: *anyopaque, width: usize, height: usize, layers: usize, tiling: ImageTiling, format: Format, usage: ImageUsageFlags, aspect_mask: ImageAspectFlags, mapping: PixelMapping) CreateImageError!Image,
+    /// Returns the renderer window size.
+    get_size: *const fn (self: *const anyopaque) Size,
 
     get_statistics: *const fn (self: *const anyopaque) Statistics,
+
+    configure: *const fn (*anyopaque, options: ConfigureOptions) void,
+    get_output_render_pass: *const fn (*anyopaque) RID,
+
+    //
+    // Dear ImGUI integration
+    //
+
+    imgui_init: *const fn (*anyopaque, window: *const Window, render_pass_rid: RID) void,
+    imgui_add_texture: *const fn (*anyopaque, image_rid: RID) ImGuiAddTextureError!c_ulonglong,
+
+    // --------------------------------------------- //
+    // Resources
+
+    //
+    // Common
+    //
+
+    free_rid: *const fn (*anyopaque, rid: RID) void,
+
+    //
+    // Buffer
+    //
+
+    buffer_create: *const fn (*anyopaque, options: BufferOptions) BufferUpdateError!RID,
+    buffer_update: *const fn (*anyopaque, buffer_rid: RID, s: []const u8, offset: usize) BufferUpdateError!void,
+    buffer_map: *const fn (*anyopaque, buffer_rid: RID) BufferMapError![]u8,
+    buffer_unmap: *const fn (*anyopaque, buffer_rid: RID) void,
+
+    //
+    // Image
+    //
+
+    image_create: *const fn (*anyopaque, options: ImageOptions) ImageCreateError!RID,
+    image_update: *const fn (*anyopaque, image_rid: RID, s: []const u8, offset: usize, layer: usize) UpdateImageError!void,
+    image_set_layout: *const fn (*anyopaque, image_rid: RID, new_layout: vk.ImageLayout) ImageSetLayoutError!void,
+
+    //
+    // Pipeline
+    //
+
+    pipeline_create_graphics: *const fn (*anyopaque, options: PipelineGraphicsOptions) PipelineCreateError!RID,
+
+    //
+    // RenderPass
+    //
+
+    renderpass_create: *const fn (*anyopaque, options: RenderPassOptions) RenderPassCreateError!RID,
+
+    //
+    // Framebuffer
+    //
+
+    framebuffer_create: *const fn (*anyopaque, options: FramebufferOptions) FramebufferCreateError!RID,
 };
 
 pub const CreateError = error{} || Allocator.Error;
@@ -184,95 +294,173 @@ pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
     };
 }
 
-pub fn deinit(self: *const Self) void {
-    self.vtable.shutdown(self.ptr);
-}
-
-pub fn asVk(self: *const Self) *VulkanRenderer {
+pub inline fn asVk(self: *const Self) *VulkanRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
-pub fn createDevice(self: *Self, window: *const Window, index: ?usize) CreateDeviceError!void {
+pub const CreateDeviceError = error{
+    /// No device are suitable to run the engine.
+    NoSuitableDevice,
+} || Allocator.Error;
+
+pub inline fn createDevice(self: *Self, window: *const Window, index: ?usize) CreateDeviceError!void {
     return self.vtable.create_device(self.ptr, window, index);
 }
 
-pub fn createSwapchain(self: *Self, window: *const Window, options: SwapchainOptions) CreateSwapchainError!void {
-    return self.vtable.create_swapchain(self.ptr, window, options);
-}
-
-pub fn processGraph(self: *Self, graph: *const Graph) ProcessGraphError!void {
+pub inline fn processGraph(self: *Self, graph: *const Graph) ProcessGraphError!void {
     return self.vtable.process_graph(self.ptr, graph);
 }
 
-// pub fn getCurrentDevice(self: *Self) Device {
-//     return self.vtable.get_current_device(self.ptr);
-// }
-
-pub fn createBuffer(self: *Self, size: usize, usage: BufferUsage, flags: BufferUsageFlags) CreateBufferError!Buffer {
-    return self.vtable.create_buffer(self.ptr, size, usage, flags);
+pub inline fn getSize(self: *const Self) Size {
+    return self.vtable.get_size(self.ptr);
 }
 
-pub fn createBufferFromData(
-    self: *Self,
-    comptime T: type,
-    data: []const T,
-    usage: BufferUsage,
-    flags: BufferUsageFlags,
-) CreateBufferError!Buffer {
-    var buffer = try self.createBuffer(@sizeOf(T) * data.len, usage, flags);
-    try buffer.update(std.mem.sliceAsBytes(data));
-    return buffer;
-}
-
-pub fn destroyBuffer(self: *Self, buffer: Buffer) void {
-    return self.vtable.destroy_buffer(self.ptr, buffer);
-}
-
-pub fn createImage(
-    self: *Self,
-    width: usize,
-    height: usize,
-    layers: usize,
-    tiling: ImageTiling,
-    format: Format,
-    usage: ImageUsageFlags,
-    aspect_mask: ImageAspectFlags,
-    mapping: PixelMapping,
-) CreateImageError!Image {
-    return self.vtable.create_image(self.ptr, width, height, layers, tiling, format, usage, aspect_mask, mapping);
-}
-
-pub fn createImageFromFile(
-    self: *Self,
-    allocator: Allocator,
-    path: []const u8,
-) (CreateImageError || Image.UpdateError)!Image {
-    var image_data = try zigimg.Image.fromFilePath(allocator, path);
-    defer image_data.deinit();
-
-    const format: Format = .r8g8b8a8_srgb; // TODO: Select the correct image format.
-    var image = try self.createImage(image_data.width, image_data.height, 1, .optimal, format, .{ .sampled = true, .transfer_dst = true }, .{ .color = true }, .identity);
-
-    image.asVk().transferLayout(.undefined, .transfer_dst_optimal, .{ .color_bit = true }) catch unreachable;
-    try image.update(0, image_data.rawBytes());
-    image.asVk().transferLayout(.transfer_dst_optimal, .shader_read_only_optimal, .{ .color_bit = true }) catch unreachable;
-
-    return image;
-}
-
-pub fn createDepthImage(
-    self: *Self,
-    width: usize,
-    height: usize,
-) CreateImageError!Image {
-    const depth_format: Format = .d32_sfloat; // TODO: Check support for depth format.
-
-    var image = try self.createImage(width, height, 1, .optimal, depth_format, .{ .depth_stencil_attachment = true }, .{ .depth = true }, .identity);
-    image.asVk().transferLayout(.undefined, .depth_stencil_attachment_optimal, .{ .depth_bit = true }) catch unreachable;
-
-    return image;
-}
-
-pub fn getStatistics(self: *const Self) Statistics {
+pub inline fn getStatistics(self: *const Self) Statistics {
     return self.vtable.get_statistics(self.ptr);
+}
+
+pub const ConfigureOptions = struct {
+    width: usize,
+    height: usize,
+    vsync: VSync,
+};
+
+pub const ConfigureError = error{ Failed, OutOfDeviceMemory } || Allocator.Error;
+
+/// Configure or reconfigure the swapchain.
+pub inline fn configure(self: *const Self, options: ConfigureOptions) ConfigureError!void {
+    return self.vtable.configure(self.ptr, options);
+}
+
+pub inline fn getOutputRenderPass(self: *const Self) RID {
+    return self.vtable.get_output_render_pass(self.ptr);
+}
+
+//
+// Dear ImGui integration
+//
+
+pub const ImGuiInitError = error{Failed};
+
+pub inline fn imguiInit(self: *const Self, window: *const Window, render_pass_rid: RID) ImGuiInitError!void {
+    return self.vtable.imgui_init(self.ptr, window, render_pass_rid);
+}
+
+pub const ImGuiAddTextureError = error{Failed};
+
+pub inline fn imguiAddTexture(self: *const Self, image_rid: RID) ImGuiAddTextureError!c_ulonglong {
+    return self.vtable.imgui_add_texture(self.ptr, image_rid);
+}
+
+//
+// Common resources operations
+//
+
+pub inline fn freeRid(self: *const Self, rid: RID) void {
+    return self.vtable.free_rid(self.ptr, rid);
+}
+
+//
+// Buffer
+//
+
+pub const BufferCreateError = error{
+    Failed,
+} || Allocator.Error;
+
+pub inline fn bufferCreate(self: *const Self, options: BufferOptions) BufferCreateError!RID {
+    return self.vtable.buffer_create(self.ptr, options);
+}
+
+pub const BufferUpdateError = error{
+    Failed,
+} || BufferCreateError;
+
+pub inline fn bufferUpdate(self: *const Self, buffer_rid: RID, s: []const u8, offset: usize) BufferUpdateError!void {
+    return self.vtable.buffer_update(self.ptr, buffer_rid, s, offset);
+}
+
+pub const BufferMapError = error{
+    Failed,
+};
+
+pub inline fn bufferMap(self: *const Self, buffer_rid: RID) BufferMapError![]const u8 {
+    return self.vtable.buffer_map(self.ptr, buffer_rid);
+}
+
+pub inline fn bufferUnmap(self: *const Self, buffer_rid: RID) void {
+    return self.vtable.buffer_unmap(self.ptr, buffer_rid);
+}
+
+//
+// Image
+//
+
+pub const ImageCreateError = error{
+    OutOfDeviceMemory,
+} || Allocator.Error;
+
+pub inline fn imageCreate(self: *const Self, options: ImageOptions) ImageCreateError!RID {
+    return self.vtable.image_create(self.ptr, options);
+}
+
+pub inline fn imageUpdate(self: *const Self, image_rid: RID, s: []const u8, offset: usize, layer: usize) UpdateImageError!void {
+    return self.vtable.image_update(self.ptr, image_rid, s, offset, layer);
+}
+
+pub const ImageSetLayoutError = error{
+    Failed,
+};
+
+pub inline fn imageSetLayout(self: *const Self, image_rid: RID, new_layout: vk.ImageLayout) ImageSetLayoutError!void {
+    return self.vtable.image_set_layout(self.ptr, image_rid, new_layout);
+}
+
+//
+// Pipeline
+//
+
+pub const PipelineGraphicsOptions = struct {
+    shader_model: ShaderModel,
+    render_pass: RID,
+};
+
+pub const PipelineCreateError = error{
+    Failed,
+    ShaderCompilationFailed,
+} || Allocator.Error;
+
+pub inline fn pipelineCreateGraphics(self: *const Self, options: PipelineGraphicsOptions) PipelineCreateError!RID {
+    return self.vtable.pipeline_create_graphics(self.ptr, options);
+}
+
+//
+// RenderPass
+//
+
+pub const RenderPassOptions = struct {};
+
+pub const RenderPassCreateError = error{
+    Failed,
+} || Allocator.Error;
+
+pub inline fn renderPassCreate(self: *const Self, options: RenderPassOptions) RenderPassCreateError!RID {
+    return self.vtable.renderpass_create(self.ptr, options);
+}
+
+//
+// Framebuffer
+//
+
+pub const FramebufferOptions = struct {
+    attachments: []const RID,
+    render_pass: RID,
+    width: usize,
+    height: usize,
+};
+
+pub const FramebufferCreateError = error{Failed} || Allocator.Error;
+
+pub inline fn framebufferCreate(self: *const Self, options: FramebufferOptions) FramebufferCreateError!RID {
+    return self.vtable.framebuffer_create(options);
 }

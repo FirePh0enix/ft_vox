@@ -11,14 +11,14 @@ const Allocator = std.mem.Allocator;
 const VmaAllocator = vma.VmaAllocator;
 const Camera = @import("../Camera.zig");
 const World = @import("../voxel/World.zig");
-const RenderFrame = @import("../voxel/RenderFrame.zig");
 const Window = @import("Window.zig");
 const Graph = @import("Graph.zig");
 
 const Renderer = @import("Renderer.zig");
-const Buffer = @import("Buffer.zig");
+const RID = Renderer.RID;
 const Image = @import("Image.zig");
 const Material = @import("Material.zig");
+const ShaderModel = @import("ShaderModel.zig");
 
 const rdr = Renderer.rdr;
 
@@ -37,16 +37,13 @@ pub const VulkanRenderer = struct {
     surface: vk.SurfaceKHR,
     physical_device: vk.PhysicalDevice,
     physical_device_properties: vk.PhysicalDeviceProperties,
-    window: *sdl.SDL_Window,
-    render_pass: vk.RenderPass,
     command_pool: vk.CommandPool,
 
     swapchain: vk.SwapchainKHR = .null_handle,
-    swapchain_images: []vk.Image = &.{},
-    swapchain_image_views: []vk.ImageView = &.{},
-    swapchain_framebuffers: []vk.Framebuffer = &.{},
+    swapchain_images: []RID = &.{},
+    swapchain_framebuffers: []RID = &.{},
     swapchain_extent: vk.Extent2D = .{ .width = 0, .height = 0 },
-    depth_image: Image,
+    depth_image: RID,
 
     surface_capabilities: vk.SurfaceCapabilitiesKHR,
     surface_format: vk.SurfaceFormatKHR,
@@ -69,6 +66,8 @@ pub const VulkanRenderer = struct {
     render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
     in_flight_fences: [max_frames_in_flight]vk.Fence,
 
+    output_render_pass: RID,
+
     /// Buffer used when transfering data from buffer to buffer.
     transfer_command_buffer: vk.CommandBufferProxy,
 
@@ -78,24 +77,8 @@ pub const VulkanRenderer = struct {
     statistics: Renderer.Statistics = .{},
 
     imgui_context: *dcimgui.ImGuiContext,
-
-    temp_noise_image: Image,
-    temp_noise_texture_id: dcimgui.ImTextureID,
-    hum_noise_image: Image,
-    hum_noise_texture_id: dcimgui.ImTextureID,
-    c_noise_image: Image,
-    c_noise_texture_id: dcimgui.ImTextureID,
-    e_noise_image: Image,
-    e_noise_texture_id: dcimgui.ImTextureID,
-    w_noise_image: Image,
-    w_noise_texture_id: dcimgui.ImTextureID,
-    pv_noise_image: Image,
-    pv_noise_texture_id: dcimgui.ImTextureID,
-
-    h_noise_image: Image,
-    h_noise_texture_id: dcimgui.ImTextureID,
-    biome_noise_image: Image,
-    biome_noise_texture_id: dcimgui.ImTextureID,
+    imgui_sampler: vk.Sampler,
+    imgui_descriptor_pool: vk.DescriptorPool,
 
     const max_frames_in_flight: usize = 2;
 
@@ -109,37 +92,50 @@ pub const VulkanRenderer = struct {
 
     pub const vtable: Renderer.VTable = .{
         .create_device = @ptrCast(&createDevice),
-        .shutdown = @ptrCast(&shutdown),
-        .create_swapchain = @ptrCast(&createSwapchain),
         .process_graph = @ptrCast(&processGraph),
-        .create_buffer = @ptrCast(&createBuffer),
-        .destroy_buffer = @ptrCast(&destroyBuffer),
-        .create_image = @ptrCast(&createImage),
+        .get_size = @ptrCast(&getSize),
         .get_statistics = @ptrCast(&getStatistics),
+
+        .destroy = @ptrCast(&destroy),
+        .configure = @ptrCast(&configure),
+        .get_output_render_pass = @ptrCast(&getOutputRenderPass),
+
+        .imgui_init = @ptrCast(&imguiInit),
+        .imgui_add_texture = @ptrCast(&imguiAddTexture),
+
+        .free_rid = @ptrCast(&freeRid),
+
+        .buffer_create = @ptrCast(&bufferCreate),
+        .buffer_update = @ptrCast(&bufferUpdate),
+        .buffer_map = @ptrCast(&bufferMap),
+        .buffer_unmap = @ptrCast(&bufferUnmap),
+
+        .image_create = @ptrCast(&imageCreate),
+        .image_update = @ptrCast(&imageUpdate),
+        .image_set_layout = @ptrCast(&imageSetLayout),
+
+        .pipeline_create_graphics = @ptrCast(&pipelineCreateGraphics),
+
+        .renderpass_create = @ptrCast(&renderPassCreate),
+
+        .framebuffer_create = @ptrCast(&framebufferCreate),
     };
 
     pub fn create(allocator: Allocator) Allocator.Error!*VulkanRenderer {
-        const driver = try allocator.create(VulkanRenderer);
+        const driver = try createWithDefault(VulkanRenderer, allocator);
         driver.allocator = allocator;
 
         return driver;
     }
 
-    fn createDevice(
-        self: *VulkanRenderer,
-        window: *Window,
-    ) Renderer.CreateDeviceError!void {
+    pub fn createDevice(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
         self.createDeviceVk(window) catch |e| switch (e) {
             Allocator.Error.OutOfMemory => return Renderer.CreateDeviceError.OutOfMemory,
             else => return Renderer.CreateDeviceError.NoSuitableDevice,
         };
-        self.graphics_queue_mutex = .{};
     }
 
-    fn createDeviceVk(
-        self: *VulkanRenderer,
-        window: *Window,
-    ) !void {
+    fn createDeviceVk(self: *VulkanRenderer, window: *Window) !void {
         const get_instance_proc_addr: *const GetInstanceProcAddrFn = @ptrCast(window.getVkGetInstanceProcAddr());
         const instance_extensions = window.getVkInstanceExtensions();
 
@@ -330,20 +326,17 @@ pub const VulkanRenderer = struct {
         }
 
         // Create the VmaAllocator
-        const vulkan_functions: vma.VmaVulkanFunctions = .{
-            .vkGetInstanceProcAddr = @ptrCast(get_instance_proc_addr),
-            .vkGetDeviceProcAddr = @ptrCast(get_device_proc_addr),
-        };
-
-        const allocator_info: vma.VmaAllocatorCreateInfo = .{
+        if (vma.vmaCreateAllocator(&vma.VmaAllocatorCreateInfo{
             .flags = if (features.vk_memory_budget) vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT else 0,
             .vulkanApiVersion = @bitCast(vk.API_VERSION_1_2),
             .physicalDevice = @ptrFromInt(@as(usize, @intFromEnum(self.physical_device))),
             .device = @ptrFromInt(@as(usize, @intFromEnum(device_handle))),
             .instance = @ptrFromInt(@as(usize, @intFromEnum(instance_handle))),
-            .pVulkanFunctions = @ptrCast(&vulkan_functions),
-        };
-        if (vma.vmaCreateAllocator(&allocator_info, &self.vma_allocator) != vma.VK_SUCCESS) return error.Internal;
+            .pVulkanFunctions = @ptrCast(&vma.VmaVulkanFunctions{
+                .vkGetInstanceProcAddr = @ptrCast(get_instance_proc_addr),
+                .vkGetDeviceProcAddr = @ptrCast(get_device_proc_addr),
+            }),
+        }, &self.vma_allocator) != vma.VK_SUCCESS) return error.Internal;
 
         // Allocate a command buffer to transfer data between buffers.
         var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
@@ -375,293 +368,19 @@ pub const VulkanRenderer = struct {
             if (device_features.pipeline_statistics_query == 1) self.device.resetQueryPool(self.primitives_query_pool, @intCast(index), 1); // TODO: Check and activate the feature
         }
 
-        // Create the color pass
-        // TODO: Move render pass creation to the Graph.
-        const color_ref: vk.AttachmentReference = .{
-            .attachment = 0,
-            .layout = .color_attachment_optimal,
-        };
-
-        const depth_ref: vk.AttachmentReference = .{
-            .attachment = 1,
-            .layout = .depth_stencil_attachment_optimal,
-        };
-
-        const subpass: vk.SubpassDescription = .{
-            .pipeline_bind_point = .graphics,
-            .color_attachment_count = 1,
-            .p_color_attachments = @ptrCast(&color_ref),
-            .p_depth_stencil_attachment = @ptrCast(&depth_ref),
-        };
-
-        const attachments: []const vk.AttachmentDescription = &.{
-            .{
-                .format = self.surface_format.format,
-                .samples = .{ .@"1_bit" = true },
-                .load_op = .clear,
-                .store_op = .store,
-                .stencil_load_op = .dont_care,
-                .stencil_store_op = .dont_care,
-                .initial_layout = .undefined,
-                .final_layout = .present_src_khr,
-            },
-            .{
-                .format = .d32_sfloat, // TODO: same as `Renderer.createDepthImage`
-                .samples = .{ .@"1_bit" = true },
-                .load_op = .clear,
-                .store_op = .dont_care,
-                .stencil_load_op = .dont_care,
-                .stencil_store_op = .dont_care,
-                .initial_layout = .undefined,
-                .final_layout = .depth_stencil_attachment_optimal,
-            },
-        };
-
-        const dependency: vk.SubpassDependency = .{
-            .src_subpass = vk.SUBPASS_EXTERNAL,
-            .dst_subpass = 0,
-            .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .src_access_mask = .{},
-            .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
-        };
-
-        self.render_pass = try self.device.createRenderPass(&vk.RenderPassCreateInfo{
-            .attachment_count = @intCast(attachments.len),
-            .p_attachments = attachments.ptr,
-            .subpass_count = 1,
-            .p_subpasses = @ptrCast(&subpass),
-            .dependency_count = 1,
-            .p_dependencies = @ptrCast(&dependency),
-        }, null);
-        errdefer self.device.destroyRenderPass(self.render_pass, null);
-
         self.current_frame = 0;
         self.physical_device = physical_device_with_info.physical_device;
         self.swapchain = .null_handle;
 
-        // Initialize DearImGui
-        // TODO: Some of this should be in the main render pass creation.
-        self.imgui_context = dcimgui.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
-
-        var io: *dcimgui.ImGuiIO = dcimgui.ImGui_GetIO() orelse unreachable;
-        io.ConfigFlags |= dcimgui.ImGuiConfigFlags_NavEnableKeyboard;
-        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.handle));
-
-        var init_info: dcimgui.ImGui_ImplVulkan_InitInfo = .{
-            .Instance = @ptrFromInt(@intFromEnum(self.instance.handle)),
-            .PhysicalDevice = @ptrFromInt(@intFromEnum(self.physical_device)),
-            .Device = @ptrFromInt(@intFromEnum(self.device.handle)),
-            .QueueFamily = self.graphics_queue_index,
-            .Queue = @ptrFromInt(@intFromEnum(self.graphics_queue.handle)),
-            .RenderPass = @ptrFromInt(@intFromEnum(self.render_pass)),
-            .MinImageCount = @intCast(max_frames_in_flight),
-            .ImageCount = @intCast(max_frames_in_flight),
-            .MSAASamples = dcimgui.VK_SAMPLE_COUNT_1_BIT,
-        };
-
-        init_info.DescriptorPool = @ptrFromInt(@intFromEnum(try self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
-            .max_sets = 16,
-            .pool_size_count = 1,
-            .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
-        }, null)));
-
-        const loader = struct {
-            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) dcimgui.PFN_vkVoidFunction {
-                return rdr().asVk().get_instance_proc_addr(rdr().asVk().instance.handle, name);
-            }
-        }.func;
-
-        _ = dcimgui.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
-        _ = dcimgui.cImGui_ImplVulkan_Init(&init_info);
-
-        const noise_sampler = try self.device.createSampler(&vk.SamplerCreateInfo{
-            .mag_filter = .nearest,
-            .min_filter = .nearest,
-            .mipmap_mode = .nearest,
-            .address_mode_u = .clamp_to_edge,
-            .address_mode_v = .clamp_to_edge,
-            .address_mode_w = .clamp_to_edge,
-            .mip_lod_bias = 0.0,
-            .anisotropy_enable = vk.FALSE,
-            .max_anisotropy = 0.0,
-            .compare_enable = vk.FALSE,
-            .compare_op = .equal,
-            .min_lod = 0.0,
-            .max_lod = 0.0,
-            .border_color = .int_opaque_black,
-            .unnormalized_coordinates = vk.FALSE,
-        }, null);
-
-        self.temp_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .b8g8r8a8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .identity);
-        self.temp_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.temp_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.hum_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.hum_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.hum_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.c_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.c_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.c_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.e_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.e_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.e_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.w_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.w_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.w_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.pv_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.pv_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.pv_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.h_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .r8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .grayscale);
-        self.h_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.h_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
-
-        self.biome_noise_image = try self.createImage(22 * 16, 22 * 16, 1, .optimal, .b8g8r8a8_srgb, .{ .transfer_dst = true, .sampled = true }, .{ .color = true }, .identity);
-        self.biome_noise_texture_id = @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(noise_sampler)), @ptrFromInt(@intFromEnum(self.biome_noise_image.asVkConst().image_view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+        // Create a renderpass attached
+        self.output_render_pass = try rdr().renderPassCreate(.{});
     }
 
-    fn shutdown(self: *VulkanRenderer) void {
-        _ = self;
-        // TODO
-    }
-
-    fn createSwapchain(
-        self: *VulkanRenderer,
-        window: *const Window,
-        options: Renderer.SwapchainOptions,
-    ) Renderer.CreateSwapchainError!void {
-        self.createSwapchainVk(window, options) catch return error.Unknown;
-    }
-
-    fn createSwapchainVk(
-        self: *VulkanRenderer,
-        window: *const Window,
-        options: Renderer.SwapchainOptions,
-    ) !void {
-        // Wait for the device to finish process frames before recreating the swapchain.
-        try self.device.deviceWaitIdle();
-
-        const size = window.size();
-
-        // Per the Vulkan spec only FIFO is guaranteed to be supported, so we fallback to this if others are not.
-        const surface_present_mode: vk.PresentModeKHR = switch (options.vsync) {
-            .off => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .immediate_khr)) .immediate_khr else .fifo_khr,
-            .smooth => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .fifo_relaxed_khr)) .fifo_relaxed_khr else .fifo_khr,
-            .performance => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .mailbox_khr)) .mailbox_khr else .fifo_khr,
-            .efficient => .fifo_khr,
-        };
-
-        const surface_extent: vk.Extent2D = .{
-            .width = @intCast(@max(self.surface_capabilities.min_image_extent.width, @as(u32, @intCast(size.width)))),
-            .height = @intCast(@max(self.surface_capabilities.min_image_extent.height, @as(u32, @intCast(size.height)))),
-        };
-
-        const image_count = if (self.surface_capabilities.max_image_count > 0 and self.surface_capabilities.min_image_count + 1 > self.surface_capabilities.max_image_count)
-            self.surface_capabilities.max_image_count
-        else
-            self.surface_capabilities.min_image_count + 1;
-
-        const swapchain = try self.device.createSwapchainKHR(&vk.SwapchainCreateInfoKHR{
-            .surface = self.surface,
-            .min_image_count = image_count,
-            .image_format = self.surface_format.format,
-            .image_color_space = self.surface_format.color_space,
-            .image_extent = surface_extent,
-            .image_array_layers = 1,
-            .image_usage = .{ .color_attachment_bit = true },
-            .image_sharing_mode = .exclusive,
-            .pre_transform = self.surface_capabilities.current_transform,
-            .composite_alpha = .{ .opaque_bit_khr = true },
-            .present_mode = surface_present_mode,
-            .clipped = vk.TRUE,
-            .old_swapchain = self.swapchain,
-        }, null);
-        errdefer self.device.destroySwapchainKHR(swapchain, null);
-
-        const swapchain_images = try self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator);
-        errdefer self.allocator.free(swapchain_images);
-
-        const swapchain_image_views = try self.allocator.alloc(vk.ImageView, swapchain_images.len);
-        errdefer self.allocator.free(swapchain_image_views);
-
-        const swapchain_framebuffers = try self.allocator.alloc(vk.Framebuffer, swapchain_images.len);
-        errdefer self.allocator.free(swapchain_framebuffers);
-
-        const depth_image = try rdr().createDepthImage(surface_extent.width, surface_extent.height);
-        errdefer depth_image.deinit();
-
-        for (swapchain_images, 0..swapchain_images.len) |image, index| {
-            const image_view = try self.device.createImageView(&vk.ImageViewCreateInfo{
-                .image = image,
-                .view_type = .@"2d",
-                .format = self.surface_format.format,
-                .components = .{
-                    .r = .identity,
-                    .g = .identity,
-                    .b = .identity,
-                    .a = .identity,
-                },
-                .subresource_range = .{
-                    .aspect_mask = .{ .color_bit = true },
-                    .base_mip_level = 0,
-                    .level_count = 1,
-                    .base_array_layer = 0,
-                    .layer_count = 1,
-                },
-            }, null);
-            swapchain_image_views[index] = image_view;
-
-            const attachments: []const vk.ImageView = &.{ image_view, depth_image.asVkConst().image_view };
-
-            swapchain_framebuffers[index] = try self.device.createFramebuffer(&vk.FramebufferCreateInfo{
-                .render_pass = self.render_pass,
-                .attachment_count = @intCast(attachments.len),
-                .p_attachments = attachments.ptr,
-                .width = surface_extent.width,
-                .height = surface_extent.height,
-                .layers = 1,
-            }, null);
-        }
-
-        self.destroySwapchain();
-
-        self.swapchain = swapchain;
-        self.swapchain_images = swapchain_images;
-        self.swapchain_image_views = swapchain_image_views;
-        self.swapchain_framebuffers = swapchain_framebuffers;
-        self.swapchain_extent = surface_extent;
-        self.depth_image = depth_image;
-    }
-
-    fn destroySwapchain(self: *const VulkanRenderer) void {
-        if (self.swapchain != .null_handle) {
-            for (self.swapchain_framebuffers) |framebuffer| {
-                self.device.destroyFramebuffer(framebuffer, null);
-            }
-
-            for (self.swapchain_image_views) |image_view| {
-                self.device.destroyImageView(image_view, null);
-            }
-
-            self.depth_image.deinit();
-
-            self.allocator.free(self.swapchain_images);
-            self.allocator.free(self.swapchain_image_views);
-            self.allocator.free(self.swapchain_framebuffers);
-
-            self.device.destroySwapchainKHR(self.swapchain, null);
-        }
-    }
-
-    fn processGraph(
-        self: *VulkanRenderer,
-        graph: *const Graph,
-    ) !void {
+    pub fn processGraph(self: *VulkanRenderer, graph: *const Graph) !void {
         self.processGraphVk(graph) catch unreachable; // TODO
     }
 
-    fn processGraphVk(
-        self: *VulkanRenderer,
-        graph: *const Graph,
-    ) !void {
+    fn processGraphVk(self: *VulkanRenderer, graph: *const Graph) !void {
         _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
         try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
@@ -714,22 +433,20 @@ pub const VulkanRenderer = struct {
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
     }
 
-    fn processRenderPass(
-        self: *VulkanRenderer,
-        cb: vk.CommandBufferProxy,
-        fb: vk.Framebuffer,
-        pass: *Graph.RenderPass,
-    ) !void {
+    fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {
         const clear_values: []const vk.ClearValue = &.{ // TODO one per attachements.
             .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
             .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
         };
 
+        const framebuffer = fb.as(VulkanFramebuffer);
+        const render_pass = pass.render_pass.as(VulkanRenderPass);
+
         cb.beginRenderPass(&vk.RenderPassBeginInfo{
-            .render_pass = pass.vk_pass,
+            .render_pass = render_pass.render_pass,
             .framebuffer = switch (pass.target.framebuffer) {
-                .native => fb,
-                .custom => |v| v,
+                .native => framebuffer.framebuffer,
+                .custom => |v| v.as(VulkanFramebuffer).framebuffer,
             },
             .render_area = switch (pass.target.viewport) {
                 .native => .{ .offset = .{ .x = 0, .y = 0 }, .extent = .{ .width = self.swapchain_extent.width, .height = self.swapchain_extent.height } },
@@ -740,18 +457,20 @@ pub const VulkanRenderer = struct {
         }, .@"inline");
 
         for (pass.draw_calls.items) |*call| {
-            cb.bindPipeline(.graphics, call.material.pipeline.pipeline);
-            cb.bindDescriptorSets(.graphics, call.material.pipeline.layout, 0, 1, @ptrCast(&call.material.descriptor_set), 0, null);
+            const pipeline = call.material.pipeline.as(VulkanPipeline);
 
-            cb.bindIndexBuffer(call.mesh.index_buffer.asVkConst().buffer, 0, call.mesh.index_type);
+            cb.bindPipeline(.graphics, pipeline.pipeline);
+            cb.bindDescriptorSets(.graphics, pipeline.layout, 0, 1, @ptrCast(&call.material.descriptor_set), 0, null);
+
+            cb.bindIndexBuffer(call.mesh.index_buffer.as(VulkanBuffer).buffer, 0, call.mesh.index_type.asVk());
 
             cb.bindVertexBuffers(0, 3, &.{
-                call.mesh.vertex_buffer.asVkConst().buffer,
-                call.mesh.normal_buffer.asVkConst().buffer,
-                call.mesh.texture_buffer.asVkConst().buffer,
+                call.mesh.vertex_buffer.as(VulkanBuffer).buffer,
+                call.mesh.normal_buffer.as(VulkanBuffer).buffer,
+                call.mesh.texture_buffer.as(VulkanBuffer).buffer,
             }, &.{ 0, 0, 0 });
 
-            if (call.instance_buffer) |ib| cb.bindVertexBuffers(3, 1, @ptrCast(&ib.asVkConst().buffer), &.{0});
+            if (call.instance_buffer) |ib| cb.bindVertexBuffers(3, 1, @ptrCast(&ib.as(VulkanBuffer).buffer), &.{0});
 
             cb.setViewport(0, 1, @ptrCast(&vk.Viewport{
                 .x = 0.0,
@@ -771,56 +490,18 @@ pub const VulkanRenderer = struct {
                 .view_matrix = pass.view_matrix,
             };
 
-            cb.pushConstants(call.material.pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
+            cb.pushConstants(pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
 
             cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
         }
 
-        // TODO: This sould be moved somewhere in the graph
         dcimgui.cImGui_ImplSDL3_NewFrame();
         dcimgui.cImGui_ImplVulkan_NewFrame();
         dcimgui.ImGui_NewFrame();
 
-        const x = -pass.view_matrix[0][3];
-        const z = -pass.view_matrix[2][3];
-
-        const noise = @import("../world_gen.zig").getNoise(x, z);
-        dcimgui.ImGui_Text(
-            "t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n",
-            noise.temperature,
-            noise.humidity,
-            noise.continentalness,
-            noise.erosion,
-        );
-        dcimgui.ImGui_Text(
-            "w = %.2f | pv = %.2f | as = ??? | n = ???\n",
-            noise.weirdness,
-            noise.peaks_and_valleys,
-        );
-
-        dcimgui.ImGui_Text(
-            "el = %d\n",
-            @import("../world_gen.zig").getErosionLevel(noise.erosion),
-        );
-
-        dcimgui.ImGui_Text("Temperature | Humidity\n");
-        dcimgui.ImGui_Image(self.temp_noise_texture_id, .{ .x = 100, .y = 100 });
-        dcimgui.ImGui_SameLine();
-        dcimgui.ImGui_Image(self.hum_noise_texture_id, .{ .x = 100, .y = 100 });
-
-        dcimgui.ImGui_Text("Continentalness | Erosion | Weirdness | Peaks & Valleys\n");
-        dcimgui.ImGui_Image(self.c_noise_texture_id, .{ .x = 100, .y = 100 });
-        dcimgui.ImGui_SameLine();
-        dcimgui.ImGui_Image(self.e_noise_texture_id, .{ .x = 100, .y = 100 });
-        dcimgui.ImGui_SameLine();
-        dcimgui.ImGui_Image(self.w_noise_texture_id, .{ .x = 100, .y = 100 });
-        dcimgui.ImGui_SameLine();
-        dcimgui.ImGui_Image(self.pv_noise_texture_id, .{ .x = 100, .y = 100 });
-
-        dcimgui.ImGui_Text("Biome | Final heightmap\n");
-        dcimgui.ImGui_Image(self.biome_noise_texture_id, .{ .x = 100, .y = 100 });
-        dcimgui.ImGui_SameLine();
-        dcimgui.ImGui_Image(self.h_noise_texture_id, .{ .x = 100, .y = 100 });
+        for (pass.hooks.items) |hook| {
+            hook(pass);
+        }
 
         dcimgui.ImGui_Render();
         dcimgui.cImGui_ImplVulkan_RenderDrawData(dcimgui.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
@@ -828,144 +509,11 @@ pub const VulkanRenderer = struct {
         cb.endRenderPass();
     }
 
-    fn createBuffer(
-        self: *VulkanRenderer,
-        size: usize,
-        usage: Renderer.BufferUsage,
-        flags: Renderer.BufferUsageFlags,
-    ) Renderer.CreateBufferError!Buffer {
-        const alloc_info: vma.VmaAllocationCreateInfo = .{
-            .usage = switch (usage) {
-                .gpu_only => vma.VMA_MEMORY_USAGE_GPU_ONLY,
-                .cpu_to_gpu => vma.VMA_MEMORY_USAGE_CPU_TO_GPU,
-            },
-        };
-
-        const buffer_info: vk.BufferCreateInfo = .{
-            .size = @intCast(size),
-            .usage = .{
-                .transfer_src_bit = flags.transfer_src,
-                .transfer_dst_bit = flags.transfer_dst,
-                .uniform_buffer_bit = flags.uniform_buffer,
-                .index_buffer_bit = flags.index_buffer,
-                .vertex_buffer_bit = flags.vertex_buffer,
-            },
-            .sharing_mode = .exclusive,
-        };
-
-        var vk_buffer: vk.Buffer = undefined;
-        var allocation: vma.VmaAllocation = undefined;
-
-        if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&vk_buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS)
-            return Renderer.CreateBufferError.Fail;
-
-        const buffer = try self.allocator.create(VulkanBuffer);
-        buffer.* = .{
-            .buffer = vk_buffer,
-            .allocation = allocation,
-            .size = size,
-        };
-
-        return .{
-            .ptr = buffer,
-            .vtable = &VulkanBuffer.vtable,
-        };
+    pub fn getSize(self: *const VulkanRenderer) Renderer.Size {
+        return .{ .width = @intCast(self.swapchain_extent.width), .height = @intCast(self.swapchain_extent.height) };
     }
 
-    fn destroyBuffer(
-        self: *VulkanRenderer,
-        buffer: Buffer,
-    ) void {
-        vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.asVkConst().buffer)), buffer.asVkConst().allocation);
-    }
-
-    fn createImage(
-        self: *VulkanRenderer,
-        width: usize,
-        height: usize,
-        layers: usize,
-        tiling: Renderer.ImageTiling,
-        format: Renderer.Format,
-        usage: Renderer.ImageUsageFlags,
-        aspect_mask: Renderer.ImageAspectFlags,
-        mapping: Renderer.PixelMapping,
-    ) Renderer.CreateImageError!Image {
-        return self.createImageVk(width, height, layers, tiling, format, usage, aspect_mask, mapping) catch unreachable;
-    }
-
-    fn createImageVk(
-        self: *VulkanRenderer,
-        width: usize,
-        height: usize,
-        layers: usize,
-        tiling: Renderer.ImageTiling,
-        format: Renderer.Format,
-        usage: Renderer.ImageUsageFlags,
-        aspect_mask: Renderer.ImageAspectFlags,
-        mapping: Renderer.PixelMapping,
-    ) !Image {
-        std.debug.assert(layers > 0);
-
-        const image_info: vk.ImageCreateInfo = .{
-            .image_type = .@"2d",
-            .format = format.asVk(),
-            .extent = .{ .width = @intCast(width), .height = @intCast(height), .depth = 1 },
-            .mip_levels = 1,
-            .array_layers = @intCast(layers),
-            .samples = .{ .@"1_bit" = true },
-            .sharing_mode = .exclusive,
-            .initial_layout = .undefined,
-            .tiling = tiling.asVk(),
-            .usage = usage.asVk(),
-        };
-
-        const alloc_info: vma.VmaAllocationCreateInfo = .{
-            .usage = vma.VMA_MEMORY_USAGE_GPU_ONLY,
-        };
-
-        var vk_image: vk.Image = .null_handle;
-        var alloc: vma.VmaAllocation = undefined;
-
-        if (vma.vmaCreateImage(self.vma_allocator, @ptrCast(&image_info), @ptrCast(&alloc_info), @ptrCast(&vk_image), &alloc, null) != vma.VK_SUCCESS)
-            return Renderer.CreateImageError.AllocationFailed;
-        errdefer vma.vmaDestroyImage(self.vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(vk_image))), alloc);
-
-        const image_view = try self.device.createImageView(&vk.ImageViewCreateInfo{
-            .image = vk_image,
-            .view_type = if (layers == 1) .@"2d" else .@"2d_array",
-            .format = format.asVk(),
-            .components = switch (mapping) {
-                .identity => .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
-                .grayscale => .{ .r = .identity, .g = .r, .b = .r, .a = .one },
-            },
-            .subresource_range = .{
-                .aspect_mask = aspect_mask.asVk(),
-                .base_array_layer = 0,
-                .layer_count = @intCast(layers),
-                .base_mip_level = 0,
-                .level_count = 1,
-            },
-        }, null);
-        errdefer self.device.destroyImageView(image_view, null);
-
-        const image = try self.allocator.create(VulkanImage);
-        image.* = .{
-            .width = width,
-            .height = height,
-            .layers = layers,
-
-            .image = vk_image,
-            .image_view = image_view,
-            .allocation = alloc,
-        };
-
-        return .{
-            .ptr = @ptrCast(image),
-            .vtable = &VulkanImage.vtable,
-        };
-    }
-
-    fn getStatistics(self: *const VulkanRenderer) Renderer.Statistics {
+    pub fn getStatistics(self: *const VulkanRenderer) Renderer.Statistics {
         var total_vram: usize = 0;
 
         var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
@@ -982,27 +530,715 @@ pub const VulkanRenderer = struct {
         };
     }
 
-    pub fn printDebugStats(self: *const VulkanRenderer) void {
-        // Calculate the total GPU memory allocated by VMA.
-        // TODO: Add other types of memory like swapchain images to the total.
-        // TODO: Print also CPU memory, including vulkan objects using allocation callbacks.
-        var total_bytes: usize = 0;
-
-        var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
-        vma.vmaGetHeapBudgets(self.vma_allocator, &budgets);
-        var index: usize = 0;
-        while (index < @as(usize, @intCast(vma.VK_MAX_MEMORY_HEAPS))) : (index += 1) {
-            total_bytes += budgets[index].statistics.allocationBytes;
-        }
-
-        std.debug.print("CPU Time   : prev = {d} ms\n", .{self.statistics.prv_cpu_time});
-        std.debug.print("CPU Memory : {d:.2}\n\n", .{std.fmt.fmtIntSizeBin(@import("root").tracking_allocator.total_allocated_bytes)});
-        std.debug.print("GPU Time   : prev = {d} ms, min = {d} ms, max = {d} ms\n", .{ self.statistics.prv_gpu_time, self.statistics.min_gpu_time, self.statistics.max_gpu_time });
-        std.debug.print("GPU Memory : {d:.2}\n\n", .{std.fmt.fmtIntSizeBin(total_bytes)});
-        std.debug.print("Primitives : {}\n", .{self.statistics.primitives});
+    pub fn destroy(self: *const VulkanRenderer) void {
+        _ = self;
+        // TODO
     }
 
-    pub fn createShaderModule(self: *const VulkanRenderer, spirv: [:0]align(4) const u8) vk.DeviceProxy.CreateShaderModuleError!vk.ShaderModule {
+    fn destroySwapchain(self: *VulkanRenderer) void {
+        if (self.swapchain != .null_handle) {
+            for (self.swapchain_framebuffers) |framebuffer_rid| {
+                self.freeRid(framebuffer_rid);
+            }
+
+            for (self.swapchain_images) |image_rid| {
+                // self.freeRid(image_rid); FIXME
+                _ = image_rid;
+            }
+
+            self.freeRid(self.depth_image);
+
+            self.allocator.free(self.swapchain_images);
+            self.allocator.free(self.swapchain_framebuffers);
+
+            self.device.destroySwapchainKHR(self.swapchain, null);
+        }
+    }
+
+    pub fn configure(self: *VulkanRenderer, options: Renderer.ConfigureOptions) Renderer.ConfigureError!void {
+        // Wait for the device to finish process frames before recreating the swapchain.
+        self.device.deviceWaitIdle() catch return error.Failed;
+
+        // Per the Vulkan spec only FIFO is guaranteed to be supported, so we fallback to this if others are not.
+        const surface_present_mode: vk.PresentModeKHR = switch (options.vsync) {
+            .off => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .immediate_khr)) .immediate_khr else .fifo_khr,
+            .smooth => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .fifo_relaxed_khr)) .fifo_relaxed_khr else .fifo_khr,
+            .performance => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .mailbox_khr)) .mailbox_khr else .fifo_khr,
+            .efficient => .fifo_khr,
+        };
+
+        const surface_extent: vk.Extent2D = .{
+            .width = @intCast(@max(self.surface_capabilities.min_image_extent.width, @as(u32, @intCast(options.width)))),
+            .height = @intCast(@max(self.surface_capabilities.min_image_extent.height, @as(u32, @intCast(options.height)))),
+        };
+
+        const image_count = if (self.surface_capabilities.max_image_count > 0 and self.surface_capabilities.min_image_count + 1 > self.surface_capabilities.max_image_count)
+            self.surface_capabilities.max_image_count
+        else
+            self.surface_capabilities.min_image_count + 1;
+
+        const swapchain = self.device.createSwapchainKHR(&vk.SwapchainCreateInfoKHR{
+            .surface = self.surface,
+            .min_image_count = image_count,
+            .image_format = self.surface_format.format,
+            .image_color_space = self.surface_format.color_space,
+            .image_extent = surface_extent,
+            .image_array_layers = 1,
+            .image_usage = .{ .color_attachment_bit = true },
+            .image_sharing_mode = .exclusive,
+            .pre_transform = self.surface_capabilities.current_transform,
+            .composite_alpha = .{ .opaque_bit_khr = true },
+            .present_mode = surface_present_mode,
+            .clipped = vk.TRUE,
+            .old_swapchain = self.swapchain,
+        }, null) catch return error.Failed;
+        errdefer self.device.destroySwapchainKHR(swapchain, null);
+
+        const depth_image_rid = try rdr().imageCreate(.{ .width = @intCast(surface_extent.width), .height = @intCast(surface_extent.height), .format = .d32_sfloat, .aspect_mask = .{ .depth = true }, .usage = .{ .depth_stencil_attachment = true } });
+        errdefer self.freeRid(depth_image_rid);
+
+        const swapchain_images = self.device.getSwapchainImagesAllocKHR(swapchain, self.allocator) catch return error.Failed;
+        defer self.allocator.free(swapchain_images);
+
+        const images = try self.allocator.alloc(RID, swapchain_images.len);
+        for (swapchain_images, 0..swapchain_images.len) |vk_image, index| images[index] = try self.imageCreateFromVkHandle(vk_image, self.surface_format.format);
+
+        const framebuffers = try self.allocator.alloc(RID, swapchain_images.len);
+        for (images, 0..swapchain_images.len) |image, index|
+            framebuffers[index] = try self.framebufferCreate(.{
+                .attachments = &.{ image, depth_image_rid },
+                .render_pass = self.output_render_pass,
+                .width = @intCast(surface_extent.width),
+                .height = @intCast(surface_extent.height),
+            });
+
+        self.destroySwapchain();
+
+        self.swapchain = swapchain;
+        self.swapchain_images = images;
+        self.swapchain_framebuffers = framebuffers;
+        self.swapchain_extent = surface_extent;
+        self.depth_image = depth_image_rid;
+    }
+
+    pub fn getOutputRenderPass(self: *VulkanRenderer) RID {
+        return self.output_render_pass;
+    }
+
+    pub fn imguiInit(self: *VulkanRenderer, window: *const Window, render_pass_rid: RID) Renderer.ImGuiInitError!void {
+        self.imgui_context = dcimgui.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
+
+        var io: *dcimgui.ImGuiIO = dcimgui.ImGui_GetIO() orelse unreachable;
+        io.ConfigFlags |= dcimgui.ImGuiConfigFlags_NavEnableKeyboard;
+        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.handle));
+
+        self.imgui_descriptor_pool = self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+            .max_sets = 16,
+            .pool_size_count = 1,
+            .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
+        }, null) catch return error.Failed;
+
+        var init_info: dcimgui.ImGui_ImplVulkan_InitInfo = .{
+            .Instance = @ptrFromInt(@intFromEnum(self.instance.handle)),
+            .PhysicalDevice = @ptrFromInt(@intFromEnum(self.physical_device)),
+            .Device = @ptrFromInt(@intFromEnum(self.device.handle)),
+            .QueueFamily = self.graphics_queue_index,
+            .Queue = @ptrFromInt(@intFromEnum(self.graphics_queue.handle)),
+            .RenderPass = @ptrFromInt(@intFromEnum(render_pass_rid.as(VulkanRenderPass).render_pass)),
+            .MinImageCount = @intCast(max_frames_in_flight),
+            .ImageCount = @intCast(max_frames_in_flight),
+            .MSAASamples = dcimgui.VK_SAMPLE_COUNT_1_BIT,
+            .DescriptorPool = @ptrFromInt(@intFromEnum(self.imgui_descriptor_pool)),
+        };
+
+        const loader = struct {
+            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) dcimgui.PFN_vkVoidFunction {
+                return rdr().asVk().get_instance_proc_addr(rdr().asVk().instance.handle, name);
+            }
+        }.func;
+
+        _ = dcimgui.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
+        _ = dcimgui.cImGui_ImplVulkan_Init(&init_info);
+
+        self.imgui_sampler = self.device.createSampler(&vk.SamplerCreateInfo{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .mipmap_mode = .nearest,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .address_mode_w = .clamp_to_edge,
+            .mip_lod_bias = 0.0,
+            .anisotropy_enable = vk.FALSE,
+            .max_anisotropy = 0.0,
+            .compare_enable = vk.FALSE,
+            .compare_op = .equal,
+            .min_lod = 0.0,
+            .max_lod = 0.0,
+            .border_color = .int_opaque_black,
+            .unnormalized_coordinates = vk.FALSE,
+        }, null) catch return error.Failed;
+    }
+
+    pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID) Renderer.ImGuiAddTextureError!c_ulonglong {
+        return @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    }
+
+    //
+    // Common
+    //
+
+    pub fn freeRid(self: *VulkanRenderer, rid: RID) void {
+        if (rid.tryAs(VulkanBuffer)) |buffer| {
+            vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.buffer)), buffer.allocation);
+        } else if (rid.tryAs(VulkanImage)) |image| {
+            self.device.destroyImageView(image.view, null);
+            vma.vmaDestroyImage(self.vma_allocator, @ptrFromInt(@intFromEnum(image.image)), image.allocation);
+        } else if (rid.tryAs(VulkanFramebuffer)) |framebuffer| {
+            self.device.destroyFramebuffer(framebuffer.framebuffer, null);
+        } else if (rid.tryAs(VulkanRenderPass)) |render_pass| {
+            self.device.destroyRenderPass(render_pass.render_pass, null);
+        } else {
+            unreachable;
+        }
+    }
+
+    //
+    // Buffer
+    //
+
+    pub fn bufferCreate(self: *const VulkanRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
+        const alloc_info: vma.VmaAllocationCreateInfo = .{
+            .usage = switch (options.alloc_usage) {
+                .gpu_only => vma.VMA_MEMORY_USAGE_GPU_ONLY,
+                .cpu_to_gpu => vma.VMA_MEMORY_USAGE_CPU_TO_GPU,
+            },
+        };
+
+        const buffer_info: vk.BufferCreateInfo = .{
+            .size = @intCast(options.size),
+            .usage = options.usage.asVk(),
+            .sharing_mode = .exclusive,
+        };
+
+        var buffer: vk.Buffer = undefined;
+        var allocation: vma.VmaAllocation = undefined;
+
+        if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
+            return error.Failed;
+        }
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanBuffer, self.allocator, .{
+            .size = options.size,
+            .buffer = buffer,
+            .allocation = allocation,
+        })) };
+    }
+
+    pub fn bufferDestroy(self: *VulkanRenderer, buffer_rid: RID) void {
+        const buffer = buffer_rid.as(VulkanBuffer);
+        vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.buffer)), buffer.allocation);
+    }
+
+    pub fn bufferUpdate(self: *VulkanRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
+        const buffer = buffer_rid.as(VulkanBuffer);
+
+        std.debug.assert(s.len <= buffer.size - offset);
+
+        var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
+        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
+        defer self.bufferDestroy(staging_buffer_rid);
+
+        {
+            const map_data = try self.bufferMap(staging_buffer_rid);
+            defer self.bufferUnmap(staging_buffer_rid);
+
+            @memcpy(map_data[0..s.len], s);
+        }
+
+        // Record the command buffer
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
+        self.transfer_command_buffer.resetCommandBuffer(.{}) catch return error.Failed;
+        self.transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
+            .flags = .{ .one_time_submit_bit = true },
+        }) catch return error.Failed;
+
+        const regions: []const vk.BufferCopy = &.{
+            vk.BufferCopy{ .src_offset = 0, .dst_offset = @intCast(offset), .size = @intCast(s.len) },
+        };
+
+        self.transfer_command_buffer.copyBuffer(staging_buffer.buffer, buffer.buffer, @intCast(regions.len), regions.ptr);
+        self.transfer_command_buffer.endCommandBuffer() catch return error.Failed;
+
+        self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&self.transfer_command_buffer),
+        }), .null_handle) catch return error.Failed;
+        self.graphics_queue.waitIdle() catch return error.Failed;
+    }
+
+    pub fn bufferMap(self: *VulkanRenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
+        const buffer = buffer_rid.as(VulkanBuffer);
+
+        var data: ?*anyopaque = null;
+
+        if (vma.vmaMapMemory(self.vma_allocator, buffer.allocation, &data) != vma.VK_SUCCESS) {
+            return error.Failed;
+        }
+
+        if (data) |ptr| {
+            return @as([*]u8, @ptrCast(ptr))[0..buffer.size];
+        } else {
+            return error.Failed;
+        }
+    }
+
+    pub fn bufferUnmap(self: *VulkanRenderer, buffer_rid: RID) void {
+        const buffer = buffer_rid.as(VulkanBuffer);
+        vma.vmaUnmapMemory(self.vma_allocator, buffer.allocation);
+    }
+
+    //
+    // Image
+    //
+
+    pub fn imageCreate(self: *VulkanRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
+        const image_info: vk.ImageCreateInfo = .{
+            .image_type = .@"2d",
+            .format = options.format.asVk(),
+            .extent = .{ .width = @intCast(options.width), .height = @intCast(options.height), .depth = 1 },
+            .mip_levels = 1,
+            .array_layers = @intCast(options.layers),
+            .samples = .{ .@"1_bit" = true },
+            .sharing_mode = .exclusive,
+            .initial_layout = .undefined,
+            .tiling = options.tiling.asVk(),
+            .usage = options.usage.asVk(),
+        };
+
+        const alloc_info: vma.VmaAllocationCreateInfo = .{
+            .usage = vma.VMA_MEMORY_USAGE_GPU_ONLY,
+        };
+
+        var image: vk.Image = .null_handle;
+        var alloc: vma.VmaAllocation = undefined;
+
+        if (vma.vmaCreateImage(self.vma_allocator, @ptrCast(&image_info), @ptrCast(&alloc_info), @ptrCast(&image), &alloc, null) != vma.VK_SUCCESS)
+            return error.OutOfDeviceMemory;
+        errdefer vma.vmaDestroyImage(self.vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(image))), alloc);
+
+        const image_view = self.device.createImageView(&vk.ImageViewCreateInfo{
+            .image = image,
+            .view_type = if (options.layers == 1) .@"2d" else .@"2d_array",
+            .format = options.format.asVk(),
+            .components = switch (options.pixel_mapping) {
+                .identity => .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+                .grayscale => .{ .r = .identity, .g = .r, .b = .r, .a = .one },
+            },
+            .subresource_range = .{
+                .aspect_mask = options.aspect_mask.asVk(),
+                .base_array_layer = 0,
+                .layer_count = @intCast(options.layers),
+                .base_mip_level = 0,
+                .level_count = 1,
+            },
+        }, null) catch return error.OutOfDeviceMemory;
+        errdefer self.device.destroyImageView(image_view, null);
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
+            .width = options.width,
+            .height = options.height,
+            .layers = options.layers,
+            .size = options.format.sizeBytes() * options.width * options.height,
+            .image = image,
+            .view = image_view,
+            .allocation = alloc,
+            .layout = .undefined,
+            .aspect_mask = options.aspect_mask.asVk(),
+        })) };
+    }
+
+    fn imageCreateFromVkHandle(self: *VulkanRenderer, image: vk.Image, format: vk.Format) Renderer.ImageCreateError!RID {
+        const image_view = self.device.createImageView(&vk.ImageViewCreateInfo{
+            .image = image,
+            .view_type = .@"2d",
+            .format = format,
+            .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_array_layer = 0,
+                .layer_count = 1,
+                .base_mip_level = 0,
+                .level_count = 1,
+            },
+        }, null) catch return error.OutOfDeviceMemory;
+        errdefer self.device.destroyImageView(image_view, null);
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
+            .width = undefined,
+            .height = undefined,
+            .size = undefined,
+            .layers = 1,
+            .image = image,
+            .view = image_view,
+            .allocation = undefined,
+            .layout = .undefined,
+            .aspect_mask = .{ .color_bit = true },
+        })) };
+    }
+
+    pub fn imageUpdate(self: *VulkanRenderer, image_rid: RID, s: []const u8, offset: usize, layer: usize) Renderer.UpdateImageError!void {
+        const image = image_rid.as(VulkanImage);
+
+        std.debug.assert(s.len <= image.size - offset);
+
+        var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
+        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
+        defer self.bufferDestroy(staging_buffer_rid);
+
+        {
+            const map_data = try self.bufferMap(staging_buffer_rid);
+            defer self.bufferUnmap(staging_buffer_rid);
+
+            @memcpy(map_data[0..s.len], s);
+        }
+
+        // Record the command buffer
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
+        self.transfer_command_buffer.resetCommandBuffer(.{}) catch return error.Failed;
+        self.transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
+            .flags = .{ .one_time_submit_bit = true },
+        }) catch return error.Failed;
+
+        const regions: []const vk.BufferImageCopy = &.{
+            vk.BufferImageCopy{
+                .buffer_offset = @intCast(offset),
+                .buffer_row_length = 0,
+                .buffer_image_height = 0,
+                .image_subresource = .{
+                    .aspect_mask = .{ .color_bit = true },
+                    .base_array_layer = @intCast(layer),
+                    .layer_count = 1,
+                    .mip_level = 0,
+                },
+                .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+                .image_extent = .{ .width = @intCast(image.width), .height = @intCast(image.height), .depth = 1 },
+            },
+        };
+
+        self.transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, image.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
+        self.transfer_command_buffer.endCommandBuffer() catch return error.Failed;
+
+        self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&self.transfer_command_buffer),
+        }), .null_handle) catch return error.Failed;
+        self.graphics_queue.waitIdle() catch return error.Failed;
+    }
+
+    pub fn imageSetLayout(self: *VulkanRenderer, image_rid: RID, new_layout: vk.ImageLayout) Renderer.ImageSetLayoutError!void {
+        const image = image_rid.as(VulkanImage);
+
+        const cb = self.transfer_command_buffer;
+
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
+        cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{}) catch return error.Failed;
+
+        var src_stage_mask: vk.PipelineStageFlags = undefined;
+        var dst_stage_mask: vk.PipelineStageFlags = undefined;
+
+        var barrier: vk.ImageMemoryBarrier = .{
+            .src_access_mask = .{},
+            .dst_access_mask = .{},
+            .old_layout = image.layout,
+            .new_layout = new_layout,
+            .image = image.image,
+            .subresource_range = .{
+                .aspect_mask = image.aspect_mask,
+                .base_array_layer = 0,
+                .layer_count = @intCast(image.layers),
+                .base_mip_level = 0,
+                .level_count = 1,
+            },
+            .src_queue_family_index = 0,
+            .dst_queue_family_index = 0,
+        };
+
+        if (image.layout == .undefined and new_layout == .transfer_dst_optimal) {
+            barrier.src_access_mask = .{};
+            barrier.dst_access_mask = .{ .transfer_write_bit = true };
+
+            src_stage_mask = .{ .top_of_pipe_bit = true };
+            dst_stage_mask = .{ .transfer_bit = true };
+        } else if (image.layout == .transfer_dst_optimal and new_layout == .shader_read_only_optimal) {
+            barrier.src_access_mask = .{ .transfer_write_bit = true };
+            barrier.dst_access_mask = .{ .shader_read_bit = true };
+
+            src_stage_mask = .{ .transfer_bit = true };
+            dst_stage_mask = .{ .fragment_shader_bit = true };
+        } else if (image.layout == .undefined and new_layout == .depth_stencil_attachment_optimal) {
+            barrier.src_access_mask = .{};
+            barrier.dst_access_mask = .{ .depth_stencil_attachment_read_bit = true };
+
+            src_stage_mask = .{ .transfer_bit = true };
+            dst_stage_mask = .{ .early_fragment_tests_bit = true };
+        } else {
+            std.debug.panic("unsupported layout: old = {}, new = {}\n", .{ image.layout, new_layout });
+        }
+
+        cb.pipelineBarrier(src_stage_mask, dst_stage_mask, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+        cb.endCommandBuffer() catch return error.Failed;
+        self.graphics_queue.submit(1, &.{vk.SubmitInfo{ .command_buffer_count = 1, .p_command_buffers = @ptrCast(&cb) }}, .null_handle) catch return error.Failed;
+        self.graphics_queue.waitIdle() catch return error.Failed;
+
+        image.layout = new_layout;
+    }
+
+    //
+    // Pipeline
+    //
+
+    const shaders = @import("shaders");
+
+    const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
+    const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
+
+    pub fn pipelineCreateGraphics(self: *VulkanRenderer, options: Renderer.PipelineGraphicsOptions) Renderer.PipelineCreateError!RID {
+        const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
+            .{
+                .stage = .{ .vertex_bit = true },
+                .module = self.createShaderModule(&basic_cube_vert) catch return error.ShaderCompilationFailed,
+                .p_name = "main",
+            },
+            .{
+                .stage = .{ .fragment_bit = true },
+                .module = self.createShaderModule(&basic_cube_frag) catch return error.ShaderCompilationFailed,
+                .p_name = "main",
+            },
+        };
+
+        const dynamic_states: []const vk.DynamicState = &.{ .viewport, .scissor };
+        const dynamic_state_info: vk.PipelineDynamicStateCreateInfo = .{
+            .dynamic_state_count = @intCast(dynamic_states.len),
+            .p_dynamic_states = dynamic_states.ptr,
+        };
+
+        const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
+            .vertex_binding_description_count = @intCast(options.shader_model.vk_bindings.items.len),
+            .p_vertex_binding_descriptions = options.shader_model.vk_bindings.items.ptr,
+            .vertex_attribute_description_count = @intCast(options.shader_model.vk_attribs.items.len),
+            .p_vertex_attribute_descriptions = options.shader_model.vk_attribs.items.ptr,
+        };
+
+        const input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = .{
+            .topology = options.shader_model.topology,
+            .primitive_restart_enable = vk.FALSE,
+        };
+
+        const viewport_info: vk.PipelineViewportStateCreateInfo = .{
+            .viewport_count = 1,
+            .scissor_count = 1,
+        };
+
+        const rasterizer_info: vk.PipelineRasterizationStateCreateInfo = .{
+            .depth_clamp_enable = vk.FALSE,
+            .depth_bias_clamp = 0.0,
+            .rasterizer_discard_enable = vk.FALSE,
+            .polygon_mode = options.shader_model.polygon_mode,
+            .line_width = 1.0,
+            .cull_mode = .{ .back_bit = true },
+            .front_face = .counter_clockwise,
+            .depth_bias_enable = vk.FALSE,
+            .depth_bias_constant_factor = 0.0,
+            .depth_bias_slope_factor = 0.0,
+        };
+
+        const multisample_info: vk.PipelineMultisampleStateCreateInfo = .{
+            .sample_shading_enable = vk.FALSE,
+            .rasterization_samples = .{ .@"1_bit" = true },
+            .min_sample_shading = 1.0,
+            .p_sample_mask = null,
+            .alpha_to_coverage_enable = vk.FALSE,
+            .alpha_to_one_enable = vk.FALSE,
+        };
+
+        const blend_state: vk.PipelineColorBlendAttachmentState = .{
+            .blend_enable = vk.FALSE, // TODO: Support transparency
+            .src_color_blend_factor = .one,
+            .dst_color_blend_factor = .zero,
+            .color_blend_op = .add,
+            .src_alpha_blend_factor = .one,
+            .dst_alpha_blend_factor = .zero,
+            .alpha_blend_op = .add,
+            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+        };
+
+        const blend_info: vk.PipelineColorBlendStateCreateInfo = .{
+            .logic_op_enable = vk.FALSE,
+            .logic_op = .copy,
+            .attachment_count = 1,
+            .p_attachments = @ptrCast(&blend_state),
+            .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
+        };
+
+        const depth_info: vk.PipelineDepthStencilStateCreateInfo = .{
+            .depth_test_enable = vk.TRUE,
+            .depth_write_enable = vk.TRUE,
+            .depth_compare_op = .less,
+            .depth_bounds_test_enable = vk.FALSE,
+            .min_depth_bounds = 0.0,
+            .max_depth_bounds = 1.0,
+            .stencil_test_enable = vk.FALSE,
+            .front = std.mem.zeroes(vk.StencilOpState),
+            .back = std.mem.zeroes(vk.StencilOpState),
+        };
+
+        const descriptor_pool = MaterialDescriptorPool.init(self.allocator, options.shader_model) catch return error.Failed;
+
+        const layout_info: vk.PipelineLayoutCreateInfo = .{
+            .set_layout_count = 1,
+            .p_set_layouts = @ptrCast(&descriptor_pool.descriptor_set_layout),
+            .push_constant_range_count = @intCast(options.shader_model.vk_push_constants.items.len),
+            .p_push_constant_ranges = options.shader_model.vk_push_constants.items.ptr,
+        };
+
+        const pipeline_layout = self.device.createPipelineLayout(&layout_info, null) catch return error.Failed;
+
+        var pipeline: vk.Pipeline = .null_handle;
+        _ = self.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&vk.GraphicsPipelineCreateInfo{
+            .stage_count = @intCast(shader_stages.len),
+            .p_stages = shader_stages.ptr,
+            .p_vertex_input_state = &vertex_input_info,
+            .p_input_assembly_state = &input_assembly_info,
+            .p_viewport_state = &viewport_info,
+            .p_rasterization_state = &rasterizer_info,
+            .p_multisample_state = &multisample_info,
+            .p_depth_stencil_state = &depth_info,
+            .p_color_blend_state = &blend_info,
+            .p_dynamic_state = &dynamic_state_info,
+            .layout = pipeline_layout,
+            .render_pass = options.render_pass.as(VulkanRenderPass).render_pass,
+            .subpass = 0,
+            .base_pipeline_handle = .null_handle,
+            .base_pipeline_index = -1,
+        }), null, @ptrCast(&pipeline)) catch return error.Failed;
+        errdefer rdr().asVk().device.destroyPipeline(pipeline, null);
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanPipeline, self.allocator, .{
+            .pipeline = pipeline,
+            .layout = pipeline_layout,
+            .descriptor_pool = descriptor_pool,
+        })) };
+    }
+
+    //
+    // RenderPass
+    //
+
+    pub fn renderPassCreate(self: *VulkanRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
+        _ = options; // TODO
+
+        const color_ref: vk.AttachmentReference = .{
+            .attachment = 0,
+            .layout = .color_attachment_optimal,
+        };
+
+        const depth_ref: vk.AttachmentReference = .{
+            .attachment = 1,
+            .layout = .depth_stencil_attachment_optimal,
+        };
+
+        const subpass: vk.SubpassDescription = .{
+            .pipeline_bind_point = .graphics,
+            .color_attachment_count = 1,
+            .p_color_attachments = @ptrCast(&color_ref),
+            .p_depth_stencil_attachment = @ptrCast(&depth_ref),
+        };
+
+        const attachments: []const vk.AttachmentDescription = &.{
+            .{
+                .format = self.surface_format.format,
+                .samples = .{ .@"1_bit" = true },
+                .load_op = .clear,
+                .store_op = .store,
+                .stencil_load_op = .dont_care,
+                .stencil_store_op = .dont_care,
+                .initial_layout = .undefined,
+                .final_layout = .present_src_khr,
+            },
+            .{
+                .format = .d32_sfloat, // TODO: same as `Renderer.createDepthImage`
+                .samples = .{ .@"1_bit" = true },
+                .load_op = .clear,
+                .store_op = .dont_care,
+                .stencil_load_op = .dont_care,
+                .stencil_store_op = .dont_care,
+                .initial_layout = .undefined,
+                .final_layout = .depth_stencil_attachment_optimal,
+            },
+        };
+
+        const dependency: vk.SubpassDependency = .{
+            .src_subpass = vk.SUBPASS_EXTERNAL,
+            .dst_subpass = 0,
+            .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+            .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+            .src_access_mask = .{},
+            .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
+        };
+
+        const render_pass = self.device.createRenderPass(&vk.RenderPassCreateInfo{
+            .attachment_count = @intCast(attachments.len),
+            .p_attachments = attachments.ptr,
+            .subpass_count = 1,
+            .p_subpasses = @ptrCast(&subpass),
+            .dependency_count = 1,
+            .p_dependencies = @ptrCast(&dependency),
+        }, null) catch return error.Failed;
+        errdefer self.device.destroyRenderPass(render_pass, null);
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
+            .render_pass = render_pass,
+        })) };
+    }
+
+    //
+    // Framebuffer
+    //
+
+    pub fn framebufferCreate(self: *VulkanRenderer, options: Renderer.FramebufferOptions) Renderer.FramebufferCreateError!RID {
+        // Ideally there should not be more than 2 attachments at the same time: one for color and one for depth.
+        const max_attachments = 2;
+
+        std.debug.assert(options.attachments.len <= max_attachments);
+
+        var attachments: [max_attachments]vk.ImageView = undefined;
+
+        for (options.attachments, 0..options.attachments.len) |attach_rid, index| {
+            const image = attach_rid.as(VulkanImage);
+            attachments[index] = image.view;
+        }
+
+        const framebuffer = self.device.createFramebuffer(&vk.FramebufferCreateInfo{
+            .render_pass = options.render_pass.as(VulkanRenderPass).render_pass,
+            .attachment_count = @intCast(options.attachments.len),
+            .p_attachments = attachments[0..options.attachments.len].ptr,
+            .width = @intCast(options.width),
+            .height = @intCast(options.height),
+            .layers = 1,
+        }, null) catch return error.Failed;
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
+            .framebuffer = framebuffer,
+        })) };
+    }
+
+    pub fn createShaderModule(self: *VulkanRenderer, spirv: [:0]align(4) const u8) vk.DeviceProxy.CreateShaderModuleError!vk.ShaderModule {
         const shader_info: vk.ShaderModuleCreateInfo = .{
             .code_size = spirv.len,
             .p_code = @ptrCast(spirv.ptr),
@@ -1176,280 +1412,135 @@ pub const Features = struct {
     vk_memory_budget: bool = false,
 };
 
-// pub const Statistics = struct {
-//     prv_gpu_time: f32 = 0.0,
-//     acc_gpu_time: f32 = 0.0,
-//     min_gpu_time: f32 = std.math.inf(f32),
-//     max_gpu_time: f32 = 0.0,
-
-//     prv_cpu_time: f32 = 0.0,
-
-//     frames_recorded: usize = 0,
-
-//     /// Number of primitives drawn during last frame.
-//     primitives: u64 = 0,
-
-//     pub fn putGpuTimeValue(self: *Statistics, value: f32) void {
-//         self.prv_gpu_time = value;
-//         if (value > self.max_gpu_time) self.max_gpu_time = value;
-//         if (value < self.min_gpu_time) self.min_gpu_time = value;
-//         self.acc_gpu_time += value;
-//         self.frames_recorded += 1;
-//     }
-
-//     pub fn getAverageGpuTime(self: *const Statistics) f32 {
-//         if (self.frames_recorded > 0) return self.acc_gpu_time / @as(f32, @floatFromInt(self.frames_recorded));
-//         return 0;
-//     }
-// };
-
 pub const VulkanBuffer = struct {
-    const Self = @This();
+    pub const resource_signature: usize = @truncate(0x5e165628f7e0b61a);
 
+    signature: usize = resource_signature,
+    size: usize,
     buffer: vk.Buffer,
     allocation: vma.VmaAllocation,
-    size: usize,
-
-    pub const vtable: Buffer.VTable = .{
-        .update = @ptrCast(&update),
-        .destroy = @ptrCast(&destroy),
-    };
-
-    pub fn destroy(self: *const Self) void {
-        vma.vmaDestroyBuffer(rdr().asVk().vma_allocator, @ptrFromInt(@intFromEnum(self.buffer)), self.allocation);
-    }
-
-    pub fn update(self: *Self, data: []const u8) !void {
-        var staging_buffer = try rdr().createBuffer(self.size, .cpu_to_gpu, .{ .transfer_src = true });
-        defer staging_buffer.deinit();
-
-        {
-            const map_data = try staging_buffer.asVk().map();
-            defer staging_buffer.asVk().unmap();
-
-            @memcpy(map_data[0..data.len], data);
-        }
-
-        // Record the command buffer
-        rdr().asVk().graphics_queue_mutex.lock();
-        defer rdr().asVk().graphics_queue_mutex.unlock();
-
-        try rdr().asVk().transfer_command_buffer.resetCommandBuffer(.{});
-        try rdr().asVk().transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
-        });
-
-        const regions: []const vk.BufferCopy = &.{
-            vk.BufferCopy{ .src_offset = 0, .dst_offset = 0, .size = self.size },
-        };
-
-        rdr().asVk().transfer_command_buffer.copyBuffer(staging_buffer.asVk().buffer, self.buffer, @intCast(regions.len), regions.ptr);
-        try rdr().asVk().transfer_command_buffer.endCommandBuffer();
-
-        const submit_info: vk.SubmitInfo = .{
-            .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&rdr().asVk().transfer_command_buffer),
-        };
-
-        try rdr().asVk().graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
-        try rdr().asVk().graphics_queue.waitIdle();
-    }
-
-    pub fn deinit(self: *const Self) void {
-        vma.vmaDestroyBuffer(rdr().asVk().vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(self.buffer))), self.allocation);
-    }
-
-    pub fn map(self: *const Self) ![]u8 {
-        var data: ?*anyopaque = null;
-
-        if (vma.vmaMapMemory(rdr().asVk().vma_allocator, self.allocation, &data) != vma.VK_SUCCESS)
-            return error.Internal;
-
-        if (data) |ptr| {
-            return @as([*]u8, @ptrCast(ptr))[0..self.size];
-        } else {
-            return error.Internal;
-        }
-    }
-
-    pub fn unmap(self: *const Self) void {
-        vma.vmaUnmapMemory(rdr().asVk().vma_allocator, self.allocation);
-    }
 };
 
 pub const VulkanImage = struct {
-    const Self = @This();
+    pub const resource_signature: usize = @truncate(0x97d7ecd5e0bffa7c);
+
+    signature: usize = resource_signature,
 
     width: usize,
     height: usize,
     layers: usize,
 
+    /// Total size in bytes.
+    size: usize,
+
     image: vk.Image,
-    image_view: vk.ImageView,
+    view: vk.ImageView,
     allocation: vma.VmaAllocation,
 
-    pub const vtable: Image.VTable = .{
-        .destroy = @ptrCast(&destroy),
-        .update = @ptrCast(&update),
-    };
+    layout: vk.ImageLayout,
+    aspect_mask: vk.ImageAspectFlags,
+};
 
-    pub fn destroy(self: *const Self) void {
-        vma.vmaDestroyImage(rdr().asVk().vma_allocator, @ptrFromInt(@intFromEnum(self.image)), self.allocation);
-        rdr().asVk().device.destroyImageView(self.image_view, null);
-    }
+pub const VulkanPipeline = struct {
+    pub const resource_signature: usize = @truncate(0x5789d7753bca202c);
 
-    pub fn getMissingPixels() [16 * 16 * 4]u8 {
-        var pixels: [16 * 16 * 4]u8 = undefined;
+    signature: usize = resource_signature,
+    pipeline: vk.Pipeline,
+    layout: vk.PipelineLayout,
+    descriptor_pool: MaterialDescriptorPool,
+};
 
-        for (0..8) |x| {
-            for (0..8) |y| {
-                pixels[0 * 4 * 8 + y * 8 + x] = 0xcc;
-                pixels[1 * 4 * 8 + y * 8 + x] = 0x40;
-                pixels[2 * 4 * 8 + y * 8 + x] = 0xc4;
-                pixels[3 * 4 * 8 + y * 8 + x] = 0xff;
-            }
-        }
+const MaterialDescriptorPool = struct {
+    pools: std.ArrayList(vk.DescriptorPool),
+    count: usize,
+    descriptor_set_layout: vk.DescriptorSetLayout,
+    shader_model: ShaderModel,
 
-        for (0..8) |x| {
-            for (0..8) |y| {
-                pixels[0 * 4 * 8 + (y + 8) * 8 + x] = 0;
-                pixels[1 * 4 * 8 + (y + 8) * 8 + x] = 0;
-                pixels[2 * 4 * 8 + (y + 8) * 8 + x] = 0;
-                pixels[3 * 4 * 8 + (y + 8) * 8 + x] = 0xff;
-            }
-        }
+    const pool_size: usize = 16;
 
-        for (0..8) |x| {
-            for (0..8) |y| {
-                pixels[0 * 4 * 8 + y * 8 + (x + 8)] = 0xcc;
-                pixels[1 * 4 * 8 + y * 8 + (x + 8)] = 0x40;
-                pixels[2 * 4 * 8 + y * 8 + (x + 8)] = 0xc4;
-                pixels[3 * 4 * 8 + y * 8 + (x + 8)] = 0xff;
-            }
-        }
+    pub fn init(allocator: Allocator, shader_model: ShaderModel) !MaterialDescriptorPool {
+        const descriptor_set_layout = try rdr().asVk().device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
+            .binding_count = @intCast(shader_model.vk_descriptor_bindings.items.len),
+            .p_bindings = shader_model.vk_descriptor_bindings.items.ptr,
+        }, null);
 
-        for (0..8) |x| {
-            for (0..8) |y| {
-                pixels[0 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xcc;
-                pixels[1 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0x40;
-                pixels[2 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xc4;
-                pixels[3 * 4 * 8 + (y + 8) * 8 + (x + 8)] = 0xff;
-            }
-        }
-
-        return pixels;
-    }
-
-    pub fn update(
-        self: *Self,
-        layer: usize,
-        data: []const u8,
-    ) !void {
-        var staging_buffer = try rdr().createBuffer(data.len, .cpu_to_gpu, .{ .transfer_src = true });
-        defer staging_buffer.deinit();
-
-        {
-            const map_data = try staging_buffer.asVk().map();
-            defer staging_buffer.asVk().unmap();
-
-            const data_bytes: []const u8 = @as([*]const u8, @ptrCast(data.ptr))[0..data.len];
-            @memcpy(map_data, data_bytes);
-        }
-
-        // Record the command buffer
-        rdr().asVk().graphics_queue_mutex.lock();
-        defer rdr().asVk().graphics_queue_mutex.unlock();
-
-        try rdr().asVk().transfer_command_buffer.resetCommandBuffer(.{});
-        try rdr().asVk().transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
-        });
-
-        const regions: []const vk.BufferImageCopy = &.{
-            vk.BufferImageCopy{
-                .buffer_offset = 0,
-                .buffer_row_length = 0,
-                .buffer_image_height = 0,
-                .image_subresource = .{
-                    .aspect_mask = .{ .color_bit = true },
-                    .base_array_layer = @intCast(layer),
-                    .layer_count = 1,
-                    .mip_level = 0,
-                },
-                .image_offset = .{ .x = 0, .y = 0, .z = 0 },
-                .image_extent = .{ .width = @intCast(self.width), .height = @intCast(self.height), .depth = 1 },
-            },
+        return .{
+            .pools = .init(allocator),
+            .count = 0,
+            .descriptor_set_layout = descriptor_set_layout,
+            .shader_model = shader_model,
         };
-
-        rdr().asVk().transfer_command_buffer.copyBufferToImage(staging_buffer.asVkConst().buffer, self.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
-        try rdr().asVk().transfer_command_buffer.endCommandBuffer();
-
-        try rdr().asVk().graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
-            .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&rdr().asVk().transfer_command_buffer),
-        }), .null_handle);
-        try rdr().asVk().graphics_queue.waitIdle();
     }
 
-    pub fn transferLayout(
-        self: *const Self,
-        old_layout: vk.ImageLayout,
-        new_layout: vk.ImageLayout,
-        aspect_mask: vk.ImageAspectFlags,
-    ) !void {
-        const command_buffer = rdr().asVk().transfer_command_buffer;
+    pub fn deinit(self: *const MaterialDescriptorPool) void {
+        for (self.pools.items) |pool| rdr().asVk().device.destroyQueryPool(pool, null);
+        self.pools.deinit();
+    }
 
-        rdr().asVk().graphics_queue_mutex.lock();
-        defer rdr().asVk().graphics_queue_mutex.unlock();
+    pub fn createDescriptorSet(self: *MaterialDescriptorPool) !vk.DescriptorSet {
+        if (self.count >= self.pools.items.len * pool_size) {
+            // TODO: Should probably allocate as much of each bindings.
 
-        try command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{});
+            // Funnily enough, on linux it seems that it does not care about what we are giving it here, but it crash
+            // with moltenvk if we don't correctly specify the pool size.
+            const sizes: []const vk.DescriptorPoolSize = &.{
+                .{ .type = .combined_image_sampler, .descriptor_count = pool_size },
+                .{ .type = .uniform_buffer, .descriptor_count = pool_size },
+            };
+            const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+                .pool_size_count = @intCast(sizes.len),
+                .p_pool_sizes = sizes.ptr,
+                .max_sets = 1,
+            }, null);
 
-        var src_stage_mask: vk.PipelineStageFlags = undefined;
-        var dst_stage_mask: vk.PipelineStageFlags = undefined;
-
-        var barrier: vk.ImageMemoryBarrier = .{
-            .src_access_mask = .{},
-            .dst_access_mask = .{},
-            .old_layout = old_layout,
-            .new_layout = new_layout,
-            .image = self.image,
-            .subresource_range = .{
-                .aspect_mask = aspect_mask,
-                .base_array_layer = 0,
-                .layer_count = @intCast(self.layers),
-                .base_mip_level = 0,
-                .level_count = 1,
-            },
-            .src_queue_family_index = 0,
-            .dst_queue_family_index = 0,
-        };
-
-        if (old_layout == .undefined and new_layout == .transfer_dst_optimal) {
-            barrier.src_access_mask = .{};
-            barrier.dst_access_mask = .{ .transfer_write_bit = true };
-
-            src_stage_mask = .{ .top_of_pipe_bit = true };
-            dst_stage_mask = .{ .transfer_bit = true };
-        } else if (old_layout == .transfer_dst_optimal and new_layout == .shader_read_only_optimal) {
-            barrier.src_access_mask = .{ .transfer_write_bit = true };
-            barrier.dst_access_mask = .{ .shader_read_bit = true };
-
-            src_stage_mask = .{ .transfer_bit = true };
-            dst_stage_mask = .{ .fragment_shader_bit = true };
-        } else if (old_layout == .undefined and new_layout == .depth_stencil_attachment_optimal) {
-            barrier.src_access_mask = .{};
-            barrier.dst_access_mask = .{ .depth_stencil_attachment_read_bit = true };
-
-            src_stage_mask = .{ .transfer_bit = true };
-            dst_stage_mask = .{ .early_fragment_tests_bit = true };
-        } else {
-            std.log.err("old = {}, new = {}\n", .{ old_layout, new_layout });
-            return error.UnsupportedLayouts;
+            try self.pools.append(pool);
         }
 
-        command_buffer.pipelineBarrier(src_stage_mask, dst_stage_mask, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
-        try command_buffer.endCommandBuffer();
-        try rdr().asVk().graphics_queue.submit(1, &.{vk.SubmitInfo{ .command_buffer_count = 1, .p_command_buffers = @ptrCast(&command_buffer) }}, .null_handle);
-        try rdr().asVk().graphics_queue.waitIdle();
+        const pool: vk.DescriptorPool = self.pools.items[self.count / pool_size];
+        self.count += 1;
+
+        var descriptor_set: vk.DescriptorSet = undefined;
+        try rdr().asVk().device.allocateDescriptorSets(&vk.DescriptorSetAllocateInfo{ .descriptor_pool = pool, .descriptor_set_count = 1, .p_set_layouts = @ptrCast(&self.descriptor_set_layout) }, @ptrCast(&descriptor_set));
+
+        return descriptor_set;
     }
 };
+
+pub const VulkanRenderPass = struct {
+    pub const resource_signature: usize = @truncate(0xb848438b714985aa);
+
+    signature: usize = resource_signature,
+    render_pass: vk.RenderPass,
+};
+
+pub const VulkanFramebuffer = struct {
+    pub const resource_signature: usize = @truncate(0x264657ac2e68fd36);
+
+    signature: usize = resource_signature,
+    framebuffer: vk.Framebuffer,
+};
+
+/// Create a value and initialize it right away to prevent `undefined` values from getting into `T`.
+fn createWithInit(comptime T: type, allocator: Allocator, value: T) Allocator.Error!*T {
+    const ptr = try allocator.create(T);
+    ptr.* = value;
+    return ptr;
+}
+
+/// Create a value and fill its field with default values if applicable.
+fn createWithDefault(comptime T: type, allocator: Allocator) Allocator.Error!*T {
+    const info = @typeInfo(T);
+    const ptr = try allocator.create(T);
+
+    switch (info) {
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                if (field.defaultValue()) |value|
+                    @field(ptr.*, field.name) = value;
+            }
+        },
+        else => {},
+    }
+
+    return ptr;
+}
