@@ -138,18 +138,40 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
 
 // https://www.youtube.com/watch?v=CSa5O6knuwI
 // https://minecraft.wiki/w/World_generation
+// https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
+
 pub fn generateHeight(x: isize, z: isize) usize {
     const fx: f32 = @floatFromInt(x);
     const fz: f32 = @floatFromInt(z);
 
     const noise = getNoise(fx, fz);
     const biome = getBiome(noise);
+    const continentalness = noise.continentalness;
 
-    const y = 0;
+    // Base height for each biome.
+    const depth: f32 = switch (biome) {
+        .deep_ocean => 52.0,
+        .cold_ocean, .ocean => 62.0,
+        .river => 62.0,
+        .plains => 72.0,
+        .mountains => 92.0,
+        .cold_mountains => 112.0,
+    };
 
-    _ = biome;
+    // Base scale for each biome.
+    const scale: f32 = switch (biome) {
+        .deep_ocean => 2.0,
+        .cold_ocean, .ocean => 3.0,
+        .river => 4.0,
+        .plains => 6.0,
+        .mountains => 40.0,
+        .cold_mountains => 70.0,
+    };
 
-    return y;
+    // Continentalness * continentalness smooth the curve, so the mountain top are curved and not sharpy.
+    const height = depth + (continentalness * continentalness) * scale;
+
+    return @intFromFloat(@max(1.0, height));
 }
 
 pub const Noise = struct {

@@ -49,9 +49,11 @@ pub const ChunkPos = struct {
     z: i64,
 };
 
+
+// https://minecraft.fandom.com/wiki/Ocean
 pub const GenerationSettings = struct {
     seed: ?u64 = null,
-    sea_level: usize = 50,
+    sea_level: usize = 62,
 };
 
 allocator: Allocator,
