@@ -75,6 +75,7 @@ pub const RenderPass = struct {
     draw_calls: std.ArrayListUnmanaged(DrawCall),
 
     hooks: std.ArrayListUnmanaged(Hook) = .empty,
+    imgui_hooks: std.ArrayListUnmanaged(Hook) = .empty,
 
     pub const Hook = *const fn (self: *RenderPass) void;
 
@@ -96,6 +97,10 @@ pub const RenderPass = struct {
 
     pub fn addHook(self: *RenderPass, hook: Hook) void {
         self.hooks.append(self.allocator, hook) catch unreachable;
+    }
+
+    pub fn addImguiHook(self: *RenderPass, hook: Hook) void {
+        self.imgui_hooks.append(self.allocator, hook) catch unreachable;
     }
 
     pub fn reset(self: *RenderPass) void {

@@ -495,16 +495,22 @@ pub const VulkanRenderer = struct {
             cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
         }
 
-        dcimgui.cImGui_ImplSDL3_NewFrame();
-        dcimgui.cImGui_ImplVulkan_NewFrame();
-        dcimgui.ImGui_NewFrame();
-
         for (pass.hooks.items) |hook| {
             hook(pass);
         }
 
-        dcimgui.ImGui_Render();
-        dcimgui.cImGui_ImplVulkan_RenderDrawData(dcimgui.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
+        if (pass.imgui_hooks.items.len > 0) {
+            dcimgui.cImGui_ImplSDL3_NewFrame();
+            dcimgui.cImGui_ImplVulkan_NewFrame();
+            dcimgui.ImGui_NewFrame();
+
+            for (pass.imgui_hooks.items) |hook| {
+                hook(pass);
+            }
+
+            dcimgui.ImGui_Render();
+            dcimgui.cImGui_ImplVulkan_RenderDrawData(dcimgui.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
+        }
 
         cb.endRenderPass();
     }

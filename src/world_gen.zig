@@ -70,7 +70,10 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             const hum_level: f32 = @as(f32, @floatFromInt(getHumidityLevel(noise.humidity))) / 5.0;
             hum_pixels[x + z * (width * 16)] = @intFromFloat(hum_level * 255);
 
-            const c_level = @as(f32, @floatFromInt(@intFromEnum(getContinentalnessLevel(noise.continentalness)))) / 6.0;
+            // const c_level = @as(f32, @floatFromInt(@intFromEnum(getContinentalnessLevel(noise.continentalness)))) / 6.0;
+            // c_pixels[x + z * (width * 16)] = @intFromFloat(c_level * 255);
+
+            const c_level = (noise.continentalness + 1) / 2;
             c_pixels[x + z * (width * 16)] = @intFromFloat(c_level * 255);
 
             const erosion_level: f32 = @as(f32, @floatFromInt(getErosionLevel(noise.erosion))) / 6.0;
@@ -79,7 +82,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             w_pixels[x + z * (width * 16)] = @intFromFloat((noise.weirdness + 1) / 2 * 255);
             pv_pixels[x + z * (width * 16)] = @intFromFloat((noise.peaks_and_valleys + 1) / 2 * 255);
 
-            h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@intCast(x), @intCast(z)));
+            h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@floatFromInt(x), @floatFromInt(z), @floatFromInt(settings.sea_level)));
 
             const biome = getBiome(noise);
             biome_pixels[x + z * (width * 16)] = biome.getColor();
@@ -136,7 +139,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
     try rdr().imageUpdate(h_image_rid, std.mem.sliceAsBytes(&h_pixels), 0, 0);
     try rdr().imageSetLayout(h_image_rid, .shader_read_only_optimal);
 
-    @import("root").render_pass.addHook(&debugHook);
+    @import("root").render_pass.addImguiHook(&debugHook);
 
     return world;
 }
@@ -172,6 +175,12 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
     dcimgui.ImGui_Image(h_imgui_id, .{ .x = 100, .y = 100 });
 }
 
+const dirt = 1;
+const grass = 2;
+const water = 3;
+const stone = 4;
+const sand = 5;
+
 pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
@@ -183,23 +192,33 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
             const noise = getNoise(fx, fz);
             const biome = getBiome(noise);
 
-            const height = generateHeight(chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
+            const height = generateHeight(fx, fz, @floatFromInt(settings.sea_level));
 
             // TODO: Maybe use the noise called by generateHeight) so noise are not called twice ?.
 
-            for (0..height) |y| {
-                switch (biome) {
-                    .mountains, .cold_mountains => if (y < height / 2) chunk.setBlockState(x, y, z, .{ .id = 1 }) else chunk.setBlockState(x, y, z, .{ .id = 4 }),
-                    .river => chunk.setBlockState(x, y, z, .{ .id = 5 }),
-                    else => if (y == height - 1) chunk.setBlockState(x, y, z, .{ .id = 2 }) else chunk.setBlockState(x, y, z, .{ .id = 1 }),
-                }
+            switch (biome) {
+                .river => for (0..height) |y| chunk.setBlockState(x, y, z, .{ .id = sand }),
+                .mountains, .cold_mountains => {
+                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
+                    for (height - 3..height - 1) |y| chunk.setBlockState(x, y, z, .{ .id = dirt });
+                    chunk.setBlockState(x, height, z, .{ .id = grass });
+                },
+                .cold_ocean, .ocean, .deep_ocean => {
+                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
+                    for (height - 3..height) |y| chunk.setBlockState(x, y, z, .{ .id = sand });
+                },
+                .plains => {
+                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
+                    for (height - 3..height) |y| chunk.setBlockState(x, y, z, .{ .id = dirt });
+                    chunk.setBlockState(x, height, z, .{ .id = grass });
+                },
             }
 
-            if (height < settings.sea_level) {
-                for (height..settings.sea_level) |y| {
-                    chunk.setBlockState(x, y, z, .{ .id = 3 });
-                }
-            }
+            // if (height < settings.sea_level) {
+            //     for (height..settings.sea_level) |y| {
+            //         chunk.setBlockState(x, y, z, .{ .id = water });
+            //     }
+            // }
         }
     }
 
@@ -210,16 +229,16 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
 // https://minecraft.wiki/w/World_generation
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
 
-pub fn generateHeight(x: isize, z: isize) usize {
-    const fx: f32 = @floatFromInt(x);
-    const fz: f32 = @floatFromInt(z);
-
-    const noise = getNoise(fx, fz);
+pub fn generateHeight(x: f32, z: f32, seal_level: f32) usize {
+    const noise = getNoise(x, z);
     const continentalness = (noise.continentalness + 1.0) / 2.0;
-    const pv = (noise.peaks_and_valleys + 1.0) / 2.0;
+    // const pv = (noise.peaks_and_valleys + 1.0) / 2.0;
 
-    const v = math.noise.fractalNoise(4, fx * 0.02, fz * 0.02);
-    const height = 61.0 + (v + 1.0) / 2.0 * 100.0 * continentalness * continentalness * pv;
+    const sea_floor = seal_level - 20.0;
+    const max_terrain_height = seal_level + 20.0;
+    const average_terrain_height = sea_floor + (max_terrain_height - seal_level) * continentalness;
+
+    const height = average_terrain_height;
 
     return @intFromFloat(@max(1.0, height));
 }
