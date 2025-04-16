@@ -1,4 +1,8 @@
 const zm = @import("zmath");
+const noise = @import("math/noise.zig");
+
+pub const SimplexNoiseWithOptions = noise.SimplexNoiseWithOptions;
+pub const SimplexNoise = noise.SimplexNoiseWithOptions(f32);
 
 pub const Ray = struct {
     from: zm.Vec,

@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
 const Ray = @import("../math.zig").Ray;
-const SimplexNoise = @import("../math/SimplexNoise.zig");
+const SimplexNoise = @import("../math.zig").SimplexNoiseWithOptions(f32);
 
 const world_directory: []const u8 = "user_data/worlds";
 
