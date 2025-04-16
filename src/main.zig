@@ -144,6 +144,30 @@ pub fn mainDesktop() !void {
         } } },
     }, .{});
 
+    try registry.registerBlock(.{
+        .name = "stone",
+        .visual = .{ .cube = .{ .textures = .{
+            "assets/textures/Stone.png",
+            "assets/textures/Stone.png",
+            "assets/textures/Stone.png",
+            "assets/textures/Stone.png",
+            "assets/textures/Stone.png",
+            "assets/textures/Stone.png",
+        } } },
+    }, .{});
+
+    try registry.registerBlock(.{
+        .name = "sand",
+        .visual = .{ .cube = .{ .textures = .{
+            "assets/textures/Sand.png",
+            "assets/textures/Sand.png",
+            "assets/textures/Sand.png",
+            "assets/textures/Sand.png",
+            "assets/textures/Sand.png",
+            "assets/textures/Sand.png",
+        } } },
+    }, .{});
+
     try registry.lock();
 
     material = try Material.init(registry.image_array.?, pipeline);

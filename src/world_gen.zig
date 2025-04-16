@@ -177,13 +177,21 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
 
     for (0..16) |x| {
         for (0..16) |z| {
+            const fx: f32 = @floatFromInt(chunk_x * 16 + @as(isize, @intCast(x)));
+            const fz: f32 = @floatFromInt(chunk_z * 16 + @as(isize, @intCast(z)));
+
+            const noise = getNoise(fx, fz);
+            const biome = getBiome(noise);
+
             const height = generateHeight(chunk_x * 16 + @as(isize, @intCast(x)), chunk_z * 16 + @as(isize, @intCast(z)));
 
-            for (0..height) |y| {
-                chunk.setBlockState(x, y, z, .{ .id = 1 });
+            // TODO: Maybe use the noise called by generateHeight) so noise are not called twice ?.
 
-                if (y == height - 1) {
-                    chunk.setBlockState(x, y, z, .{ .id = 2 });
+            for (0..height) |y| {
+                switch (biome) {
+                    .mountains, .cold_mountains => if (y < height / 2) chunk.setBlockState(x, y, z, .{ .id = 1 }) else chunk.setBlockState(x, y, z, .{ .id = 4 }),
+                    .river => chunk.setBlockState(x, y, z, .{ .id = 5 }),
+                    else => if (y == height - 1) chunk.setBlockState(x, y, z, .{ .id = 2 }) else chunk.setBlockState(x, y, z, .{ .id = 1 }),
                 }
             }
 
