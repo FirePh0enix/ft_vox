@@ -137,6 +137,12 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("zigimg", zigimg.module("zigimg"));
 
+    const argzon = b.dependency("argzon", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("argzon", argzon.module("argzon"));
+
     // Compile shaders to SPIR-V
     const glslc = b.dependency("shader_compiler", .{
         .target = ResolvedTarget{ .query = .{}, .result = builtin.target },

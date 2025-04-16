@@ -6,6 +6,7 @@ const zm = @import("zmath");
 const input = @import("input.zig");
 const world_gen = @import("world_gen.zig");
 const dcimgui = @import("dcimgui");
+const argzon = @import("argzon");
 
 const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
@@ -35,6 +36,30 @@ pub const allocator: std.mem.Allocator = tracking_allocator.allocator();
 
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
+const cli = .{
+    .name = .ft_vox,
+    .description = "",
+    .options = .{
+        .{
+            .long = "seed",
+            .description = "The seed used by world generation",
+            .type = "u64",
+        },
+        .{
+            .long = "save-name",
+            .description = "The name of the save to load",
+            .type = "s",
+        },
+    },
+    .flags = .{
+        .{
+            .long = "disable-save",
+            .descripton = "Disable world save",
+        },
+    },
+};
+const Args = argzon.Args(cli, .{});
+
 var camera = Camera{
     .position = .{ 10.0, 100.0, -10.0, 0.0 },
     .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
@@ -57,6 +82,8 @@ pub var shadow_graph_pass: Graph.RenderPass = undefined;
 var shadow_pass: ShadowPass = undefined;
 
 pub fn mainDesktop() !void {
+    const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
+
     var window = try Window.create(.{
         .title = "ft_vox",
         .width = 1280,
@@ -184,10 +211,9 @@ pub fn mainDesktop() !void {
     material = try Material.init(registry.image_array.?, pipeline);
 
     the_world = try world_gen.generateWorld(allocator, &registry, .{
-        .seed = 0,
+        .seed = args.options.seed,
     });
     try the_world.startWorkers(&registry);
-    // try world.save("new-world");
 
     defer the_world.deinit();
 
