@@ -1,5 +1,6 @@
-// https://github.com/SRombauts/SimplexNoise/blob/master/src/SimplexNoise.cpp
 const std = @import("std");
+
+const Self = @This();
 
 const default_perm: [256]u8 = .{
     151, 160, 137, 91,  90,  15,  131, 13,  201, 95,  96,  53,  194, 233, 7,   225, 140, 36,  103, 30,  69,  142,
@@ -16,20 +17,27 @@ const default_perm: [256]u8 = .{
     67,  29,  24,  72,  243, 141, 128, 195, 78,  66,  215, 61,  156, 180,
 };
 
-var perm: [256]u8 = default_perm;
+perm: [256]u8 = default_perm,
 
-pub fn seed(seed_value: u64) void {
-    var rng = std.Random.DefaultPrng.init(seed_value);
-
-    for (0..256) |index| {
-        const v: u8 = @truncate(rng.next());
-        perm[index] = v;
-    }
+pub fn initWithSeed(seed: u64) Self {
+    return .{
+        .perm = generateHashTable(seed),
+    };
 }
 
-inline fn hash(v: i32) i32 {
+fn generateHashTable(seed: u64) [256]u8 {
+    var prng = std.Random.DefaultPrng.init(seed);
+    const random = prng.random();
+
+    var perm = default_perm;
+    random.shuffle(u8, &perm);
+
+    return perm;
+}
+
+inline fn hash(self: *const Self, v: i32) i32 {
     @setRuntimeSafety(false);
-    return @intCast(perm[@as(u8, @truncate(@as(u32, @bitCast(v))))]);
+    return @intCast(self.perm[@as(u8, @truncate(@as(u32, @bitCast(v))))]);
 }
 
 fn grad2D(hash_value: i32, x: f32, y: f32) f32 {
@@ -39,7 +47,7 @@ fn grad2D(hash_value: i32, x: f32, y: f32) f32 {
     return (if (h & 1 == 1) -u else u) + (if (h & 2 == 2) -2.0 * v else 2.0 * v);
 }
 
-pub fn simplex2D(x: f32, y: f32) f32 {
+pub fn sample2D(self: *const Self, x: f32, y: f32) f32 {
     var n0: f32 = 0.0;
     var n1: f32 = 0.0;
     var n2: f32 = 0.0;
@@ -74,9 +82,9 @@ pub fn simplex2D(x: f32, y: f32) f32 {
     const x2 = x0 - 1.0 + 2.0 * G2;
     const y2 = y0 - 1.0 + 2.0 * G2;
 
-    const gi0 = hash(@as(i32, @intFromFloat(i)) + hash(@intFromFloat(j)));
-    const gi1 = hash(@as(i32, @intFromFloat(i + @"i1")) + hash(@intFromFloat(j + j1)));
-    const gi2 = hash(@as(i32, @intFromFloat(i + 1)) + hash(@intFromFloat(j + 1)));
+    const gi0 = self.hash(@as(i32, @intFromFloat(i)) + self.hash(@intFromFloat(j)));
+    const gi1 = self.hash(@as(i32, @intFromFloat(i + @"i1")) + self.hash(@intFromFloat(j + j1)));
+    const gi2 = self.hash(@as(i32, @intFromFloat(i + 1)) + self.hash(@intFromFloat(j + 1)));
 
     var t0 = 0.5 - x0 * x0 - y0 * y0;
     if (t0 < 0.0) {
@@ -113,7 +121,7 @@ fn grad3D(hash_value: i32, x: f32, y: f32, z: f32) f32 {
     return if ((h & 1) == 1) -u else u + if ((h & 2) > 0) -v else v;
 }
 
-pub fn simplex3D(x: f32, y: f32, z: f32) f32 {
+pub fn sample3D(self: *const Self, x: f32, y: f32, z: f32) f32 {
     var n0: f32 = 0.0;
     var n1: f32 = 0.0;
     var n2: f32 = 0.0;
@@ -202,10 +210,10 @@ pub fn simplex3D(x: f32, y: f32, z: f32) f32 {
     const y3: f32 = y0 - 1.0 + 3.0 * G3;
     const z3: f32 = z0 - 1.0 + 3.0 * G3;
 
-    const gi0: i32 = hash(@as(i32, @intFromFloat(i)) + hash(intFromFloat(i32, j) + hash(@intFromFloat(k))));
-    const gi1: i32 = hash(@as(i32, @intFromFloat(i + @"i1")) + hash(intFromFloat(i32, j + j1) + hash(@intFromFloat(k + k1))));
-    const gi2: i32 = hash(@as(i32, @intFromFloat(i + @"i2")) + hash(@as(i32, @intFromFloat(j + j2)) + hash(@intFromFloat(k + k2))));
-    const gi3: i32 = hash(@as(i32, @intFromFloat(i + 1)) + hash(@as(i32, @intFromFloat(j + 1)) + hash(intFromFloat(i32, k) + 1)));
+    const gi0: i32 = self.hash(@as(i32, @intFromFloat(i)) + self.hash(@as(i32, @intFromFloat(j)) + self.hash(@intFromFloat(k))));
+    const gi1: i32 = self.hash(@as(i32, @intFromFloat(i + @"i1")) + self.hash(@as(i32, @intFromFloat(j + j1)) + self.hash(@intFromFloat(k + k1))));
+    const gi2: i32 = self.hash(@as(i32, @intFromFloat(i + @"i2")) + self.hash(@as(i32, @intFromFloat(j + j2)) + self.hash(@intFromFloat(k + k2))));
+    const gi3: i32 = self.hash(@as(i32, @intFromFloat(i + 1)) + self.hash(@as(i32, @intFromFloat(j + 1)) + self.hash(@as(i32, @intFromFloat(k)) + 1)));
 
     var t0: f32 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
     if (t0 < 0) {
@@ -239,11 +247,7 @@ pub fn simplex3D(x: f32, y: f32, z: f32) f32 {
     return 32.0 * (n0 + n1 + n2 + n3);
 }
 
-fn intFromFloat(comptime T: type, f: anytype) T {
-    return @intFromFloat(f);
-}
-
-pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
+pub fn fractal2D(self: *const Self, octaves: usize, x: f32, y: f32) f32 {
     const frequency: f32 = 1.0;
     const amplitude: f32 = 1.0;
     const lacunarity: f32 = 2.0;
@@ -256,7 +260,7 @@ pub fn fractalNoise(octaves: usize, x: f32, y: f32) f32 {
 
     for (0..octaves) |i| {
         _ = i;
-        output += a * simplex2D(x * f, y * f);
+        output += a * self.sample2D(x * f, y * f);
         denom += a;
 
         f *= lacunarity;

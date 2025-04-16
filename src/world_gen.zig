@@ -56,7 +56,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             const fx: f32 = @floatFromInt(x);
             const fz: f32 = @floatFromInt(z);
 
-            const noise = getNoise(fx, fz);
+            const noise = getNoise(&world, fx, fz);
 
             const temp_level = getTemperatureLevel(noise.temperature);
             temp_pixels[x + z * (width * 16)] = temp_level.getColor();
@@ -142,7 +142,7 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
     const x = -render_pass.view_matrix[0][3];
     const z = -render_pass.view_matrix[2][3];
 
-    const noise = getNoise(x, z);
+    const noise = getNoise(&@import("root").the_world, x, z);
 
     dcimgui.ImGui_Text("t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n", noise.temperature, noise.humidity, noise.continentalness, noise.erosion);
     dcimgui.ImGui_Text("w = %.2f | pv = %.2f | as = ??? | n = ???\n", noise.weirdness, noise.peaks_and_valleys);
@@ -176,7 +176,7 @@ const water = 3;
 const stone = 4;
 const sand = 5;
 
-pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
+pub fn generateChunk(world: *const World, settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
     for (0..16) |x| {
@@ -184,14 +184,14 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
             const fx: f32 = @floatFromInt(chunk_x * 16 + @as(isize, @intCast(x)));
             const fz: f32 = @floatFromInt(chunk_z * 16 + @as(isize, @intCast(z)));
 
-            const baseLevel: f32 = getSplineLevel(fx, fz);
-            const squishFactor: f32 = getSplineFactor(fx, fz);
+            const baseLevel: f32 = getSplineLevel(world, fx, fz);
+            const squishFactor: f32 = getSplineFactor(world, fx, fz);
 
             _ = settings;
 
             for (0..64) |y| {
                 const densityMod: f32 = (baseLevel - @as(f32, @floatFromInt(y))) * squishFactor;
-                const density: f32 = math.noise.simplex3D(fx, @floatFromInt(y), fz);
+                const density: f32 = world.noise.sample3D(fx, @floatFromInt(y), fz);
 
                 if (density + densityMod > 0.0) {
                     chunk.setBlockState(x, y, z, .{ .id = stone });
@@ -215,10 +215,10 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
 // https://minecraft.wiki/w/World_generation
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
 
-pub fn getSplineLevel(x: f32, z: f32) f32 {
+pub fn getSplineLevel(world: *const World, x: f32, z: f32) f32 {
     const baseLevelHeight: u32 = 25;
 
-    const noise = getNoise(x, z);
+    const noise = getNoise(world, x, z);
 
     const c_height = calculateContHeight(noise.continentalness);
     const e_height = calculateEroHeight(noise.erosion);
@@ -269,12 +269,12 @@ fn calculatePeaksValleyHeight(cont: f32) f32 {
     return 12.5;
 }
 
-pub fn getSplineFactor(x: f32, z: f32) f32 {
+pub fn getSplineFactor(world: *const World, x: f32, z: f32) f32 {
     const factorWeight = 0.1;
 
-    const c = getContinentalness(x, z);
-    const e = getErosion(x, z);
-    const pv = getWeirdness(x, z);
+    const c = getContinentalness(world, x, z);
+    const e = getErosion(world, x, z);
+    const pv = getWeirdness(world, x, z);
 
     return factorWeight + c + e + pv;
 }
@@ -289,21 +289,21 @@ pub const Noise = struct {
     peaks_and_valleys: f32,
 };
 
-pub fn getNoise(x: f32, z: f32) Noise {
-    const w = getWeirdness(x, z);
+pub fn getNoise(world: *const World, x: f32, z: f32) Noise {
+    const w = getWeirdness(world, x, z);
 
     return .{
-        .temperature = getTemperature(x, z),
-        .humidity = getHumidity(x, z),
-        .continentalness = getContinentalness(x, z),
-        .erosion = getErosion(x, z),
+        .temperature = getTemperature(world, x, z),
+        .humidity = getHumidity(world, x, z),
+        .continentalness = getContinentalness(world, x, z),
+        .erosion = getErosion(world, x, z),
         .weirdness = w,
         .peaks_and_valleys = 1.0 - @abs(3.0 * @abs(w) - 2.0),
     };
 }
 
-fn getContinentalness(x: f32, z: f32) f32 {
-    return math.noise.fractalNoise(4, x / 400.0, z / 400.0);
+fn getContinentalness(world: *const World, x: f32, z: f32) f32 {
+    return world.noise.fractal2D(4, x / 400.0, z / 400.0);
 }
 
 pub const Continentalness = enum(u32) {
@@ -331,8 +331,8 @@ pub fn getContinentalnessLevel(c: f32) Continentalness {
     }
 }
 
-fn getErosion(x: f32, z: f32) f32 {
-    return math.noise.fractalNoise(2, x / 600.0, z / 600.0);
+fn getErosion(world: *const World, x: f32, z: f32) f32 {
+    return world.noise.fractal2D(2, x / 600.0, z / 600.0);
 }
 
 pub fn getErosionLevel(e: f32) u32 {
@@ -355,8 +355,8 @@ pub fn getErosionLevel(e: f32) u32 {
     }
 }
 
-fn getWeirdness(x: f32, z: f32) f32 {
-    return math.noise.fractalNoise(3, x / 200.0, z / 200.0);
+fn getWeirdness(world: *const World, x: f32, z: f32) f32 {
+    return world.noise.fractal2D(3, x / 200.0, z / 200.0);
 }
 
 pub const PeakValleys = enum(u32) {
@@ -381,8 +381,8 @@ pub fn getPeaksValleysLevel(pv: f32) PeakValleys {
     }
 }
 
-fn getHumidity(x: f32, z: f32) f32 {
-    return math.noise.fractalNoise(2, x / 350.0, z / 350.0);
+fn getHumidity(world: *const World, x: f32, z: f32) f32 {
+    return world.noise.fractal2D(2, x / 350.0, z / 350.0);
 }
 
 pub fn getHumidityLevel(hum: f32) u32 {
@@ -401,8 +401,8 @@ pub fn getHumidityLevel(hum: f32) u32 {
     }
 }
 
-fn getTemperature(x: f32, z: f32) f32 {
-    return math.noise.fractalNoise(1, x / 300.0, z / 300.0);
+fn getTemperature(world: *const World, x: f32, z: f32) f32 {
+    return world.noise.fractal2D(1, x / 300.0, z / 300.0);
 }
 
 pub fn getTemperatureLevel(temp: f32) Temperature {

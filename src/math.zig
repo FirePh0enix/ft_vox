@@ -1,7 +1,5 @@
 const zm = @import("zmath");
 
-pub const noise = @import("math/noise.zig");
-
 pub const Ray = struct {
     from: zm.Vec,
     to: zm.Vec,

@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
 const Ray = @import("../math.zig").Ray;
+const SimplexNoise = @import("../math/SimplexNoise.zig");
 
 const world_directory: []const u8 = "user_data/worlds";
 
@@ -56,6 +57,7 @@ allocator: Allocator,
 
 seed: u64,
 generation_settings: GenerationSettings,
+noise: SimplexNoise,
 
 /// Chunks loaded in memory that are updated and rendered to the player.
 chunks: std.AutoHashMapUnmanaged(ChunkPos, Chunk) = .empty,
@@ -74,6 +76,7 @@ pub fn initEmpty(
         .allocator = allocator,
         .seed = seed,
         .generation_settings = settings,
+        .noise = SimplexNoise.initWithSeed(seed),
     };
 }
 
@@ -188,7 +191,7 @@ const ChunkLoadWorker = struct {
                 }
 
                 // TODO: How should chunk generation/load errors should be threated ?
-                var chunk = world_gen.generateChunk(world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
+                var chunk = world_gen.generateChunk(world, world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
                 chunk.computeVisibility(null, null, null, null);
                 chunk.rebuildInstanceBuffer(registry) catch unreachable;
 
