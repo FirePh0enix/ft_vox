@@ -76,7 +76,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             w_pixels[x + z * (width * 16)] = @intFromFloat((noise.weirdness + 1) / 2 * 255);
             pv_pixels[x + z * (width * 16)] = @intFromFloat((noise.peaks_and_valleys + 1) / 2 * 255);
 
-            h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@floatFromInt(x), @floatFromInt(z), @floatFromInt(settings.sea_level)));
+            // h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@floatFromInt(x), @floatFromInt(z), @floatFromInt(settings.sea_level)));
 
             const biome = getBiome(noise);
             biome_pixels[x + z * (width * 16)] = biome.getColor();
@@ -169,6 +169,7 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
     dcimgui.ImGui_Image(h_imgui_id, .{ .x = 100, .y = 100 });
 }
 
+const air = 0;
 const dirt = 1;
 const grass = 2;
 const water = 3;
@@ -183,29 +184,20 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
             const fx: f32 = @floatFromInt(chunk_x * 16 + @as(isize, @intCast(x)));
             const fz: f32 = @floatFromInt(chunk_z * 16 + @as(isize, @intCast(z)));
 
-            const noise = getNoise(fx, fz);
-            const biome = getBiome(noise);
+            const baseLevel: f32 = getSplineLevel(fx, fz);
+            const squishFactor: f32 = getSplineFactor(fx, fz);
 
-            const height = generateHeight(fx, fz, @floatFromInt(settings.sea_level));
+            _ = settings;
 
-            // TODO: Maybe use the noise called by generateHeight) so noise are not called twice ?.
+            for (0..64) |y| {
+                const densityMod: f32 = (baseLevel - @as(f32, @floatFromInt(y))) * squishFactor;
+                const density: f32 = math.noise.simplex3D(fx, @floatFromInt(y), fz);
 
-            switch (biome) {
-                .river => for (0..height) |y| chunk.setBlockState(x, y, z, .{ .id = sand }),
-                .mountains, .cold_mountains => {
-                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
-                    for (height - 3..height - 1) |y| chunk.setBlockState(x, y, z, .{ .id = dirt });
-                    chunk.setBlockState(x, height, z, .{ .id = grass });
-                },
-                .cold_ocean, .ocean, .deep_ocean => {
-                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
-                    for (height - 3..height) |y| chunk.setBlockState(x, y, z, .{ .id = sand });
-                },
-                .plains => {
-                    for (0..height - 3) |y| chunk.setBlockState(x, y, z, .{ .id = stone });
-                    for (height - 3..height) |y| chunk.setBlockState(x, y, z, .{ .id = dirt });
-                    chunk.setBlockState(x, height, z, .{ .id = grass });
-                },
+                if (density + densityMod > 0.0) {
+                    chunk.setBlockState(x, y, z, .{ .id = stone });
+                } else {
+                    chunk.setBlockState(x, y, z, .{ .id = grass });
+                }
             }
 
             // if (height < settings.sea_level) {
@@ -223,18 +215,68 @@ pub fn generateChunk(settings: World.GenerationSettings, chunk_x: isize, chunk_z
 // https://minecraft.wiki/w/World_generation
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
 
-pub fn generateHeight(x: f32, z: f32, seal_level: f32) usize {
+pub fn getSplineLevel(x: f32, z: f32) f32 {
+    const baseLevelHeight: u32 = 25;
+
     const noise = getNoise(x, z);
-    const continentalness = (noise.continentalness + 1.0) / 2.0;
-    // const pv = (noise.peaks_and_valleys + 1.0) / 2.0;
 
-    const sea_floor = seal_level - 20.0;
-    const max_terrain_height = seal_level + 20.0;
-    const average_terrain_height = sea_floor + (max_terrain_height - seal_level) * continentalness;
+    const c_height = calculateContHeight(noise.continentalness);
+    const e_height = calculateEroHeight(noise.erosion);
+    const pv_height = calculatePeaksValleyHeight(noise.peaks_and_valleys);
 
-    const height = average_terrain_height;
+    return c_height + e_height + pv_height + baseLevelHeight;
+}
 
-    return @intFromFloat(@max(1.0, height));
+fn calculateContHeight(cont: f32) f32 {
+    if (cont >= -1 and cont < 0.3) {
+        return 50.0;
+    } else if (cont >= 0.3 and cont < 0.4) {
+        const t = (cont - 0.3) / 0.1;
+        return 50.0 + t * 50.0;
+    } else if (cont >= 0.4 and cont <= 1.0) {
+        const t = (cont - 0.4) / 0.6;
+
+        return 100.0 + t * 50.0;
+    }
+    return 50.0;
+}
+
+fn calculateEroHeight(cont: f32) f32 {
+    if (cont >= -1 and cont < 0.3) {
+        return 25.0;
+    } else if (cont >= 0.3 and cont < 0.4) {
+        const t = (cont - 0.3) / 0.1;
+        return 25.0 + t * 25.0;
+    } else if (cont >= 0.4 and cont <= 1.0) {
+        const t = (cont - 0.4) / 0.6;
+
+        return 50.0 + t * 25.0;
+    }
+    return 25.0;
+}
+
+fn calculatePeaksValleyHeight(cont: f32) f32 {
+    if (cont >= -1 and cont < 0.3) {
+        return 12.5;
+    } else if (cont >= 0.3 and cont < 0.4) {
+        const t = (cont - 0.3) / 0.1;
+        return 12.5 + t * 12.5;
+    } else if (cont >= 0.4 and cont <= 1.0) {
+        const t = (cont - 0.4) / 0.6;
+
+        return 25.0 + t * 12.5;
+    }
+    return 12.5;
+}
+
+pub fn getSplineFactor(x: f32, z: f32) f32 {
+    const factorWeight = 0.1;
+
+    const c = getContinentalness(x, z);
+    const e = getErosion(x, z);
+    const pv = getWeirdness(x, z);
+
+    return factorWeight + c + e + pv;
 }
 
 pub const Noise = struct {
