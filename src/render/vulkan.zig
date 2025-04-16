@@ -1017,21 +1017,19 @@ pub const VulkanRenderer = struct {
     // Pipeline
     //
 
-    const shaders = @import("shaders");
-
-    const basic_cube_vert align(@alignOf(u32)) = shaders.basic_cube_vert;
-    const basic_cube_frag align(@alignOf(u32)) = shaders.basic_cube_frag;
+    const basic_cube_vert = @import("../assets.zig").getShaderDataComptime("basic_cube.vert.spv");
+    const basic_cube_frag = @import("../assets.zig").getShaderDataComptime("basic_cube.frag.spv");
 
     pub fn pipelineCreateGraphics(self: *VulkanRenderer, options: Renderer.PipelineGraphicsOptions) Renderer.PipelineCreateError!RID {
         const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
             .{
                 .stage = .{ .vertex_bit = true },
-                .module = self.createShaderModule(&basic_cube_vert) catch return error.ShaderCompilationFailed,
+                .module = self.createShaderModule(basic_cube_vert) catch return error.ShaderCompilationFailed,
                 .p_name = "main",
             },
             .{
                 .stage = .{ .fragment_bit = true },
-                .module = self.createShaderModule(&basic_cube_frag) catch return error.ShaderCompilationFailed,
+                .module = self.createShaderModule(basic_cube_frag) catch return error.ShaderCompilationFailed,
                 .p_name = "main",
             },
         };

@@ -144,6 +144,8 @@ pub fn build(b: *Build) !void {
     exe.root_module.addImport("argzon", argzon.module("argzon"));
 
     // Compile shaders to SPIR-V
+    var spirv_files: std.ArrayList(CompileShader) = .init(b.allocator);
+
     const glslc = b.dependency("shader_compiler", .{
         .target = ResolvedTarget{ .query = .{}, .result = builtin.target },
         .optimize = optimize,
@@ -156,24 +158,17 @@ pub fn build(b: *Build) !void {
         "assets/shaders/basic_cube.frag",
     };
 
-    const shaders_mod = b.createModule(.{
-        .root_source_file = b.path("shaders.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     for (files) |file| {
-        const path = addCompileShader(b, glslc, exe, file, flags, optimize);
-        const name = b.dupe(std.fs.path.basename(file));
-
-        std.mem.replaceScalar(u8, name, '.', '_');
-
-        shaders_mod.addAnonymousImport(name, .{
-            .root_source_file = path,
-        });
+        const compile_shader = addCompileShader(b, glslc, file, flags, optimize);
+        spirv_files.append(compile_shader) catch unreachable;
     }
 
-    exe.root_module.addImport("shaders", shaders_mod);
+    // Embed all assets, with some of them transformed, into the executable.
+    var embedded_assets = addEmbeddedAssets(b, spirv_files.items);
+    for (spirv_files.items) |spirv_file| embedded_assets.step.dependOn(spirv_file.step);
+
+    exe.step.dependOn(embedded_assets.step);
+    exe.root_module.addImport("embeded_assets", embedded_assets.module);
 
     if (!target_is_emscripten) {
         b.installArtifact(exe);
@@ -280,14 +275,19 @@ pub fn build(b: *Build) !void {
     test_step.dependOn(&run_exe_unit_tests.step);
 }
 
+const CompileShader = struct {
+    path: LazyPath,
+    filename: []const u8,
+    step: *Step,
+};
+
 fn addCompileShader(
     b: *Build,
     glslc: *Step.Compile,
-    exe: *Step.Compile,
     path: []const u8,
     flags: []const []const u8,
     optimize: std.builtin.OptimizeMode,
-) LazyPath {
+) CompileShader {
     const cmd = b.addRunArtifact(glslc);
     cmd.addArgs(flags);
 
@@ -308,10 +308,61 @@ fn addCompileShader(
         }),
     }
 
+    const output_filename = std.mem.join(b.allocator, "", &.{ path, ".spv" }) catch @panic("OOM");
+
     cmd.addFileArg(b.path(path));
-    const output_file = cmd.addOutputFileArg(std.mem.join(b.allocator, "", &.{ path, ".spv" }) catch @panic("OOM"));
+    const output_file = cmd.addOutputFileArg(output_filename);
 
-    exe.step.dependOn(&cmd.step);
+    return .{
+        .path = output_file,
+        .filename = output_filename,
+        .step = &cmd.step,
+    };
+}
 
-    return output_file;
+const EmbeddedAssets = struct {
+    module: *Build.Module,
+    step: *Step,
+};
+
+fn addEmbeddedAssets(b: *Build, shaders: []const CompileShader) EmbeddedAssets {
+    const module = b.createModule(.{
+        .root_source_file = null,
+    });
+
+    const source: []const u8 = makes: {
+        var s: std.ArrayList(u8) = .init(b.allocator);
+
+        s.appendSlice("pub const embeded = .{\n") catch unreachable;
+
+        {
+            s.appendSlice("    .shaders = &.{\n") catch unreachable;
+
+            for (shaders) |shader| {
+                const name = std.fs.path.basename(shader.filename);
+
+                s.appendSlice(std.fmt.allocPrint(b.allocator, "        .{{ .name = \"{s}\", .data = @embedFile(\"{s}\") }},\n", .{ name, name }) catch unreachable) catch unreachable;
+
+                module.addAnonymousImport(name, .{
+                    .root_source_file = shader.path,
+                });
+            }
+
+            s.appendSlice("    },\n") catch unreachable;
+        }
+
+        s.appendSlice("};") catch unreachable;
+
+        break :makes s.toOwnedSlice() catch unreachable;
+    };
+
+    const write_files = b.addWriteFiles();
+    const embedded_assets = write_files.add("embedded_assets.zig", source);
+
+    module.root_source_file = embedded_assets;
+
+    return .{
+        .module = module,
+        .step = &write_files.step,
+    };
 }
