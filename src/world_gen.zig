@@ -33,7 +33,7 @@ var biome_imgui_id: c_ulonglong = undefined;
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
     const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
-    var world = World.initEmpty(allocator, seed, settings);
+    const world = World.initEmpty(allocator, seed, settings);
 
     const width = 22;
     const depth = 22;
@@ -41,12 +41,6 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
     // math.noise.seed(seed);
 
     _ = registry;
-
-    for (0..depth) |z| {
-        for (0..width) |x| {
-            try world.loadChunk(.{ .x = @intCast(x), .z = @intCast(z) });
-        }
-    }
 
     var temp_pixels: [width * 16 * depth * 16]u32 = undefined;
     var hum_pixels: [width * 16 * depth * 16]u8 = undefined;

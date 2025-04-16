@@ -47,6 +47,8 @@ var time_between_update: i64 = 1000000 / 60;
 var mesh: Mesh = undefined;
 var material: Material = undefined;
 
+pub var the_world: World = undefined;
+
 var graph: Graph = undefined;
 pub var render_pass: Graph.RenderPass = undefined;
 
@@ -172,18 +174,18 @@ pub fn mainDesktop() !void {
 
     material = try Material.init(registry.image_array.?, pipeline);
 
-    var world = try world_gen.generateWorld(allocator, &registry, .{
+    the_world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = 0,
     });
-    try world.startWorkers(&registry);
+    try the_world.startWorkers(&registry);
     // try world.save("new-world");
 
-    defer world.deinit();
+    defer the_world.deinit();
 
     input.init(&window);
 
     while (running) {
-        try update(&window, &world);
+        try update(&window, &the_world);
     }
 }
 
@@ -230,9 +232,9 @@ fn update(window: *Window, world: *World) !void {
         var chunk_iter = world.chunks.valueIterator();
 
         while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
-    }
 
-    try rdr().processGraph(&graph);
+        try rdr().processGraph(&graph);
+    }
 
     // const time_after = std.time.microTimestamp();
     // const elapsed = time_after - time_before;

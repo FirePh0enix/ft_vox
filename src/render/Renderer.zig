@@ -224,6 +224,7 @@ pub const VTable = struct {
 
     configure: *const fn (*anyopaque, options: ConfigureOptions) void,
     get_output_render_pass: *const fn (*anyopaque) RID,
+    wait_idle: *const fn (*anyopaque) void,
 
     //
     // Dear ImGUI integration
@@ -334,6 +335,10 @@ pub inline fn configure(self: *const Self, options: ConfigureOptions) ConfigureE
 
 pub inline fn getOutputRenderPass(self: *const Self) RID {
     return self.vtable.get_output_render_pass(self.ptr);
+}
+
+pub inline fn waitIdle(self: *const Self) void {
+    return self.vtable.wait_idle(self.ptr);
 }
 
 //

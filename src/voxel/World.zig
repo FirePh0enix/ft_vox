@@ -46,7 +46,6 @@ pub const ChunkPos = struct {
     z: i64,
 };
 
-
 // https://minecraft.fandom.com/wiki/Ocean
 pub const GenerationSettings = struct {
     seed: ?u64 = null,
@@ -64,6 +63,7 @@ chunks_lock: std.Thread.Mutex = .{},
 
 chunk_worker_state: std.atomic.Value(bool) = .init(false),
 chunk_load_worker: ChunkLoadWorker = .{},
+chunk_unload_worker: ChunkUnloadWorker = .{},
 
 pub fn initEmpty(
     allocator: Allocator,
@@ -80,6 +80,7 @@ pub fn initEmpty(
 pub fn startWorkers(self: *Self, registry: *const Registry) !void {
     self.chunk_worker_state.store(true, .release);
     self.chunk_load_worker.thread = try std.Thread.spawn(.{}, ChunkLoadWorker.worker, .{ &self.chunk_load_worker, self, registry });
+    self.chunk_unload_worker.thread = try std.Thread.spawn(.{}, ChunkUnloadWorker.worker, .{ &self.chunk_unload_worker, self, registry });
 }
 
 pub fn deinit(self: *Self) void {
@@ -179,6 +180,13 @@ const ChunkLoadWorker = struct {
             self.orders_mutex.unlock();
 
             if (chunk_pos) |pos| {
+                {
+                    world.chunks_lock.lock();
+                    defer world.chunks_lock.unlock();
+
+                    if (world.chunks.contains(pos)) continue;
+                }
+
                 // TODO: How should chunk generation/load errors should be threated ?
                 var chunk = world_gen.generateChunk(world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
                 chunk.computeVisibility(null, null, null, null);
@@ -192,6 +200,77 @@ const ChunkLoadWorker = struct {
         }
     }
 };
+
+/// Unload a chunk on a separate thread.
+pub fn unloadChunk(self: *Self, pos: ChunkPos) !void {
+    self.chunk_unload_worker.orders_mutex.lock();
+    defer self.chunk_unload_worker.orders_mutex.unlock();
+
+    try self.chunk_unload_worker.orders.append(self.allocator, pos);
+    self.chunk_unload_worker.sleep_semaphore.post();
+}
+
+const ChunkUnloadWorker = struct {
+    thread: ?std.Thread = null,
+    sleep_semaphore: std.Thread.Semaphore = .{},
+    orders_mutex: std.Thread.Mutex = .{},
+    orders: std.ArrayListUnmanaged(ChunkPos) = .empty,
+
+    fn worker(self: *ChunkUnloadWorker, world: *Self, registry: *const Registry) void {
+        _ = registry;
+
+        var remaining: usize = 0;
+
+        while (world.chunk_worker_state.load(.acquire)) {
+            if (remaining == 0) self.sleep_semaphore.wait();
+
+            self.orders_mutex.lock();
+            const chunk_pos = self.orders.pop();
+            remaining = self.orders.items.len;
+            self.orders_mutex.unlock();
+
+            if (chunk_pos) |pos| {
+                world.chunks_lock.lock();
+                defer world.chunks_lock.unlock();
+
+                const chunk = world.chunks.get(pos);
+
+                if (chunk) |c| {
+                    c.deinit();
+                    _ = world.chunks.remove(pos);
+                }
+            }
+        }
+    }
+};
+
+pub fn updateWorldAround(self: *Self, px: f32, pz: f32, render_distance: usize) !void {
+    const chunk_x = @as(i64, @intFromFloat(px / 16));
+    const chunk_z = @as(i64, @intFromFloat(pz / 16)) - 1;
+    const rd: i64 = @intCast(render_distance);
+
+    var x = -rd;
+    while (x < rd) : (x += 1) {
+        var z = -rd;
+        while (z < rd) : (z += 1) {
+            try self.loadChunk(.{ .x = chunk_x + x, .z = chunk_z + z });
+        }
+    }
+
+    const min_x = chunk_x - rd;
+    const max_x = chunk_x + rd;
+    const min_z = chunk_z - rd;
+    const max_z = chunk_z + rd;
+
+    self.chunks_lock.lock();
+    defer self.chunks_lock.unlock();
+
+    var chunk_iter = self.chunks.iterator();
+    while (chunk_iter.next()) |entry| {
+        if (entry.key_ptr.x < min_x or entry.key_ptr.x > max_x or entry.key_ptr.z < min_z or entry.key_ptr.z > max_z)
+            try self.unloadChunk(entry.key_ptr.*);
+    }
+}
 
 pub const ConfigZon = struct {
     seed: u64,

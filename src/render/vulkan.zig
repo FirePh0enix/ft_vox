@@ -99,6 +99,7 @@ pub const VulkanRenderer = struct {
         .destroy = @ptrCast(&destroy),
         .configure = @ptrCast(&configure),
         .get_output_render_pass = @ptrCast(&getOutputRenderPass),
+        .wait_idle = @ptrCast(&waitIdle),
 
         .imgui_init = @ptrCast(&imguiInit),
         .imgui_add_texture = @ptrCast(&imguiAddTexture),
@@ -629,6 +630,13 @@ pub const VulkanRenderer = struct {
 
     pub fn getOutputRenderPass(self: *VulkanRenderer) RID {
         return self.output_render_pass;
+    }
+
+    pub fn waitIdle(self: *VulkanRenderer) void {
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
+        self.graphics_queue.waitIdle() catch {};
     }
 
     pub fn imguiInit(self: *VulkanRenderer, window: *const Window, render_pass_rid: RID) Renderer.ImGuiInitError!void {
