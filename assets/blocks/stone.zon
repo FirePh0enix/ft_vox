@@ -1,0 +1,15 @@
+.{
+    .name = "stone",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "assets/textures/Stone.png",
+                "assets/textures/Stone.png",
+                "assets/textures/Stone.png",
+                "assets/textures/Stone.png",
+                "assets/textures/Stone.png",
+                "assets/textures/Stone.png",
+            },
+        },
+    },
+}

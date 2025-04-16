@@ -1,0 +1,15 @@
+.{
+    .name = "grass",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "assets/textures/Grass_Side.png",
+                "assets/textures/Grass_Side.png",
+                "assets/textures/Grass_Side.png",
+                "assets/textures/Grass_Side.png",
+                "assets/textures/Grass_Top.png",
+                "assets/textures/Dirt.png",
+            },
+        },
+    },
+}

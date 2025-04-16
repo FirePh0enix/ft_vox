@@ -47,11 +47,7 @@ pub fn lock(self: *Self) !void {
     self.images.deinit(self.allocator);
 }
 
-pub fn registerBlock(
-    self: *Self,
-    block_config: BlockZon,
-    vtable: Block.VTable,
-) !void {
+pub fn registerBlock(self: *Self, block_config: BlockZon, vtable: Block.VTable) !void {
     const visual: Block.Visual = switch (block_config.visual) {
         .cube => |cube| .{
             .cube = .{
@@ -76,6 +72,22 @@ pub fn registerBlock(
 
     try self.block_ids.put(self.allocator, block_config.name, id + 1);
     try self.blocks.append(self.allocator, block);
+}
+
+/// Register a block from a zon file located in `assets/blocks/`.
+pub fn registerBlockFromFile(self: *Self, name: []const u8, vtable: Block.VTable) !void {
+    var path_buf: [128]u8 = undefined;
+
+    const file = try std.fs.cwd().openFile(std.fmt.bufPrint(&path_buf, "assets/blocks/{s}.zon", .{name}) catch unreachable, .{});
+    defer file.close();
+
+    const source = try file.readToEndAllocOptions(self.allocator, 1_000_000, null, 1, 0);
+    defer self.allocator.free(source);
+
+    const block_config = try std.zon.parse.fromSlice(BlockZon, self.allocator, source, null, .{});
+    defer std.zon.parse.free(self.allocator, block_config);
+
+    try self.registerBlock(block_config, vtable);
 }
 
 pub fn getBlock(self: *const Self, id: u16) ?Block {

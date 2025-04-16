@@ -1,0 +1,15 @@
+.{
+    .name = "sand",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "assets/textures/Sand.png",
+                "assets/textures/Sand.png",
+                "assets/textures/Sand.png",
+                "assets/textures/Sand.png",
+                "assets/textures/Sand.png",
+                "assets/textures/Sand.png",
+            },
+        },
+    },
+}

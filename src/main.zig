@@ -146,65 +146,11 @@ pub fn mainDesktop() !void {
 
     var registry = Registry.init(allocator);
 
-    try registry.registerBlock(.{
-        .name = "dirt",
-        .visual = .{ .cube = .{ .textures = .{
-            "assets/textures/Dirt.png",
-            "assets/textures/Dirt.png",
-            "assets/textures/Dirt.png",
-            "assets/textures/Dirt.png",
-            "assets/textures/Dirt.png",
-            "assets/textures/Dirt.png",
-        } } },
-    }, .{});
-
-    try registry.registerBlock(.{
-        .name = "grass",
-        .visual = .{ .cube = .{ .textures = .{
-            "assets/textures/Grass_Side.png",
-            "assets/textures/Grass_Side.png",
-            "assets/textures/Grass_Side.png",
-            "assets/textures/Grass_Side.png",
-            "assets/textures/Grass_Top.png",
-            "assets/textures/Dirt.png",
-        } } },
-    }, .{});
-
-    try registry.registerBlock(.{
-        .name = "water",
-        .visual = .{ .cube = .{ .textures = .{
-            "assets/textures/Water.png",
-            "assets/textures/Water.png",
-            "assets/textures/Water.png",
-            "assets/textures/Water.png",
-            "assets/textures/Water.png",
-            "assets/textures/Water.png",
-        } } },
-    }, .{});
-
-    try registry.registerBlock(.{
-        .name = "stone",
-        .visual = .{ .cube = .{ .textures = .{
-            "assets/textures/Stone.png",
-            "assets/textures/Stone.png",
-            "assets/textures/Stone.png",
-            "assets/textures/Stone.png",
-            "assets/textures/Stone.png",
-            "assets/textures/Stone.png",
-        } } },
-    }, .{});
-
-    try registry.registerBlock(.{
-        .name = "sand",
-        .visual = .{ .cube = .{ .textures = .{
-            "assets/textures/Sand.png",
-            "assets/textures/Sand.png",
-            "assets/textures/Sand.png",
-            "assets/textures/Sand.png",
-            "assets/textures/Sand.png",
-            "assets/textures/Sand.png",
-        } } },
-    }, .{});
+    try registry.registerBlockFromFile("dirt", .{});
+    try registry.registerBlockFromFile("grass", .{});
+    try registry.registerBlockFromFile("water", .{});
+    try registry.registerBlockFromFile("stone", .{});
+    try registry.registerBlockFromFile("sand", .{});
 
     try registry.lock();
 
