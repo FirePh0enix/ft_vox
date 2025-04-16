@@ -8,7 +8,6 @@ const Allocator = std.mem.Allocator;
 const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
 const Window = @import("Window.zig");
-const Image = @import("Image.zig");
 const ShaderModel = @import("ShaderModel.zig");
 const VulkanRenderer = @import("vulkan.zig").VulkanRenderer;
 
@@ -167,17 +166,6 @@ pub const BufferOptions = struct {
     size: usize,
     usage: BufferUsageFlags,
     alloc_usage: AllocUsage = .gpu_only,
-};
-
-pub const ImageOptions = struct {
-    width: usize,
-    height: usize,
-    layers: usize = 1,
-    tiling: ImageTiling = .optimal,
-    format: Format,
-    usage: ImageUsageFlags = .{ .sampled = true, .transfer_dst = true },
-    aspect_mask: ImageAspectFlags = .{ .color = true },
-    pixel_mapping: PixelMapping = .identity,
 };
 
 /// An opaque value used to interact with GPU resources.
@@ -401,6 +389,17 @@ pub inline fn bufferUnmap(self: *const Self, buffer_rid: RID) void {
 // Image
 //
 
+pub const ImageOptions = struct {
+    width: usize,
+    height: usize,
+    layers: usize = 1,
+    tiling: ImageTiling = .optimal,
+    format: Format,
+    usage: ImageUsageFlags = .{ .sampled = true, .transfer_dst = true },
+    aspect_mask: ImageAspectFlags = .{ .color = true },
+    pixel_mapping: PixelMapping = .identity,
+};
+
 pub const ImageCreateError = error{
     OutOfDeviceMemory,
 } || Allocator.Error;
@@ -443,7 +442,9 @@ pub inline fn pipelineCreateGraphics(self: *const Self, options: PipelineGraphic
 // RenderPass
 //
 
-pub const RenderPassOptions = struct {};
+pub const RenderPassOptions = struct {
+    attachments: struct { color: bool = true, depth: bool = true } = .{},
+};
 
 pub const RenderPassCreateError = error{
     Failed,
@@ -467,5 +468,5 @@ pub const FramebufferOptions = struct {
 pub const FramebufferCreateError = error{Failed} || Allocator.Error;
 
 pub inline fn framebufferCreate(self: *const Self, options: FramebufferOptions) FramebufferCreateError!RID {
-    return self.vtable.framebuffer_create(options);
+    return self.vtable.framebuffer_create(self.ptr, options);
 }

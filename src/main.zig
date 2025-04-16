@@ -9,17 +9,18 @@ const dcimgui = @import("dcimgui");
 
 const Renderer = @import("render/Renderer.zig");
 const Mesh = @import("Mesh.zig");
-const Image = @import("render/Image.zig");
 const Material = @import("render/Material.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Window = @import("render/Window.zig");
 const Graph = @import("render/Graph.zig");
+const ShadowPass = @import("render/ShadowPass.zig");
 const Camera = @import("Camera.zig");
 const World = @import("voxel/World.zig");
 const Chunk = @import("voxel/Chunk.zig");
 const TrackingAllocator = @import("TrackingAllocator.zig");
 const Block = @import("voxel/Block.zig");
 const Registry = @import("voxel/Registry.zig");
+const RID = Renderer.RID;
 
 const rdr = Renderer.rdr;
 
@@ -50,7 +51,10 @@ var material: Material = undefined;
 pub var the_world: World = undefined;
 
 var graph: Graph = undefined;
-pub var render_pass: Graph.RenderPass = undefined;
+pub var render_graph_pass: Graph.RenderPass = undefined;
+pub var shadow_graph_pass: Graph.RenderPass = undefined;
+
+var shadow_pass: ShadowPass = undefined;
 
 pub fn mainDesktop() !void {
     var window = try Window.create(.{
@@ -69,13 +73,18 @@ pub fn mainDesktop() !void {
 
     try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
 
-    render_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
+    render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
         .attachments = .{ .color = true, .depth = true },
         .max_draw_calls = 32 * 32,
     });
 
+    shadow_pass = try ShadowPass.init(.{});
+    shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
+
+    render_graph_pass.dependsOn(&shadow_graph_pass);
+
     graph = Graph.init(allocator);
-    graph.main_render_pass = &render_pass;
+    graph.main_render_pass = &render_graph_pass;
 
     mesh = try Mesh.createCube();
 
@@ -222,8 +231,8 @@ fn update(window: *Window, world: *World) !void {
     const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
 
     // Record draw calls into the render pass
-    render_pass.reset();
-    render_pass.view_matrix = view_matrix;
+    render_graph_pass.reset();
+    render_graph_pass.view_matrix = view_matrix;
 
     {
         world.chunks_lock.lock();
@@ -231,7 +240,7 @@ fn update(window: *Window, world: *World) !void {
 
         var chunk_iter = world.chunks.valueIterator();
 
-        while (chunk_iter.next()) |chunk| render_pass.drawInstanced(&mesh, &material, chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+        while (chunk_iter.next()) |chunk| render_graph_pass.drawInstanced(&mesh, &material, chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
 
         try rdr().processGraph(&graph);
     }

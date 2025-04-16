@@ -16,7 +16,6 @@ const Graph = @import("Graph.zig");
 
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
-const Image = @import("Image.zig");
 const Material = @import("Material.zig");
 const ShaderModel = @import("ShaderModel.zig");
 
@@ -435,18 +434,19 @@ pub const VulkanRenderer = struct {
     }
 
     fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {
+        // for (pass.dependencies.items) |dep| {
+        //     try self.processRenderPass(cb, fb, dep);
+        // }
+
         const clear_values: []const vk.ClearValue = &.{ // TODO one per attachements.
             .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
             .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
         };
 
-        const framebuffer = fb.as(VulkanFramebuffer);
-        const render_pass = pass.render_pass.as(VulkanRenderPass);
-
         cb.beginRenderPass(&vk.RenderPassBeginInfo{
-            .render_pass = render_pass.render_pass,
+            .render_pass = pass.render_pass.as(VulkanRenderPass).render_pass,
             .framebuffer = switch (pass.target.framebuffer) {
-                .native => framebuffer.framebuffer,
+                .native => fb.as(VulkanFramebuffer).framebuffer,
                 .custom => |v| v.as(VulkanFramebuffer).framebuffer,
             },
             .render_area = switch (pass.target.viewport) {
@@ -1155,7 +1155,7 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn renderPassCreate(self: *VulkanRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
-        _ = options; // TODO
+        _ = options;
 
         const color_ref: vk.AttachmentReference = .{
             .attachment = 0,
@@ -1167,6 +1167,7 @@ pub const VulkanRenderer = struct {
             .layout = .depth_stencil_attachment_optimal,
         };
 
+        // TODO: I think each color attachment may have an optional depth attachment.
         const subpass: vk.SubpassDescription = .{
             .pipeline_bind_point = .graphics,
             .color_attachment_count = 1,

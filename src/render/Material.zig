@@ -1,7 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
 
-const Image = @import("Image.zig");
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 const VulkanImage = @import("vulkan.zig").VulkanImage;

@@ -6,7 +6,6 @@ const Self = @This();
 const Allocator = std.mem.Allocator;
 const Material = @import("Material.zig");
 const Mesh = @import("../Mesh.zig");
-const Image = @import("Image.zig");
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 const Rect = Renderer.Rect;

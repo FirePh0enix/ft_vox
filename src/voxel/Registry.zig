@@ -4,7 +4,6 @@ const zigimg = @import("zigimg");
 const Allocator = std.mem.Allocator;
 const Self = @This();
 const Block = @import("Block.zig");
-const Image = @import("../render/Image.zig");
 const Renderer = @import("../render/Renderer.zig");
 const RID = Renderer.RID;
 

@@ -133,7 +133,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
     try rdr().imageUpdate(h_image_rid, std.mem.sliceAsBytes(&h_pixels), 0, 0);
     try rdr().imageSetLayout(h_image_rid, .shader_read_only_optimal);
 
-    @import("root").render_pass.addImguiHook(&debugHook);
+    @import("root").render_graph_pass.addImguiHook(&debugHook);
 
     return world;
 }
