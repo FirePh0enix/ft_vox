@@ -205,7 +205,7 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
                     switch (biome) {
                         .mountains, .cold_mountains => chunk.setBlockState(x, y, z, .{ .id = stone }),
                         .plains => chunk.setBlockState(x, y, z, .{ .id = grass }),
-                        .river => chunk.setBlockState(x, y, z, .{ .id = water }),
+                        .river => chunk.setBlockState(x, y, z, .{ .id = stone }),
                         else => chunk.setBlockState(x, y, z, .{ .id = stone }),
                     }
                 } else {
@@ -232,7 +232,7 @@ pub fn getSplineLevel(world: *const World, x: f32, z: f32) f32 {
 
     const c_height = calculateContHeight(noise.continentalness);
     const e_height = calculateEroHeight(noise.erosion);
-    const pv_height = calculatePeaksValleyHeight(noise.peaks_and_valleys);
+    const pv_height = calculatePeaksValleyHeight(noise.weirdness);
 
     return c_height + e_height + pv_height + baseLevelHeight;
 }
