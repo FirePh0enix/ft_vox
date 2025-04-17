@@ -176,6 +176,11 @@ const water = 3;
 const stone = 4;
 const sand = 5;
 
+// https://www.youtube.com/watch?v=CSa5O6knuwI
+// https://minecraft.wiki/w/World_generation
+// https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
+// https://www.reddit.com/r/VoxelGameDev/comments/zedp39/how_does_minecraft_use_2d_and_3d_noise_to/
+
 pub fn generateChunk(world: *const World, settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
@@ -184,39 +189,44 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
             const fx: f32 = @floatFromInt(chunk_x * 16 + @as(isize, @intCast(x)));
             const fz: f32 = @floatFromInt(chunk_z * 16 + @as(isize, @intCast(z)));
 
+            const noise = getNoise(world, fx, fz);
+            const biome = getBiome(noise);
+
             const baseLevel: f32 = getSplineLevel(world, fx, fz);
             const squishFactor: f32 = getSplineFactor(world, fx, fz);
 
-            _ = settings;
+            for (0..256) |y| {
+                const ny = @as(f32, @floatFromInt(y));
 
-            for (0..64) |y| {
-                const densityMod: f32 = (baseLevel - @as(f32, @floatFromInt(y))) * squishFactor;
-                const density: f32 = world.noise.sample3D(fx, @floatFromInt(y), fz);
+                const densityMod = (baseLevel - @as(f32, @floatFromInt(y))) * squishFactor;
+                const density = world.noise.sample3D(fx / 200.0, ny / 80.0, fz / 200.0);
 
                 if (density + densityMod > 0.0) {
-                    chunk.setBlockState(x, y, z, .{ .id = stone });
+                    switch (biome) {
+                        .mountains, .cold_mountains => chunk.setBlockState(x, y, z, .{ .id = stone }),
+                        .plains => chunk.setBlockState(x, y, z, .{ .id = grass }),
+                        .river => chunk.setBlockState(x, y, z, .{ .id = water }),
+                        else => chunk.setBlockState(x, y, z, .{ .id = stone }),
+                    }
                 } else {
-                    chunk.setBlockState(x, y, z, .{ .id = grass });
+                    chunk.setBlockState(x, y, z, .{ .id = air });
+                }
+
+                if (y < settings.sea_level) {
+                    for (y..settings.sea_level) |e| {
+                        _ = e;
+                        chunk.setBlockState(x, y, z, .{ .id = water });
+                    }
                 }
             }
-
-            // if (height < settings.sea_level) {
-            //     for (height..settings.sea_level) |y| {
-            //         chunk.setBlockState(x, y, z, .{ .id = water });
-            //     }
-            // }
         }
     }
 
     return chunk;
 }
 
-// https://www.youtube.com/watch?v=CSa5O6knuwI
-// https://minecraft.wiki/w/World_generation
-// https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
-
 pub fn getSplineLevel(world: *const World, x: f32, z: f32) f32 {
-    const baseLevelHeight: u32 = 25;
+    const baseLevelHeight: u32 = 1;
 
     const noise = getNoise(world, x, z);
 
@@ -228,55 +238,44 @@ pub fn getSplineLevel(world: *const World, x: f32, z: f32) f32 {
 }
 
 fn calculateContHeight(cont: f32) f32 {
-    if (cont >= -1 and cont < 0.3) {
-        return 50.0;
-    } else if (cont >= 0.3 and cont < 0.4) {
-        const t = (cont - 0.3) / 0.1;
-        return 50.0 + t * 50.0;
-    } else if (cont >= 0.4 and cont <= 1.0) {
-        const t = (cont - 0.4) / 0.6;
-
-        return 100.0 + t * 50.0;
+    if (cont < 0.3) {
+        return std.math.lerp(25.0, 40.0, (cont + 1.0) / 1.3);
+    } else if (cont < 0.6) {
+        return std.math.lerp(40.0, 60.0, (cont - 0.3) / 0.3);
+    } else {
+        return std.math.lerp(60.0, 80.0, (cont - 0.6) / 0.4);
     }
-    return 50.0;
 }
 
-fn calculateEroHeight(cont: f32) f32 {
-    if (cont >= -1 and cont < 0.3) {
-        return 25.0;
-    } else if (cont >= 0.3 and cont < 0.4) {
-        const t = (cont - 0.3) / 0.1;
-        return 25.0 + t * 25.0;
-    } else if (cont >= 0.4 and cont <= 1.0) {
-        const t = (cont - 0.4) / 0.6;
-
-        return 50.0 + t * 25.0;
-    }
-    return 25.0;
+fn calculateEroHeight(e: f32) f32 {
+    return std.math.lerp(40.0, 10.0, (e + 1.0) * 0.5);
 }
 
-fn calculatePeaksValleyHeight(cont: f32) f32 {
-    if (cont >= -1 and cont < 0.3) {
-        return 12.5;
-    } else if (cont >= 0.3 and cont < 0.4) {
-        const t = (cont - 0.3) / 0.1;
-        return 12.5 + t * 12.5;
-    } else if (cont >= 0.4 and cont <= 1.0) {
-        const t = (cont - 0.4) / 0.6;
-
-        return 25.0 + t * 12.5;
+fn calculatePeaksValleyHeight(pv: f32) f32 {
+    if (pv < 0.0) {
+        return std.math.lerp(0.0, 5.0, (pv + 1.0));
+    } else {
+        return std.math.lerp(5.0, 30.0, pv);
     }
-    return 12.5;
 }
 
 pub fn getSplineFactor(world: *const World, x: f32, z: f32) f32 {
-    const factorWeight = 0.1;
+    const c = calculateContFactor(getContinentalness(world, x, z));
+    const e = calculateEroFactor(getErosion(world, x, z));
+    const pv = calculateWeirdnessFactor(getWeirdness(world, x, z));
+    return c * e * pv;
+}
 
-    const c = getContinentalness(world, x, z);
-    const e = getErosion(world, x, z);
-    const pv = getWeirdness(world, x, z);
+fn calculateContFactor(c: f32) f32 {
+    return std.math.lerp(0.8, 1.2, (c + 1.0) * 0.5);
+}
 
-    return factorWeight + c + e + pv;
+fn calculateEroFactor(e: f32) f32 {
+    return std.math.lerp(0.6, 1.3, (e + 1.0) * 0.5);
+}
+
+fn calculateWeirdnessFactor(pv: f32) f32 {
+    return std.math.lerp(0.7, 1.4, (pv + 1.0) * 0.5);
 }
 
 pub const Noise = struct {
