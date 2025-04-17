@@ -3,12 +3,12 @@
     .visual = .{
         .cube = .{
             .textures = .{
-                "assets/textures/Grass_Side.png",
-                "assets/textures/Grass_Side.png",
-                "assets/textures/Grass_Side.png",
-                "assets/textures/Grass_Side.png",
-                "assets/textures/Grass_Top.png",
-                "assets/textures/Dirt.png",
+                "Grass_Side.png",
+                "Grass_Side.png",
+                "Grass_Side.png",
+                "Grass_Side.png",
+                "Grass_Top.png",
+                "Dirt.png",
             },
         },
     },

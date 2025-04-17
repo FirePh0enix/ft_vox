@@ -25,6 +25,8 @@ const RID = Renderer.RID;
 
 const rdr = Renderer.rdr;
 
+pub const BlockZon = Registry.BlockZon;
+
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub var tracking_allocator = if (builtin.mode == .Debug)
@@ -146,11 +148,11 @@ pub fn mainDesktop() !void {
 
     var registry = Registry.init(allocator);
 
-    try registry.registerBlockFromFile("dirt", .{});
-    try registry.registerBlockFromFile("grass", .{});
-    try registry.registerBlockFromFile("water", .{});
-    try registry.registerBlockFromFile("stone", .{});
-    try registry.registerBlockFromFile("sand", .{});
+    try registry.registerBlockFromFile("dirt.zon", .{});
+    try registry.registerBlockFromFile("grass.zon", .{});
+    try registry.registerBlockFromFile("water.zon", .{});
+    try registry.registerBlockFromFile("stone.zon", .{});
+    try registry.registerBlockFromFile("sand.zon", .{});
 
     try registry.lock();
 

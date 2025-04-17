@@ -164,7 +164,7 @@ pub fn build(b: *Build) !void {
     }
 
     // Embed all assets, with some of them transformed, into the executable.
-    var embedded_assets = addEmbeddedAssets(b, spirv_files.items);
+    var embedded_assets = addEmbeddedAssets(b, exe_mod, spirv_files.items);
     for (spirv_files.items) |spirv_file| embedded_assets.step.dependOn(spirv_file.step);
 
     exe.step.dependOn(embedded_assets.step);
@@ -277,8 +277,10 @@ pub fn build(b: *Build) !void {
 
 const CompileShader = struct {
     path: LazyPath,
-    filename: []const u8,
     step: *Step,
+
+    filename: []const u8,
+    file_ident: []const u8,
 };
 
 fn addCompileShader(
@@ -313,10 +315,14 @@ fn addCompileShader(
     cmd.addFileArg(b.path(path));
     const output_file = cmd.addOutputFileArg(output_filename);
 
+    const file_ident = b.dupe(std.fs.path.basename(output_filename));
+    std.mem.replaceScalar(u8, file_ident, '.', '_');
+
     return .{
         .path = output_file,
         .filename = output_filename,
         .step = &cmd.step,
+        .file_ident = file_ident,
     };
 }
 
@@ -325,15 +331,89 @@ const EmbeddedAssets = struct {
     step: *Step,
 };
 
-fn addEmbeddedAssets(b: *Build, shaders: []const CompileShader) EmbeddedAssets {
+fn addEmbeddedAssets(b: *Build, exe: *Build.Module, shaders: []const CompileShader) EmbeddedAssets {
     const module = b.createModule(.{
         .root_source_file = null,
     });
 
+    module.addImport("engine", exe);
+
+    var textures: std.ArrayList(struct {
+        filename: []const u8,
+        file_ident: []const u8,
+        path: LazyPath,
+    }) = .init(b.allocator);
+
+    {
+        const textures_dir = std.fs.cwd().openDir("assets/textures", .{ .iterate = true }) catch unreachable;
+        var dir_iter = textures_dir.iterate();
+
+        while (dir_iter.next() catch unreachable) |entry| {
+            const file_ident = b.dupe(std.fs.path.basename(entry.name));
+            std.mem.replaceScalar(u8, file_ident, '.', '_');
+
+            textures.append(.{
+                .path = b.path(std.fmt.allocPrint(b.allocator, "assets/textures/{s}", .{entry.name}) catch unreachable),
+                .filename = b.dupe(entry.name),
+                .file_ident = file_ident,
+            }) catch unreachable;
+        }
+    }
+
+    var blocks: std.ArrayList(struct {
+        filename: []const u8,
+        file_ident: []const u8,
+        path: LazyPath,
+    }) = .init(b.allocator);
+
+    {
+        const blocks_dir = std.fs.cwd().openDir("assets/blocks", .{ .iterate = true }) catch unreachable;
+        var dir_iter = blocks_dir.iterate();
+
+        while (dir_iter.next() catch unreachable) |entry| {
+            const file_ident = b.dupe(std.fs.path.basename(entry.name));
+            std.mem.replaceScalar(u8, file_ident, '.', '_');
+
+            blocks.append(.{
+                .path = b.path(std.fmt.allocPrint(b.allocator, "assets/blocks/{s}", .{entry.name}) catch unreachable),
+                .filename = b.dupe(entry.name),
+                .file_ident = file_ident,
+            }) catch unreachable;
+        }
+    }
+
     const source: []const u8 = makes: {
         var s: std.ArrayList(u8) = .init(b.allocator);
 
-        s.appendSlice("pub const embeded = .{\n") catch unreachable;
+        s.appendSlice("const engine = @import(\"engine\");\n") catch unreachable;
+
+        for (shaders) |shader| {
+            const name = std.fs.path.basename(shader.filename);
+
+            s.appendSlice(std.fmt.allocPrint(b.allocator, "const _shaders_{s} align(4) = @embedFile(\"{s}\").*;\n", .{ shader.file_ident, name }) catch unreachable) catch unreachable;
+
+            module.addAnonymousImport(name, .{
+                .root_source_file = shader.path,
+            });
+        }
+
+        for (textures.items) |texture| {
+            s.appendSlice(std.fmt.allocPrint(b.allocator, "const _textures_{s} = @embedFile(\"{s}\").*;\n", .{ texture.file_ident, texture.filename }) catch unreachable) catch unreachable;
+
+            module.addAnonymousImport(texture.filename, .{
+                .root_source_file = texture.path,
+            });
+        }
+
+        for (blocks.items) |block| {
+            s.appendSlice(std.fmt.allocPrint(b.allocator, "const _blocks_{s}: engine.BlockZon = @import(\"{s}\");\n", .{ block.file_ident, block.filename }) catch unreachable) catch unreachable;
+
+            module.addAnonymousImport(block.filename, .{
+                .root_source_file = block.path,
+            });
+        }
+
+        s.appendSlice("pub const embeded: struct { shaders: []const struct { name: []const u8, data: [:0]align(4) const u8 }, textures: []const struct { name: []const u8, data: []const u8 }, blocks: []const struct { name: []const u8, data: engine.BlockZon } } = .{\n") catch unreachable;
 
         {
             s.appendSlice("    .shaders = &.{\n") catch unreachable;
@@ -341,11 +421,31 @@ fn addEmbeddedAssets(b: *Build, shaders: []const CompileShader) EmbeddedAssets {
             for (shaders) |shader| {
                 const name = std.fs.path.basename(shader.filename);
 
-                s.appendSlice(std.fmt.allocPrint(b.allocator, "        .{{ .name = \"{s}\", .data = @embedFile(\"{s}\") }},\n", .{ name, name }) catch unreachable) catch unreachable;
+                s.appendSlice(std.fmt.allocPrint(b.allocator, "        .{{ .name = \"{s}\", .data = &_shaders_{s} }},\n", .{ name, shader.file_ident }) catch unreachable) catch unreachable;
+            }
 
-                module.addAnonymousImport(name, .{
-                    .root_source_file = shader.path,
-                });
+            s.appendSlice("    },\n") catch unreachable;
+        }
+
+        {
+            s.appendSlice("    .textures = &.{\n") catch unreachable;
+
+            for (textures.items) |texture| {
+                const name = std.fs.path.basename(texture.filename);
+
+                s.appendSlice(std.fmt.allocPrint(b.allocator, "        .{{ .name = \"{s}\", .data = &_textures_{s} }},\n", .{ name, texture.file_ident }) catch unreachable) catch unreachable;
+            }
+
+            s.appendSlice("    },\n") catch unreachable;
+        }
+
+        {
+            s.appendSlice("    .blocks = &.{\n") catch unreachable;
+
+            for (blocks.items) |block| {
+                const name = std.fs.path.basename(block.filename);
+
+                s.appendSlice(std.fmt.allocPrint(b.allocator, "        .{{ .name = \"{s}\", .data = _blocks_{s} }},\n", .{ name, block.file_ident }) catch unreachable) catch unreachable;
             }
 
             s.appendSlice("    },\n") catch unreachable;

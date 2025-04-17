@@ -1,5 +1,6 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
+const assets = @import("../assets.zig");
 
 const Allocator = std.mem.Allocator;
 const Self = @This();
@@ -36,6 +37,11 @@ pub fn init(allocator: Allocator) Self {
     };
 }
 
+pub fn deinit(self: *Self) void {
+    _ = self;
+    // TODO: block_ids keys are heap allocated.
+}
+
 pub fn lock(self: *Self) !void {
     try self.createTexture();
 
@@ -70,24 +76,13 @@ pub fn registerBlock(self: *Self, block_config: BlockZon, vtable: Block.VTable) 
 
     const id: u16 = @intCast(self.blocks.items.len);
 
-    try self.block_ids.put(self.allocator, block_config.name, id + 1);
+    try self.block_ids.put(self.allocator, try self.allocator.dupe(u8, block_config.name), id + 1);
     try self.blocks.append(self.allocator, block);
 }
 
 /// Register a block from a zon file located in `assets/blocks/`.
 pub fn registerBlockFromFile(self: *Self, name: []const u8, vtable: Block.VTable) !void {
-    var path_buf: [128]u8 = undefined;
-
-    const file = try std.fs.cwd().openFile(std.fmt.bufPrint(&path_buf, "assets/blocks/{s}.zon", .{name}) catch unreachable, .{});
-    defer file.close();
-
-    const source = try file.readToEndAllocOptions(self.allocator, 1_000_000, null, 1, 0);
-    defer self.allocator.free(source);
-
-    const block_config = try std.zon.parse.fromSlice(BlockZon, self.allocator, source, null, .{});
-    defer std.zon.parse.free(self.allocator, block_config);
-
-    try self.registerBlock(block_config, vtable);
+    try self.registerBlock(assets.getBlockData(name) orelse return error.Failed, vtable);
 }
 
 pub fn getBlock(self: *const Self, id: u16) ?Block {
@@ -108,7 +103,9 @@ pub fn getOrRegisterImage(
         return index;
     } else {
         const index = self.images.items.len + 1;
-        const image = try zigimg.ImageUnmanaged.fromFilePath(self.allocator, path);
+        const source = assets.getTextureData(path);
+
+        const image = try zigimg.ImageUnmanaged.fromMemory(self.allocator, source);
 
         try self.images_ids.put(self.allocator, path, @intCast(index));
         try self.images.append(self.allocator, image);

@@ -1017,8 +1017,8 @@ pub const VulkanRenderer = struct {
     // Pipeline
     //
 
-    const basic_cube_vert = @import("../assets.zig").getShaderDataComptime("basic_cube.vert.spv");
-    const basic_cube_frag = @import("../assets.zig").getShaderDataComptime("basic_cube.frag.spv");
+    const basic_cube_vert = @import("../assets.zig").getShaderData("basic_cube.vert.spv");
+    const basic_cube_frag = @import("../assets.zig").getShaderData("basic_cube.frag.spv");
 
     pub fn pipelineCreateGraphics(self: *VulkanRenderer, options: Renderer.PipelineGraphicsOptions) Renderer.PipelineCreateError!RID {
         const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
