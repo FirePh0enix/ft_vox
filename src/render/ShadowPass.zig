@@ -37,7 +37,18 @@ pub fn init(options: Options) !Self {
         .aspect_mask = .{ .depth = true },
     });
     const render_pass_rid = try rdr().renderPassCreate(.{
-        .attachments = .{ .color = false, .depth = true },
+        .attachments = &.{
+            .{
+                .type = .depth,
+                .format = .d32_sfloat,
+                .layout = .depth_stencil_attachment_optimal,
+                .load_op = .clear,
+                .store_op = .store,
+                .stencil_load_op = .dont_care,
+                .stencil_store_op = .dont_care,
+                .final_layout = .depth_stencil_attachment_optimal,
+            },
+        },
     });
     const framebuffer_rid = try rdr().framebufferCreate(.{
         .attachments = &.{depth_image_rid},

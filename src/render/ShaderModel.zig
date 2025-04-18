@@ -109,6 +109,7 @@ pub const Descriptor = struct {
 pub const ShaderRef = struct {
     path: []const u8,
     stage: ?Stage = null,
+    fn_name: ?[:0]const u8 = null,
 
     pub fn getStage(self: *const ShaderRef) Stage {
         if (self.stage) |stage|
@@ -136,7 +137,10 @@ pub const Options = struct {
 
     topology: vk.PrimitiveTopology = .triangle_list,
     polygon_mode: vk.PolygonMode = .fill,
+    cull_mode: vk.CullModeFlags = .{ .back_bit = true },
 };
+
+// TODO: Remove all vulkan stuff from here.
 
 vk_bindings: std.ArrayList(vk.VertexInputBindingDescription),
 vk_attribs: std.ArrayList(vk.VertexInputAttributeDescription),
@@ -145,6 +149,9 @@ vk_descriptor_bindings: std.ArrayList(vk.DescriptorSetLayoutBinding),
 
 topology: vk.PrimitiveTopology,
 polygon_mode: vk.PolygonMode,
+cull_mode: vk.CullModeFlags,
+
+shaders: []const ShaderRef,
 
 pub fn init(
     allocator: Allocator,
@@ -192,6 +199,8 @@ pub fn init(
 
         .topology = options.topology,
         .polygon_mode = options.polygon_mode,
+        .cull_mode = options.cull_mode,
+        .shaders = options.shaders,
     };
 }
 

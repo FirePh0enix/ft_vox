@@ -6,6 +6,7 @@ const vma = @import("vma");
 const zm = @import("zmath");
 const zigimg = @import("zigimg");
 const dcimgui = @import("dcimgui");
+const assets = @import("../assets.zig");
 
 const Allocator = std.mem.Allocator;
 const VmaAllocator = vma.VmaAllocator;
@@ -16,7 +17,6 @@ const Graph = @import("Graph.zig");
 
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
-const Material = @import("Material.zig");
 const ShaderModel = @import("ShaderModel.zig");
 
 const rdr = Renderer.rdr;
@@ -66,6 +66,7 @@ pub const VulkanRenderer = struct {
     in_flight_fences: [max_frames_in_flight]vk.Fence,
 
     output_render_pass: RID,
+    pipeline_cache: PipelineCache = .{},
 
     /// Buffer used when transfering data from buffer to buffer.
     transfer_command_buffer: vk.CommandBufferProxy,
@@ -114,7 +115,11 @@ pub const VulkanRenderer = struct {
         .image_update = @ptrCast(&imageUpdate),
         .image_set_layout = @ptrCast(&imageSetLayout),
 
-        .pipeline_create_graphics = @ptrCast(&pipelineCreateGraphics),
+        .material_create = @ptrCast(&materialCreate),
+        .material_set_param = @ptrCast(&materialSetParam),
+
+        .mesh_create = @ptrCast(&meshCreate),
+        .mesh_get_indices_count = @ptrCast(&meshGetIndicesCount),
 
         .renderpass_create = @ptrCast(&renderPassCreate),
 
@@ -372,8 +377,32 @@ pub const VulkanRenderer = struct {
         self.physical_device = physical_device_with_info.physical_device;
         self.swapchain = .null_handle;
 
-        // Create a renderpass attached
-        self.output_render_pass = try rdr().renderPassCreate(.{});
+        self.output_render_pass = try rdr().renderPassCreate(.{
+            .attachments = &.{
+                .{
+                    .type = .color,
+                    .layout = .color_attachment_optimal,
+                    .format = Renderer.Format.fromVk(self.surface_format.format),
+                    .load_op = .clear,
+                    .store_op = .store,
+                    .stencil_load_op = .dont_care,
+                    .stencil_store_op = .dont_care,
+                    .initial_layout = .undefined,
+                    .final_layout = .present_src,
+                },
+                .{
+                    .type = .depth,
+                    .layout = .depth_stencil_attachment_optimal,
+                    .format = .d32_sfloat,
+                    .load_op = .clear,
+                    .store_op = .dont_care,
+                    .stencil_load_op = .dont_care,
+                    .stencil_store_op = .dont_care,
+                    .initial_layout = .undefined,
+                    .final_layout = .depth_stencil_attachment_optimal,
+                },
+            },
+        });
     }
 
     pub fn processGraph(self: *VulkanRenderer, graph: *const Graph) !void {
@@ -458,17 +487,25 @@ pub const VulkanRenderer = struct {
         }, .@"inline");
 
         for (pass.draw_calls.items) |*call| {
-            const pipeline = call.material.pipeline.as(VulkanPipeline);
+            const material = call.material.as(VulkanMaterial);
+            const mesh = call.mesh.as(VulkanMesh);
+
+            const pipeline = try self.pipeline_cache.getOrCreate(self, .{
+                .render_pass = pass.render_pass,
+                .shader_model = material.shader_model,
+                .transparency = false, // TODO
+                .material = material,
+            });
 
             cb.bindPipeline(.graphics, pipeline.pipeline);
-            cb.bindDescriptorSets(.graphics, pipeline.layout, 0, 1, @ptrCast(&call.material.descriptor_set), 0, null);
+            cb.bindDescriptorSets(.graphics, pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
 
-            cb.bindIndexBuffer(call.mesh.index_buffer.as(VulkanBuffer).buffer, 0, call.mesh.index_type.asVk());
+            cb.bindIndexBuffer(mesh.index_buffer.as(VulkanBuffer).buffer, 0, mesh.index_type);
 
             cb.bindVertexBuffers(0, 3, &.{
-                call.mesh.vertex_buffer.as(VulkanBuffer).buffer,
-                call.mesh.normal_buffer.as(VulkanBuffer).buffer,
-                call.mesh.texture_buffer.as(VulkanBuffer).buffer,
+                mesh.vertex_buffer.as(VulkanBuffer).buffer,
+                mesh.normal_buffer.as(VulkanBuffer).buffer,
+                mesh.texture_coords_buffer.as(VulkanBuffer).buffer,
             }, &.{ 0, 0, 0 });
 
             if (call.instance_buffer) |ib| cb.bindVertexBuffers(3, 1, @ptrCast(&ib.as(VulkanBuffer).buffer), &.{0});
@@ -493,7 +530,7 @@ pub const VulkanRenderer = struct {
 
             cb.pushConstants(pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
 
-            cb.drawIndexed(@intCast(call.mesh.count), @intCast(call.instance_count), 0, 0, 0);
+            cb.drawIndexed(@intCast(call.vertex_count), @intCast(call.instance_count), 0, 0, 0);
         }
 
         for (pass.hooks.items) |hook| {
@@ -953,7 +990,7 @@ pub const VulkanRenderer = struct {
         self.graphics_queue.waitIdle() catch return error.Failed;
     }
 
-    pub fn imageSetLayout(self: *VulkanRenderer, image_rid: RID, new_layout: vk.ImageLayout) Renderer.ImageSetLayoutError!void {
+    pub fn imageSetLayout(self: *VulkanRenderer, image_rid: RID, new_layout: Renderer.ImageLayout) Renderer.ImageSetLayoutError!void {
         const image = image_rid.as(VulkanImage);
 
         const cb = self.transfer_command_buffer;
@@ -970,7 +1007,7 @@ pub const VulkanRenderer = struct {
             .src_access_mask = .{},
             .dst_access_mask = .{},
             .old_layout = image.layout,
-            .new_layout = new_layout,
+            .new_layout = new_layout.asVk(),
             .image = image.image,
             .subresource_range = .{
                 .aspect_mask = image.aspect_mask,
@@ -1010,29 +1047,239 @@ pub const VulkanRenderer = struct {
         self.graphics_queue.submit(1, &.{vk.SubmitInfo{ .command_buffer_count = 1, .p_command_buffers = @ptrCast(&cb) }}, .null_handle) catch return error.Failed;
         self.graphics_queue.waitIdle() catch return error.Failed;
 
-        image.layout = new_layout;
+        image.layout = new_layout.asVk();
     }
 
     //
-    // Pipeline
+    // Material
     //
 
-    const basic_cube_vert = @import("../assets.zig").getShaderData("basic_cube.vert.spv");
-    const basic_cube_frag = @import("../assets.zig").getShaderData("basic_cube.frag.spv");
+    pub fn materialCreate(self: *VulkanRenderer, options: Renderer.MaterialOptions) Renderer.MaterialCreateError!RID {
+        var descriptor_pool = DynamicDescriptorPool.init(self.allocator, options.shader_model) catch return error.Failed;
+        const descriptor_set = descriptor_pool.createDescriptorSet() catch return error.Failed;
 
-    pub fn pipelineCreateGraphics(self: *VulkanRenderer, options: Renderer.PipelineGraphicsOptions) Renderer.PipelineCreateError!RID {
-        const shader_stages: []const vk.PipelineShaderStageCreateInfo = &.{
-            .{
-                .stage = .{ .vertex_bit = true },
-                .module = self.createShaderModule(basic_cube_vert) catch return error.ShaderCompilationFailed,
-                .p_name = "main",
+        const params = try self.allocator.alloc(VulkanMaterial.Param, options.params.len);
+
+        for (options.params, 0..options.params.len) |param, index| {
+            params[index] = .{
+                .name = try self.allocator.dupe(u8, param.name),
+                .binding = index, // TODO: some params can be more than one binding slot
+                .type = param.type,
+            };
+        }
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanMaterial, self.allocator, .{
+            .descriptor_pool = descriptor_pool,
+            .descriptor_set = descriptor_set,
+            .descriptor_set_layout = descriptor_pool.descriptor_set_layout,
+            .params = params,
+            .shader_model = options.shader_model,
+        })) };
+    }
+
+    pub fn materialSetParam(self: *VulkanRenderer, material_rid: RID, name: []const u8, value: Renderer.MaterialParameterValue) Renderer.MaterialSetParamError!void {
+        const material = material_rid.as(VulkanMaterial);
+        const param = material.getParam(name) orelse return error.InvalidParam;
+
+        switch (value) {
+            .image => |i| {
+                // TODO: Store this sampler somewhere
+                const sampler = self.device.createSampler(&vk.SamplerCreateInfo{
+                    .min_filter = i.sampler.min_filter.asVk(),
+                    .mag_filter = i.sampler.mag_filter.asVk(),
+                    .address_mode_u = i.sampler.address_mode.u.asVk(),
+                    .address_mode_v = i.sampler.address_mode.v.asVk(),
+                    .address_mode_w = i.sampler.address_mode.w.asVk(),
+                    .mipmap_mode = .nearest, // TODO: Implement Mipmaps
+                    .mip_lod_bias = 0.0,
+                    .anisotropy_enable = vk.FALSE, // TODO: What is this
+                    .max_anisotropy = 0.0,
+                    .compare_enable = vk.FALSE,
+                    .compare_op = .equal,
+                    .min_lod = 0.0,
+                    .max_lod = 0.0,
+                    .border_color = .int_opaque_black,
+                    .unnormalized_coordinates = vk.FALSE,
+                }, null) catch return error.Failed;
+
+                const image = i.rid.as(VulkanImage);
+
+                const image_info: vk.DescriptorImageInfo = .{ .image_view = image.view, .sampler = sampler, .image_layout = .shader_read_only_optimal };
+                const writes: []const vk.WriteDescriptorSet = &.{
+                    vk.WriteDescriptorSet{
+                        .dst_set = material.descriptor_set,
+                        .dst_binding = @intCast(param.binding),
+                        .dst_array_element = 0,
+                        .descriptor_count = 1,
+                        .descriptor_type = .combined_image_sampler,
+                        .p_image_info = @ptrCast(&image_info),
+                        .p_buffer_info = undefined,
+                        .p_texel_buffer_view = undefined,
+                    },
+                };
+
+                self.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
             },
-            .{
-                .stage = .{ .fragment_bit = true },
-                .module = self.createShaderModule(basic_cube_frag) catch return error.ShaderCompilationFailed,
-                .p_name = "main",
-            },
+            else => unreachable,
+        }
+    }
+
+    //
+    // Mesh
+    //
+
+    pub fn meshCreate(self: *VulkanRenderer, options: Renderer.MeshOptions) Renderer.MeshCreateError!RID {
+        const index_buffer = try self.bufferCreate(.{ .size = options.indices.len, .usage = .{ .index_buffer = true, .transfer_dst = true } });
+        const vertex_buffer = try self.bufferCreate(.{ .size = options.vertices.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+        const normal_buffer = try self.bufferCreate(.{ .size = options.normals.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+        const texture_coords_buffer = try self.bufferCreate(.{ .size = options.texture_coords.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+
+        self.bufferUpdate(index_buffer, options.indices, 0) catch return error.Failed;
+        self.bufferUpdate(vertex_buffer, options.vertices, 0) catch return error.Failed;
+        self.bufferUpdate(normal_buffer, options.normals, 0) catch return error.Failed;
+        self.bufferUpdate(texture_coords_buffer, options.texture_coords, 0) catch return error.Failed;
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanMesh, self.allocator, .{
+            .index_buffer = index_buffer,
+            .vertex_buffer = vertex_buffer,
+            .normal_buffer = normal_buffer,
+            .texture_coords_buffer = texture_coords_buffer,
+            .indices_count = options.indices.len / options.index_type.bytes(),
+            .index_type = options.index_type.asVk(),
+        })) };
+    }
+
+    pub fn meshGetIndicesCount(self: *VulkanRenderer, mesh_rid: RID) usize {
+        _ = self;
+        return mesh_rid.as(VulkanMesh).indices_count;
+    }
+
+    //
+    // RenderPass
+    //
+
+    pub fn renderPassCreate(self: *VulkanRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
+        std.debug.assert(options.attachments.len <= 8);
+
+        var color_refs: [4]vk.AttachmentReference = undefined;
+        var color_ref_count: u32 = 0;
+        var depth_refs: [4]vk.AttachmentReference = undefined;
+        var depth_ref_count: u32 = 0;
+
+        for (options.attachments, 0..options.attachments.len) |attach, index| {
+            const attach_ref: vk.AttachmentReference = .{
+                .attachment = @intCast(index),
+                .layout = attach.layout.asVk(),
+            };
+
+            switch (attach.type) {
+                .color => {
+                    color_refs[color_ref_count] = attach_ref;
+                    color_ref_count += 1;
+                },
+                .depth => {
+                    depth_refs[depth_ref_count] = attach_ref;
+                    depth_ref_count += 1;
+                },
+            }
+        }
+
+        const subpass: vk.SubpassDescription = .{
+            .pipeline_bind_point = .graphics,
+            .color_attachment_count = color_ref_count,
+            .p_color_attachments = if (color_ref_count > 0) @ptrCast(&color_refs) else null,
+            .p_depth_stencil_attachment = if (depth_ref_count > 0) @ptrCast(&depth_refs) else null,
         };
+
+        var descriptions: [8]vk.AttachmentDescription = undefined;
+
+        for (options.attachments, 0..options.attachments.len) |attach, index| {
+            descriptions[index] = .{
+                .format = attach.format.asVk(),
+                .samples = .{ .@"1_bit" = true },
+                .load_op = attach.load_op.asVk(),
+                .store_op = attach.store_op.asVk(),
+                .stencil_load_op = attach.stencil_load_op.asVk(),
+                .stencil_store_op = attach.stencil_store_op.asVk(),
+                .initial_layout = attach.initial_layout.asVk(),
+                .final_layout = attach.final_layout.asVk(),
+            };
+        }
+
+        // TODO: Modify this
+        const dependency: vk.SubpassDependency = .{
+            .src_subpass = vk.SUBPASS_EXTERNAL,
+            .dst_subpass = 0,
+            .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+            .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+            .src_access_mask = .{},
+            .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
+        };
+
+        const render_pass = self.device.createRenderPass(&vk.RenderPassCreateInfo{
+            .attachment_count = @intCast(options.attachments.len),
+            .p_attachments = &descriptions,
+            .subpass_count = 1,
+            .p_subpasses = @ptrCast(&subpass),
+            .dependency_count = 1,
+            .p_dependencies = @ptrCast(&dependency),
+        }, null) catch return error.Failed;
+        errdefer self.device.destroyRenderPass(render_pass, null);
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
+            .render_pass = render_pass,
+        })) };
+    }
+
+    //
+    // Framebuffer
+    //
+
+    pub fn framebufferCreate(self: *VulkanRenderer, options: Renderer.FramebufferOptions) Renderer.FramebufferCreateError!RID {
+        const max_attachments = 4;
+
+        std.debug.assert(options.attachments.len <= max_attachments);
+
+        var attachments: [max_attachments]vk.ImageView = undefined;
+
+        for (options.attachments, 0..options.attachments.len) |attach_rid, index| {
+            const image = attach_rid.as(VulkanImage);
+            attachments[index] = image.view;
+        }
+
+        const framebuffer = self.device.createFramebuffer(&vk.FramebufferCreateInfo{
+            .render_pass = options.render_pass.as(VulkanRenderPass).render_pass,
+            .attachment_count = @intCast(options.attachments.len),
+            .p_attachments = attachments[0..options.attachments.len].ptr,
+            .width = @intCast(options.width),
+            .height = @intCast(options.height),
+            .layers = 1,
+        }, null) catch return error.Failed;
+
+        return .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
+            .framebuffer = framebuffer,
+        })) };
+    }
+
+    fn createShaderModule(self: *VulkanRenderer, spirv: [:0]align(4) const u8) vk.DeviceProxy.CreateShaderModuleError!vk.ShaderModule {
+        return self.device.createShaderModule(&vk.ShaderModuleCreateInfo{
+            .code_size = spirv.len,
+            .p_code = @ptrCast(spirv.ptr),
+        }, null);
+    }
+
+    pub fn createGraphicsPipeline(self: *VulkanRenderer, options: GraphicsPipelineOptions) error{ Failed, ShaderCompilationFailed }!Pipeline {
+        // TODO: `options.transparency`.
+
+        var shader_stages: [4]vk.PipelineShaderStageCreateInfo = undefined;
+
+        for (options.shader_model.shaders, 0..options.shader_model.shaders.len) |shader, index| {
+            shader_stages[index] = .{
+                .stage = shader.getStage().toVkFlags(),
+                .module = self.createShaderModule(assets.getShaderData(shader.path)) catch return error.ShaderCompilationFailed,
+                .p_name = shader.fn_name orelse "main",
+            };
+        }
 
         const dynamic_states: []const vk.DynamicState = &.{ .viewport, .scissor };
         const dynamic_state_info: vk.PipelineDynamicStateCreateInfo = .{
@@ -1110,21 +1357,17 @@ pub const VulkanRenderer = struct {
             .back = std.mem.zeroes(vk.StencilOpState),
         };
 
-        const descriptor_pool = MaterialDescriptorPool.init(self.allocator, options.shader_model) catch return error.Failed;
-
-        const layout_info: vk.PipelineLayoutCreateInfo = .{
+        const layout = self.device.createPipelineLayout(&vk.PipelineLayoutCreateInfo{
             .set_layout_count = 1,
-            .p_set_layouts = @ptrCast(&descriptor_pool.descriptor_set_layout),
+            .p_set_layouts = @ptrCast(&options.material.descriptor_pool.descriptor_set_layout),
             .push_constant_range_count = @intCast(options.shader_model.vk_push_constants.items.len),
             .p_push_constant_ranges = options.shader_model.vk_push_constants.items.ptr,
-        };
-
-        const pipeline_layout = self.device.createPipelineLayout(&layout_info, null) catch return error.Failed;
+        }, null) catch return error.Failed;
 
         var pipeline: vk.Pipeline = .null_handle;
         _ = self.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&vk.GraphicsPipelineCreateInfo{
-            .stage_count = @intCast(shader_stages.len),
-            .p_stages = shader_stages.ptr,
+            .stage_count = @intCast(options.shader_model.shaders.len),
+            .p_stages = &shader_stages,
             .p_vertex_input_state = &vertex_input_info,
             .p_input_assembly_state = &input_assembly_info,
             .p_viewport_state = &viewport_info,
@@ -1133,7 +1376,7 @@ pub const VulkanRenderer = struct {
             .p_depth_stencil_state = &depth_info,
             .p_color_blend_state = &blend_info,
             .p_dynamic_state = &dynamic_state_info,
-            .layout = pipeline_layout,
+            .layout = layout,
             .render_pass = options.render_pass.as(VulkanRenderPass).render_pass,
             .subpass = 0,
             .base_pipeline_handle = .null_handle,
@@ -1141,123 +1384,10 @@ pub const VulkanRenderer = struct {
         }), null, @ptrCast(&pipeline)) catch return error.Failed;
         errdefer rdr().asVk().device.destroyPipeline(pipeline, null);
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanPipeline, self.allocator, .{
+        return .{
             .pipeline = pipeline,
-            .layout = pipeline_layout,
-            .descriptor_pool = descriptor_pool,
-        })) };
-    }
-
-    //
-    // RenderPass
-    //
-
-    pub fn renderPassCreate(self: *VulkanRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
-        _ = options;
-
-        const color_ref: vk.AttachmentReference = .{
-            .attachment = 0,
-            .layout = .color_attachment_optimal,
+            .layout = layout,
         };
-
-        const depth_ref: vk.AttachmentReference = .{
-            .attachment = 1,
-            .layout = .depth_stencil_attachment_optimal,
-        };
-
-        // TODO: I think each color attachment may have an optional depth attachment.
-        const subpass: vk.SubpassDescription = .{
-            .pipeline_bind_point = .graphics,
-            .color_attachment_count = 1,
-            .p_color_attachments = @ptrCast(&color_ref),
-            .p_depth_stencil_attachment = @ptrCast(&depth_ref),
-        };
-
-        const attachments: []const vk.AttachmentDescription = &.{
-            .{
-                .format = self.surface_format.format,
-                .samples = .{ .@"1_bit" = true },
-                .load_op = .clear,
-                .store_op = .store,
-                .stencil_load_op = .dont_care,
-                .stencil_store_op = .dont_care,
-                .initial_layout = .undefined,
-                .final_layout = .present_src_khr,
-            },
-            .{
-                .format = .d32_sfloat, // TODO: same as `Renderer.createDepthImage`
-                .samples = .{ .@"1_bit" = true },
-                .load_op = .clear,
-                .store_op = .dont_care,
-                .stencil_load_op = .dont_care,
-                .stencil_store_op = .dont_care,
-                .initial_layout = .undefined,
-                .final_layout = .depth_stencil_attachment_optimal,
-            },
-        };
-
-        const dependency: vk.SubpassDependency = .{
-            .src_subpass = vk.SUBPASS_EXTERNAL,
-            .dst_subpass = 0,
-            .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .src_access_mask = .{},
-            .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
-        };
-
-        const render_pass = self.device.createRenderPass(&vk.RenderPassCreateInfo{
-            .attachment_count = @intCast(attachments.len),
-            .p_attachments = attachments.ptr,
-            .subpass_count = 1,
-            .p_subpasses = @ptrCast(&subpass),
-            .dependency_count = 1,
-            .p_dependencies = @ptrCast(&dependency),
-        }, null) catch return error.Failed;
-        errdefer self.device.destroyRenderPass(render_pass, null);
-
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
-            .render_pass = render_pass,
-        })) };
-    }
-
-    //
-    // Framebuffer
-    //
-
-    pub fn framebufferCreate(self: *VulkanRenderer, options: Renderer.FramebufferOptions) Renderer.FramebufferCreateError!RID {
-        // Ideally there should not be more than 2 attachments at the same time: one for color and one for depth.
-        const max_attachments = 2;
-
-        std.debug.assert(options.attachments.len <= max_attachments);
-
-        var attachments: [max_attachments]vk.ImageView = undefined;
-
-        for (options.attachments, 0..options.attachments.len) |attach_rid, index| {
-            const image = attach_rid.as(VulkanImage);
-            attachments[index] = image.view;
-        }
-
-        const framebuffer = self.device.createFramebuffer(&vk.FramebufferCreateInfo{
-            .render_pass = options.render_pass.as(VulkanRenderPass).render_pass,
-            .attachment_count = @intCast(options.attachments.len),
-            .p_attachments = attachments[0..options.attachments.len].ptr,
-            .width = @intCast(options.width),
-            .height = @intCast(options.height),
-            .layers = 1,
-        }, null) catch return error.Failed;
-
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
-            .framebuffer = framebuffer,
-        })) };
-    }
-
-    pub fn createShaderModule(self: *VulkanRenderer, spirv: [:0]align(4) const u8) vk.DeviceProxy.CreateShaderModuleError!vk.ShaderModule {
-        const shader_info: vk.ShaderModuleCreateInfo = .{
-            .code_size = spirv.len,
-            .p_code = @ptrCast(spirv.ptr),
-        };
-
-        return self.device.createShaderModule(&shader_info, null);
     }
 
     const DeviceWithInfo = struct {
@@ -1460,10 +1590,10 @@ pub const VulkanPipeline = struct {
     signature: usize = resource_signature,
     pipeline: vk.Pipeline,
     layout: vk.PipelineLayout,
-    descriptor_pool: MaterialDescriptorPool,
+    descriptor_pool: DynamicDescriptorPool,
 };
 
-const MaterialDescriptorPool = struct {
+const DynamicDescriptorPool = struct {
     pools: std.ArrayList(vk.DescriptorPool),
     count: usize,
     descriptor_set_layout: vk.DescriptorSetLayout,
@@ -1471,7 +1601,7 @@ const MaterialDescriptorPool = struct {
 
     const pool_size: usize = 16;
 
-    pub fn init(allocator: Allocator, shader_model: ShaderModel) !MaterialDescriptorPool {
+    pub fn init(allocator: Allocator, shader_model: ShaderModel) !DynamicDescriptorPool {
         const descriptor_set_layout = try rdr().asVk().device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
             .binding_count = @intCast(shader_model.vk_descriptor_bindings.items.len),
             .p_bindings = shader_model.vk_descriptor_bindings.items.ptr,
@@ -1485,12 +1615,12 @@ const MaterialDescriptorPool = struct {
         };
     }
 
-    pub fn deinit(self: *const MaterialDescriptorPool) void {
+    pub fn deinit(self: *const DynamicDescriptorPool) void {
         for (self.pools.items) |pool| rdr().asVk().device.destroyQueryPool(pool, null);
         self.pools.deinit();
     }
 
-    pub fn createDescriptorSet(self: *MaterialDescriptorPool) !vk.DescriptorSet {
+    pub fn createDescriptorSet(self: *DynamicDescriptorPool) !vk.DescriptorSet {
         if (self.count >= self.pools.items.len * pool_size) {
             // TODO: Should probably allocate as much of each bindings.
 
@@ -1531,6 +1661,88 @@ pub const VulkanFramebuffer = struct {
 
     signature: usize = resource_signature,
     framebuffer: vk.Framebuffer,
+};
+
+pub const VulkanMaterial = struct {
+    pub const resource_signature: usize = @truncate(0x53df5135a9cc62f3);
+
+    pub const Param = struct {
+        name: []const u8,
+        binding: usize,
+        type: Renderer.MaterialParameterValueType,
+    };
+
+    signature: usize = resource_signature,
+    descriptor_pool: DynamicDescriptorPool,
+    descriptor_set: vk.DescriptorSet,
+    descriptor_set_layout: vk.DescriptorSetLayout,
+
+    shader_model: ShaderModel, // TODO: should not store this.
+
+    params: []Param,
+
+    pub fn getParam(self: *const VulkanMaterial, name: []const u8) ?*Param {
+        for (self.params) |*param| {
+            if (std.mem.eql(u8, param.name, name)) return param;
+        }
+        return null;
+    }
+};
+
+pub const VulkanMesh = struct {
+    pub const resource_signature: usize = @truncate(0x3cfa6bf786e88701);
+
+    signature: usize = resource_signature,
+
+    index_buffer: RID,
+    vertex_buffer: RID,
+    normal_buffer: RID,
+    texture_coords_buffer: RID,
+
+    indices_count: usize,
+    index_type: vk.IndexType,
+};
+
+pub const GraphicsPipelineOptions = struct {
+    shader_model: ShaderModel,
+    render_pass: RID,
+    transparency: bool,
+    material: *VulkanMaterial,
+};
+
+const Pipeline = struct {
+    pipeline: vk.Pipeline,
+    layout: vk.PipelineLayout,
+};
+
+const PipelineKey = struct {
+    name_hash: usize,
+    transparency: bool,
+    render_pass: RID,
+};
+
+const PipelineCache = struct {
+    pipelines: std.AutoArrayHashMapUnmanaged(PipelineKey, Pipeline) = .empty,
+
+    pub fn getOrCreate(self: *PipelineCache, r: *VulkanRenderer, options: GraphicsPipelineOptions) error{ Failed, OutOfMemory, ShaderCompilationFailed }!Pipeline {
+        var hasher = std.hash.Wyhash.init(0);
+
+        for (options.shader_model.shaders) |shader_ref| hasher.update(shader_ref.path);
+
+        const key: PipelineKey = .{
+            .name_hash = @truncate(hasher.final()),
+            .render_pass = options.render_pass,
+            .transparency = options.transparency,
+        };
+
+        if (self.pipelines.get(key)) |pipeline| {
+            return pipeline;
+        } else {
+            const pipeline = try r.createGraphicsPipeline(options);
+            try self.pipelines.put(r.allocator, key, pipeline);
+            return pipeline;
+        }
+    }
 };
 
 /// Create a value and initialize it right away to prevent `undefined` values from getting into `T`.

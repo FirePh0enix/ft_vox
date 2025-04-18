@@ -9,8 +9,6 @@ const dcimgui = @import("dcimgui");
 const argzon = @import("argzon");
 
 const Renderer = @import("render/Renderer.zig");
-const Mesh = @import("Mesh.zig");
-const Material = @import("render/Material.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
 const Window = @import("render/Window.zig");
 const Graph = @import("render/Graph.zig");
@@ -72,8 +70,8 @@ var running = true;
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
 
-var mesh: Mesh = undefined;
-var material: Material = undefined;
+var mesh: RID = undefined;
+var material: RID = undefined;
 
 pub var the_world: World = undefined;
 
@@ -82,6 +80,119 @@ pub var render_graph_pass: Graph.RenderPass = undefined;
 pub var shadow_graph_pass: Graph.RenderPass = undefined;
 
 var shadow_pass: ShadowPass = undefined;
+
+fn n(v: [3]f32) [3]f32 {
+    const inv_length = 1.0 / std.math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return .{ v[0] * inv_length, v[1] * inv_length, v[2] * inv_length };
+}
+
+pub fn createCube() !RID {
+    return try rdr().meshCreate(.{
+        .indices = std.mem.sliceAsBytes(@as([]const u16, &.{
+            0, 1, 2, 2, 3, 0, // front
+            20, 21, 22, 22, 23, 20, // back
+            4, 5, 6, 6, 7, 4, // right
+            12, 13, 14, 14, 15, 12, // left
+            8, 9, 10, 10, 11, 8, // top
+            16, 17, 18, 18, 19, 16, // bottom
+        })),
+        .vertices = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
+            // front
+            .{ 0.0, 0.0, 1.0 },
+            .{ 1.0, 0.0, 1.0 },
+            .{ 1.0, 1.0, 1.0 },
+            .{ 0.0, 1.0, 1.0 },
+            // back
+            .{ 1.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 0.0 },
+            .{ 0.0, 1.0, 0.0 },
+            .{ 1.0, 1.0, 0.0 },
+            // left
+            .{ 0.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 1.0 },
+            .{ 0.0, 1.0, 1.0 },
+            .{ 0.0, 1.0, 0.0 },
+            // right
+            .{ 1.0, 0.0, 1.0 },
+            .{ 1.0, 0.0, 0.0 },
+            .{ 1.0, 1.0, 0.0 },
+            .{ 1.0, 1.0, 1.0 },
+            // top
+            .{ 0.0, 1.0, 1.0 },
+            .{ 1.0, 1.0, 1.0 },
+            .{ 1.0, 1.0, 0.0 },
+            .{ 0.0, 1.0, 0.0 },
+            // bottom
+            .{ 0.0, 0.0, 0.0 },
+            .{ 1.0, 0.0, 0.0 },
+            .{ 1.0, 0.0, 1.0 },
+            .{ 0.0, 0.0, 1.0 },
+        })),
+        .normals = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
+            // front
+            n(.{ -0.5, -0.5, 0.5 }),
+            n(.{ 0.5, -0.5, 0.5 }),
+            n(.{ 0.5, 0.5, 0.5 }),
+            n(.{ -0.5, 0.5, 0.5 }),
+            // back
+            n(.{ 0.5, -0.5, -0.5 }),
+            n(.{ -0.5, -0.5, -0.5 }),
+            n(.{ -0.5, 0.5, -0.5 }),
+            n(.{ 0.5, 0.5, -0.5 }),
+            // left
+            n(.{ -0.5, -0.5, -0.5 }),
+            n(.{ -0.5, -0.5, 0.5 }),
+            n(.{ -0.5, 0.5, 0.5 }),
+            n(.{ -0.5, 0.5, -0.5 }),
+            // right
+            n(.{ 0.5, -0.5, 0.5 }),
+            n(.{ 0.5, -0.5, -0.5 }),
+            n(.{ 0.5, 0.5, -0.5 }),
+            n(.{ 0.5, 0.5, 0.5 }),
+            // top
+            n(.{ -0.5, 0.5, 0.5 }),
+            n(.{ 0.5, 0.5, 0.5 }),
+            n(.{ 0.5, 0.5, -0.5 }),
+            n(.{ -0.5, 0.5, -0.5 }),
+            // bottom
+            n(.{ -0.5, -0.5, -0.5 }),
+            n(.{ 0.5, -0.5, -0.5 }),
+            n(.{ 0.5, -0.5, 0.5 }),
+            n(.{ -0.5, -0.5, 0.5 }),
+        })),
+        .texture_coords = std.mem.sliceAsBytes(@as([]const [2]f32, &.{
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+        })),
+    });
+}
 
 pub fn mainDesktop() !void {
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
@@ -107,18 +218,21 @@ pub fn mainDesktop() !void {
         .max_draw_calls = 32 * 32,
     });
 
-    shadow_pass = try ShadowPass.init(.{});
-    shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
+    // shadow_pass = try ShadowPass.init(.{});
+    // shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
 
-    render_graph_pass.dependsOn(&shadow_graph_pass);
+    // render_graph_pass.dependsOn(&shadow_graph_pass);
 
     graph = Graph.init(allocator);
     graph.main_render_pass = &render_graph_pass;
 
-    mesh = try Mesh.createCube();
+    mesh = try createCube();
 
     const shader_model = try ShaderModel.init(allocator, .{
-        .shaders = &.{},
+        .shaders = &.{
+            .{ .path = "basic_cube.vert.spv", .stage = .vertex },
+            .{ .path = "basic_cube.frag.spv", .stage = .fragment },
+        },
         .buffers = &.{
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
@@ -135,16 +249,14 @@ pub fn mainDesktop() !void {
             ShaderModel.Input{ .binding = 3, .type = .uint, .offset = 9 * @sizeOf(f32) }, // instance visibility
         },
         .descriptors = &.{
-            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment },
-            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 1, .stage = .fragment }, // lighting data
+            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // texture array
+            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 1, .stage = .fragment }, // shadow texture
         },
         .push_constants = &.{
             ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
         },
     });
     defer shader_model.deinit();
-
-    const pipeline = try rdr().pipelineCreateGraphics(.{ .shader_model = shader_model, .render_pass = rdr().getOutputRenderPass() });
 
     var registry = Registry.init(allocator);
 
@@ -156,7 +268,22 @@ pub fn mainDesktop() !void {
 
     try registry.lock();
 
-    material = try Material.init(registry.image_array.?, pipeline);
+    material = try rdr().materialCreate(.{
+        .shader_model = shader_model,
+        .params = &.{
+            .{ .name = "textures", .type = .image },
+        },
+    });
+    try rdr().materialSetParam(material, "textures", .{
+        .image = .{
+            .rid = registry.image_array orelse unreachable,
+            .sampler = .{
+                .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
+                .min_filter = .nearest,
+                .address_mode = .{ .u = .clamp_to_edge, .v = .clamp_to_edge, .w = .clamp_to_edge },
+            },
+        },
+    });
 
     the_world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = args.options.seed,
@@ -214,7 +341,7 @@ fn update(window: *Window, world: *World) !void {
 
         var chunk_iter = world.chunks.valueIterator();
 
-        while (chunk_iter.next()) |chunk| render_graph_pass.drawInstanced(&mesh, &material, chunk.instance_buffer, 0, mesh.count, 0, chunk.instance_count);
+        while (chunk_iter.next()) |chunk| render_graph_pass.drawInstanced(mesh, material, chunk.instance_buffer, 0, rdr().meshGetIndicesCount(mesh), 0, chunk.instance_count);
 
         try rdr().processGraph(&graph);
     }

@@ -7,6 +7,7 @@ layout(location = 2) flat in uint textureIndex;
 layout(location = 0) out vec4 outColor;
 
 layout(binding = 0) uniform sampler2DArray images;
+// layout(binding = 1) uniform sampler2D shadowTexture;
 
 void main() {
     vec2 textureCoords2 = textureCoords;

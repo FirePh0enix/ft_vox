@@ -49,10 +49,10 @@ pub const ImageTiling = enum {
     linear,
 
     pub fn asVk(self: ImageTiling) vk.ImageTiling {
-        switch (self) {
-            .optimal => return .optimal,
-            .linear => return .linear,
-        }
+        return switch (self) {
+            .optimal => .optimal,
+            .linear => .linear,
+        };
     }
 };
 
@@ -63,18 +63,80 @@ pub const Format = enum {
     d32_sfloat,
 
     pub fn asVk(self: Format) vk.Format {
-        switch (self) {
-            .r8_srgb => return .r8_srgb,
-            .r8g8b8a8_srgb => return .r8g8b8a8_srgb,
-            .b8g8r8a8_srgb => return .b8g8r8a8_srgb,
-            .d32_sfloat => return .d32_sfloat,
-        }
+        return switch (self) {
+            .r8_srgb => .r8_srgb,
+            .r8g8b8a8_srgb => .r8g8b8a8_srgb,
+            .b8g8r8a8_srgb => .b8g8r8a8_srgb,
+            .d32_sfloat => .d32_sfloat,
+        };
+    }
+
+    pub fn fromVk(self: vk.Format) Format {
+        return switch (self) {
+            .r8_srgb => .r8_srgb,
+            .r8g8b8a8_srgb => .r8g8b8a8_srgb,
+            .b8g8r8a8_srgb => .b8g8r8a8_srgb,
+            .d32_sfloat => .d32_sfloat,
+            else => unreachable,
+        };
     }
 
     pub fn sizeBytes(self: Format) usize {
         return switch (self) {
             .r8_srgb => 1,
             .r8g8b8a8_srgb, .b8g8r8a8_srgb, .d32_sfloat => 4,
+        };
+    }
+};
+
+// TODO: Some things like image layouts should probably be abstracted.
+
+pub const ImageLayout = enum {
+    undefined,
+    color_attachment_optimal,
+    depth_stencil_attachment_optimal,
+    shader_read_only_optimal,
+
+    transfer_dst_optimal,
+
+    present_src,
+
+    pub fn asVk(self: ImageLayout) vk.ImageLayout {
+        return switch (self) {
+            .undefined => .undefined,
+            .color_attachment_optimal => .color_attachment_optimal,
+            .depth_stencil_attachment_optimal => .depth_stencil_attachment_optimal,
+            .shader_read_only_optimal => .shader_read_only_optimal,
+            .transfer_dst_optimal => .transfer_dst_optimal,
+            .present_src => .present_src_khr,
+        };
+    }
+};
+
+pub const Filter = enum {
+    nearest,
+    linear,
+
+    pub fn asVk(self: Filter) vk.Filter {
+        return switch (self) {
+            .nearest => .nearest,
+            .linear => .linear,
+        };
+    }
+};
+
+pub const SamplerAddressMode = enum {
+    repeat,
+    mirrored_repeat,
+    clamp_to_edge,
+    clamp_to_border,
+
+    pub fn asVk(self: SamplerAddressMode) vk.SamplerAddressMode {
+        return switch (self) {
+            .repeat => .repeat,
+            .mirrored_repeat => .mirrored_repeat,
+            .clamp_to_edge => .clamp_to_edge,
+            .clamp_to_border => .clamp_to_border,
         };
     }
 };
@@ -142,6 +204,13 @@ pub const IndexType = enum {
             .uint32 => .uint32,
         };
     }
+
+    pub fn bytes(self: IndexType) usize {
+        return switch (self) {
+            .uint16 => 2,
+            .uint32 => 4,
+        };
+    }
 };
 
 pub const Size = struct {
@@ -181,8 +250,12 @@ pub const RID = extern struct {
             if (ptr.signature != T.resource_signature) std.debug.panic("Mismatch signature, expected {x} but got {x}", .{ T.resource_signature, ptr.signature });
             return ptr;
         } else {
-            return @ptrFromInt(self.inner);
+            return self.asNoCheck(T);
         }
+    }
+
+    pub inline fn asNoCheck(self: RID, comptime T: type) *T {
+        return @ptrFromInt(self.inner);
     }
 
     pub fn tryAs(self: RID, comptime T: type) ?*T {
@@ -245,13 +318,21 @@ pub const VTable = struct {
 
     image_create: *const fn (*anyopaque, options: ImageOptions) ImageCreateError!RID,
     image_update: *const fn (*anyopaque, image_rid: RID, s: []const u8, offset: usize, layer: usize) UpdateImageError!void,
-    image_set_layout: *const fn (*anyopaque, image_rid: RID, new_layout: vk.ImageLayout) ImageSetLayoutError!void,
+    image_set_layout: *const fn (*anyopaque, image_rid: RID, new_layout: ImageLayout) ImageSetLayoutError!void,
 
     //
-    // Pipeline
+    // Material
     //
 
-    pipeline_create_graphics: *const fn (*anyopaque, options: PipelineGraphicsOptions) PipelineCreateError!RID,
+    material_create: *const fn (*anyopaque, options: MaterialOptions) MaterialCreateError!RID,
+    material_set_param: *const fn (*anyopaque, material_rid: RID, name: []const u8, value: MaterialParameterValue) MaterialSetParamError!void,
+
+    //
+    // Mesh
+    //
+
+    mesh_create: *const fn (*anyopaque, options: MeshOptions) MeshCreateError!RID,
+    mesh_get_indices_count: *const fn (*anyopaque, mesh_rid: RID) usize,
 
     //
     // RenderPass
@@ -416,34 +497,168 @@ pub const ImageSetLayoutError = error{
     Failed,
 };
 
-pub inline fn imageSetLayout(self: *const Self, image_rid: RID, new_layout: vk.ImageLayout) ImageSetLayoutError!void {
+pub inline fn imageSetLayout(self: *const Self, image_rid: RID, new_layout: ImageLayout) ImageSetLayoutError!void {
     return self.vtable.image_set_layout(self.ptr, image_rid, new_layout);
 }
 
 //
-// Pipeline
+// Material
 //
 
-pub const PipelineGraphicsOptions = struct {
-    shader_model: ShaderModel,
-    render_pass: RID,
+pub const MaterialParameter = struct {
+    name: []const u8,
+    type: MaterialParameterValueType,
 };
 
-pub const PipelineCreateError = error{
+pub const MaterialParameterValueType = enum {
+    image,
+
+    float,
+    vec2,
+    vec3,
+    vec4,
+
+    mat4,
+};
+
+pub const SamplerOptions = struct {
+    mag_filter: Filter = .linear,
+    min_filter: Filter = .linear,
+    address_mode: struct {
+        u: SamplerAddressMode = .clamp_to_edge,
+        v: SamplerAddressMode = .clamp_to_edge,
+        w: SamplerAddressMode = .clamp_to_edge,
+    },
+
+    // TODO: More of `vk.SamplerCreateInfo` could be implemented
+};
+
+pub const MaterialParameterValue = union(MaterialParameterValueType) {
+    image: struct {
+        rid: RID,
+        sampler: SamplerOptions,
+    },
+
+    float: f32,
+    vec2: [2]f32,
+    vec3: [3]f32,
+    vec4: [4]f32,
+
+    mat4: [16]f32,
+};
+
+pub const MaterialInstanceLayout = struct {
+    entry_size: usize,
+};
+
+pub const MaterialOptions = struct {
+    shader_model: ShaderModel,
+
+    /// Enable transparency for this material.
+    transparency: bool = false,
+
+    params: []const MaterialParameter,
+
+    /// Desribe the layout of the instance buffer for this material.
+    instance_layout: ?MaterialInstanceLayout = null,
+};
+
+pub const MaterialCreateError = error{
     Failed,
-    ShaderCompilationFailed,
+    OutOfDeviceMemory,
 } || Allocator.Error;
 
-pub inline fn pipelineCreateGraphics(self: *const Self, options: PipelineGraphicsOptions) PipelineCreateError!RID {
-    return self.vtable.pipeline_create_graphics(self.ptr, options);
+pub inline fn materialCreate(self: *const Self, options: MaterialOptions) MaterialCreateError!RID {
+    return self.vtable.material_create(self.ptr, options);
+}
+
+pub const MaterialSetParamError = error{ Failed, InvalidParam };
+
+pub inline fn materialSetParam(self: *const Self, material_rid: RID, name: []const u8, value: MaterialParameterValue) MaterialSetParamError!void {
+    return self.vtable.material_set_param(self.ptr, material_rid, name, value);
+}
+
+//
+// Mesh
+//
+
+pub const MeshOptions = struct {
+    indices: []const u8,
+    vertices: []const u8,
+    normals: []const u8,
+    texture_coords: []const u8,
+
+    /// Type of indices. If the type is `.uint16` then `indices` must stores `u16`, or `u32` if
+    /// the type is `.uint32`.
+    ///
+    /// Since `.uint32` use two times more memory than `.uint16`, it should only be used if
+    /// more than 65336 vertices are needed.
+    index_type: IndexType = .uint16,
+};
+
+pub const MeshCreateError = error{
+    Failed,
+    OutOfDeviceMemory,
+} || Allocator.Error;
+
+pub inline fn meshCreate(self: *const Self, options: MeshOptions) MeshCreateError!RID {
+    return self.vtable.mesh_create(self.ptr, options);
+}
+
+pub inline fn meshGetIndicesCount(self: *const Self, mesh_rid: RID) usize {
+    return self.vtable.mesh_get_indices_count(self.ptr, mesh_rid);
 }
 
 //
 // RenderPass
 //
 
+pub const AttachmentLoadOp = enum {
+    load,
+    clear,
+    dont_care,
+
+    pub fn asVk(self: AttachmentLoadOp) vk.AttachmentLoadOp {
+        return switch (self) {
+            .load => .load,
+            .clear => .clear,
+            .dont_care => .dont_care,
+        };
+    }
+};
+
+pub const AttachmentStoreOp = enum {
+    store,
+    dont_care,
+
+    pub fn asVk(self: AttachmentStoreOp) vk.AttachmentStoreOp {
+        return switch (self) {
+            .store => .store,
+            .dont_care => .dont_care,
+        };
+    }
+};
+
+pub const AttachmentType = enum {
+    color,
+    depth,
+};
+
+pub const Attachment = struct {
+    type: AttachmentType,
+    layout: ImageLayout,
+    format: Format,
+
+    load_op: AttachmentLoadOp = .dont_care,
+    store_op: AttachmentStoreOp = .dont_care,
+    stencil_load_op: AttachmentLoadOp = .dont_care,
+    stencil_store_op: AttachmentStoreOp = .dont_care,
+    initial_layout: ImageLayout = .undefined,
+    final_layout: ImageLayout,
+};
+
 pub const RenderPassOptions = struct {
-    attachments: struct { color: bool = true, depth: bool = true } = .{},
+    attachments: []const Attachment,
 };
 
 pub const RenderPassCreateError = error{

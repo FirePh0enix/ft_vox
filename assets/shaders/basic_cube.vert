@@ -14,6 +14,7 @@ layout(location = 6) in uint visibility;
 layout(location = 0) out vec2 fragTextureCoords;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out uint textureIndex;
+// layout(location = 3) out vec4 fragPosLightSpace;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewMatrix;

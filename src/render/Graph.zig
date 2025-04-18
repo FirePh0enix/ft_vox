@@ -4,8 +4,6 @@ const zm = @import("zmath");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
-const Material = @import("Material.zig");
-const Mesh = @import("../Mesh.zig");
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 const Rect = Renderer.Rect;
@@ -108,8 +106,8 @@ pub const RenderPass = struct {
 
     pub fn draw(
         self: *RenderPass,
-        mesh: *const Mesh,
-        material: *const Material,
+        mesh: RID,
+        material: RID,
         first_vertex: usize,
         vertex_count: usize,
     ) void {
@@ -125,8 +123,8 @@ pub const RenderPass = struct {
 
     pub fn drawInstanced(
         self: *RenderPass,
-        mesh: *const Mesh,
-        material: *const Material,
+        mesh: RID,
+        material: RID,
         instance_buffer: RID,
         first_vertex: usize,
         vertex_count: usize,
@@ -148,8 +146,8 @@ pub const RenderPass = struct {
 };
 
 pub const DrawCall = struct {
-    material: *const Material,
-    mesh: *const Mesh,
+    material: RID,
+    mesh: RID,
     instance_buffer: ?RID = null,
 
     first_vertex: usize,
