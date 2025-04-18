@@ -1,0 +1,15 @@
+.{
+    .name = "snow",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "Snow.png",
+                "Snow.png",
+                "Snow.png",
+                "Snow.png",
+                "Snow.png",
+                "Snow.png",
+            },
+        },
+    },
+}

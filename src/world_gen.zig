@@ -204,6 +204,7 @@ const grass = 2;
 const water = 3;
 const stone = 4;
 const sand = 5;
+const snow = 6;
 
 // https://www.youtube.com/watch?v=CSa5O6knuwI
 // https://minecraft.wiki/w/World_generation
@@ -221,30 +222,23 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
             const noise = getNoise(world, fx, fz);
             const biome = getBiome(noise);
 
-            const baseLevel: f32 = getSplineLevel(world, fx, fz);
+            const baseLevel: f32 = getSplineLevel(world, fx, fz, biome);
             const squishFactor: f32 = getSplineFactor(world, fx, fz);
 
             for (0..256) |y| {
                 const ny = @as(f32, @floatFromInt(y));
-
-                const densityMod = (baseLevel - @as(f32, @floatFromInt(y))) * squishFactor;
+                const densityMod = (baseLevel - ny) * squishFactor;
                 const density = world.noise.sample3D(fx / 200.0, ny / 80.0, fz / 200.0);
 
                 if (density + densityMod > 0.0) {
-                    switch (biome) {
-                        .mountains, .cold_mountains => chunk.setBlockState(x, y, z, .{ .id = stone }),
-                        .plains => chunk.setBlockState(x, y, z, .{ .id = grass }),
-                        .river => chunk.setBlockState(x, y, z, .{ .id = stone }),
-                        else => chunk.setBlockState(x, y, z, .{ .id = stone }),
-                    }
+                    chunk.setBlockState(x, y, z, .{ .id = stone });
                 } else {
                     chunk.setBlockState(x, y, z, .{ .id = air });
                 }
 
                 if (y < settings.sea_level) {
-                    for (y..settings.sea_level) |e| {
-                        _ = e;
-                        chunk.setBlockState(x, y, z, .{ .id = water });
+                    for (y..settings.sea_level) |s| {
+                        chunk.setBlockState(x, s, z, .{ .id = water });
                     }
                 }
             }
@@ -254,16 +248,37 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
     return chunk;
 }
 
-pub fn getSplineLevel(world: *const World, x: f32, z: f32) f32 {
-    const baseLevelHeight: u32 = 1;
+fn getBiomeHeightMultiplier(biome: Biome) f32 {
+    return switch (biome) {
+        .plains => 0.9,
+        .mountains => 2.0,
+        .cold_mountains => 3.5,
+        else => 1.0,
+    };
+}
 
+pub fn getSplineLevel(world: *const World, x: f32, z: f32, biome: Biome) f32 {
     const noise = getNoise(world, x, z);
 
     const c_height = calculateContHeight(noise.continentalness);
     const e_height = calculateEroHeight(noise.erosion);
     const pv_height = calculatePeaksValleyHeight(noise.weirdness);
 
-    return c_height + e_height + pv_height + baseLevelHeight;
+    var adjusted_c_height = c_height;
+    var adjusted_e_height = e_height;
+    var adjusted_pv_height = pv_height;
+
+    switch (biome) {
+        .plains => {
+            adjusted_c_height *= 0.9;
+            adjusted_e_height *= 1.0;
+            adjusted_pv_height *= 0.8;
+        },
+        else => {},
+    }
+
+    // clamp some biome like plain or beach to stay a constant flat value.
+    return adjusted_c_height + adjusted_e_height + adjusted_pv_height * getBiomeHeightMultiplier(biome);
 }
 
 fn calculateContHeight(cont: f32) f32 {
@@ -272,7 +287,7 @@ fn calculateContHeight(cont: f32) f32 {
     } else if (cont < 0.6) {
         return std.math.lerp(40.0, 60.0, (cont - 0.3) / 0.3);
     } else {
-        return std.math.lerp(60.0, 80.0, (cont - 0.6) / 0.4);
+        return std.math.lerp(60.0, 180.0, (cont - 0.6) / 0.4);
     }
 }
 
@@ -284,7 +299,7 @@ fn calculatePeaksValleyHeight(pv: f32) f32 {
     if (pv < 0.0) {
         return std.math.lerp(0.0, 5.0, (pv + 1.0));
     } else {
-        return std.math.lerp(5.0, 30.0, pv);
+        return std.math.lerp(5.0, 50.0, pv);
     }
 }
 
