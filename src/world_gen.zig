@@ -138,35 +138,64 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
     return world;
 }
 
+pub fn deinit() void {
+    rdr().imguiRemoveTexture(temp_imgui_id);
+    rdr().freeRid(temp_image_rid);
+
+    rdr().imguiRemoveTexture(hum_imgui_id);
+    rdr().freeRid(hum_image_rid);
+
+    rdr().imguiRemoveTexture(c_imgui_id);
+    rdr().freeRid(c_image_rid);
+
+    rdr().imguiRemoveTexture(e_imgui_id);
+    rdr().freeRid(e_image_rid);
+
+    rdr().imguiRemoveTexture(w_imgui_id);
+    rdr().freeRid(w_image_rid);
+
+    rdr().imguiRemoveTexture(pv_imgui_id);
+    rdr().freeRid(pv_image_rid);
+
+    rdr().imguiRemoveTexture(biome_imgui_id);
+    rdr().freeRid(biome_image_rid);
+
+    rdr().imguiRemoveTexture(h_imgui_id);
+    rdr().freeRid(h_image_rid);
+}
+
 fn debugHook(render_pass: *Graph.RenderPass) void {
     const x = -render_pass.view_matrix[0][3];
     const z = -render_pass.view_matrix[2][3];
 
     const noise = getNoise(&@import("root").the_world, x, z);
 
-    dcimgui.ImGui_Text("t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n", noise.temperature, noise.humidity, noise.continentalness, noise.erosion);
-    dcimgui.ImGui_Text("w = %.2f | pv = %.2f | as = ??? | n = ???\n", noise.weirdness, noise.peaks_and_valleys);
+    if (dcimgui.ImGui_Begin("WorldGen", null, 0)) {
+        dcimgui.ImGui_Text("t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n", noise.temperature, noise.humidity, noise.continentalness, noise.erosion);
+        dcimgui.ImGui_Text("w = %.2f | pv = %.2f | as = ??? | n = ???\n", noise.weirdness, noise.peaks_and_valleys);
 
-    dcimgui.ImGui_Text("el = %d\n", getErosionLevel(noise.erosion));
+        dcimgui.ImGui_Text("el = %d\n", getErosionLevel(noise.erosion));
 
-    dcimgui.ImGui_Text("Temperature | Humidity\n");
-    dcimgui.ImGui_Image(temp_imgui_id, .{ .x = 100, .y = 100 });
-    dcimgui.ImGui_SameLine();
-    dcimgui.ImGui_Image(hum_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_Text("Temperature | Humidity\n");
+        dcimgui.ImGui_Image(temp_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(hum_imgui_id, .{ .x = 100, .y = 100 });
 
-    dcimgui.ImGui_Text("Continentalness | Erosion | Weirdness | Peaks & Valleys\n");
-    dcimgui.ImGui_Image(c_imgui_id, .{ .x = 100, .y = 100 });
-    dcimgui.ImGui_SameLine();
-    dcimgui.ImGui_Image(e_imgui_id, .{ .x = 100, .y = 100 });
-    dcimgui.ImGui_SameLine();
-    dcimgui.ImGui_Image(w_imgui_id, .{ .x = 100, .y = 100 });
-    dcimgui.ImGui_SameLine();
-    dcimgui.ImGui_Image(pv_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_Text("Continentalness | Erosion | Weirdness | Peaks & Valleys\n");
+        dcimgui.ImGui_Image(c_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(e_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(w_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(pv_imgui_id, .{ .x = 100, .y = 100 });
 
-    dcimgui.ImGui_Text("Biome | Final heightmap\n");
-    dcimgui.ImGui_Image(biome_imgui_id, .{ .x = 100, .y = 100 });
-    dcimgui.ImGui_SameLine();
-    dcimgui.ImGui_Image(h_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_Text("Biome | Final heightmap\n");
+        dcimgui.ImGui_Image(biome_imgui_id, .{ .x = 100, .y = 100 });
+        dcimgui.ImGui_SameLine();
+        dcimgui.ImGui_Image(h_imgui_id, .{ .x = 100, .y = 100 });
+    }
+    dcimgui.ImGui_End();
 }
 
 const air = 0;

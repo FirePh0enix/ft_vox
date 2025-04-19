@@ -103,6 +103,7 @@ pub const VulkanRenderer = struct {
 
         .imgui_init = @ptrCast(&imguiInit),
         .imgui_add_texture = @ptrCast(&imguiAddTexture),
+        .imgui_remove_texture = @ptrCast(&imguiRemoveTexture),
 
         .free_rid = @ptrCast(&freeRid),
 
@@ -162,23 +163,21 @@ pub const VulkanRenderer = struct {
         defer required_instance_extensions.deinit();
         for (0..instance_extensions.len) |index| try required_instance_extensions.append(instance_extensions[index] orelse unreachable);
 
-        const instance_info: vk.InstanceCreateInfo = .{
+        const instance_handle = try vkb.createInstance(&vk.InstanceCreateInfo{
             .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
             .p_application_info = &app_info,
             .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
             .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
             .enabled_extension_count = @intCast(required_instance_extensions.items.len),
             .pp_enabled_extension_names = required_instance_extensions.items.ptr,
-        };
-
-        const instance_handle = try vkb.createInstance(&instance_info, null);
+        }, null);
         instance_wrapper = .load(instance_handle, get_instance_proc_addr);
 
         self.instance = vk.InstanceProxy.init(instance_handle, &instance_wrapper);
         errdefer self.instance.destroyInstance(null);
 
         // Create the surface
-        self.surface = window.createVkSurface(self.instance.handle);
+        self.surface = window.createVkSurface(self.instance.handle, null);
         errdefer self.instance.destroySurfaceKHR(self.surface, null);
 
         // Select the best physical device.
@@ -393,7 +392,7 @@ pub const VulkanRenderer = struct {
                 .{
                     .type = .depth,
                     .layout = .depth_stencil_attachment_optimal,
-                    .format = .d32_sfloat,
+                    .format = .d32_sfloat, // TODO: Detect supported depth format.
                     .load_op = .clear,
                     .store_op = .dont_care,
                     .stencil_load_op = .dont_care,
@@ -463,17 +462,30 @@ pub const VulkanRenderer = struct {
     }
 
     fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {
-        // for (pass.dependencies.items) |dep| {
-        //     try self.processRenderPass(cb, fb, dep);
-        // }
+        for (pass.dependencies.items) |dep| {
+            try self.processRenderPass(cb, fb, dep);
+        }
 
-        const clear_values: []const vk.ClearValue = &.{ // TODO one per attachements.
-            .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } },
-            .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } },
-        };
+        const render_pass = pass.render_pass.as(VulkanRenderPass);
+
+        var clears: [4]vk.ClearValue = undefined;
+
+        clears[0] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } };
+        clears[1] = .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } };
+
+        for (render_pass.attachments, 0..render_pass.attachments.len) |attach, index| {
+            switch (attach.type) {
+                .color => {
+                    clears[index] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } };
+                },
+                .depth => {
+                    clears[index] = .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } };
+                },
+            }
+        }
 
         cb.beginRenderPass(&vk.RenderPassBeginInfo{
-            .render_pass = pass.render_pass.as(VulkanRenderPass).render_pass,
+            .render_pass = render_pass.render_pass,
             .framebuffer = switch (pass.target.framebuffer) {
                 .native => fb.as(VulkanFramebuffer).framebuffer,
                 .custom => |v| v.as(VulkanFramebuffer).framebuffer,
@@ -482,8 +494,8 @@ pub const VulkanRenderer = struct {
                 .native => .{ .offset = .{ .x = 0, .y = 0 }, .extent = .{ .width = self.swapchain_extent.width, .height = self.swapchain_extent.height } },
                 .custom => |v| .{ .offset = .{ .x = @intCast(v.x), .y = @intCast(v.y) }, .extent = .{ .width = @intCast(v.width), .height = @intCast(v.height) } },
             },
-            .clear_value_count = @intCast(clear_values.len),
-            .p_clear_values = clear_values.ptr,
+            .clear_value_count = @intCast(render_pass.attachments.len),
+            .p_clear_values = &clears,
         }, .@"inline");
 
         for (pass.draw_calls.items) |*call| {
@@ -513,15 +525,15 @@ pub const VulkanRenderer = struct {
             cb.setViewport(0, 1, @ptrCast(&vk.Viewport{
                 .x = 0.0,
                 .y = 0.0,
-                .width = @floatFromInt(rdr().asVk().swapchain_extent.width), // TODO
-                .height = @floatFromInt(rdr().asVk().swapchain_extent.height),
+                .width = @floatFromInt(self.swapchain_extent.width), // TODO
+                .height = @floatFromInt(self.swapchain_extent.height),
                 .min_depth = 0.0,
                 .max_depth = 1.0,
             }));
 
             cb.setScissor(0, 1, @ptrCast(&vk.Rect2D{
                 .offset = .{ .x = 0, .y = 0 },
-                .extent = rdr().asVk().swapchain_extent,
+                .extent = self.swapchain_extent,
             }));
 
             const constants: Graph.PushConstants = .{
@@ -574,9 +586,36 @@ pub const VulkanRenderer = struct {
         };
     }
 
-    pub fn destroy(self: *const VulkanRenderer) void {
-        _ = self;
-        // TODO
+    pub fn destroy(self: *VulkanRenderer) void {
+        self.device.deviceWaitIdle() catch {};
+
+        self.freeRid(self.output_render_pass);
+
+        self.device.destroySampler(self.imgui_sampler, null);
+
+        self.pipeline_cache.deinit(self);
+
+        // Destroy swapchain related resourcess
+        for (self.swapchain_framebuffers) |fb| self.freeRid(fb);
+        self.allocator.free(self.swapchain_framebuffers);
+
+        for (self.swapchain_images) |image| self.freeRid(image);
+        self.allocator.free(self.swapchain_images);
+
+        self.device.destroySwapchainKHR(self.swapchain, null);
+
+        // Destroy resources allocated for each frame in flight.
+        for (self.command_buffers) |cb| self.device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&cb.handle));
+        for (self.image_available_semaphores) |semaphore| self.device.destroySemaphore(semaphore, null);
+        for (self.render_finished_semaphores) |semaphore| self.device.destroySemaphore(semaphore, null);
+        for (self.in_flight_fences) |fence| self.device.destroyFence(fence, null);
+
+        self.device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&self.transfer_command_buffer.handle));
+        self.device.destroyCommandPool(self.command_pool, null);
+
+        self.device.destroyDevice(null);
+        self.instance.destroySurfaceKHR(self.surface, null);
+        self.instance.destroyInstance(null);
     }
 
     fn destroySwapchain(self: *VulkanRenderer) void {
@@ -648,13 +687,14 @@ pub const VulkanRenderer = struct {
         for (swapchain_images, 0..swapchain_images.len) |vk_image, index| images[index] = try self.imageCreateFromVkHandle(vk_image, self.surface_format.format);
 
         const framebuffers = try self.allocator.alloc(RID, swapchain_images.len);
-        for (images, 0..swapchain_images.len) |image, index|
+        for (images, 0..swapchain_images.len) |image, index| {
             framebuffers[index] = try self.framebufferCreate(.{
                 .attachments = &.{ image, depth_image_rid },
                 .render_pass = self.output_render_pass,
                 .width = @intCast(surface_extent.width),
                 .height = @intCast(surface_extent.height),
             });
+        }
 
         self.destroySwapchain();
 
@@ -684,6 +724,7 @@ pub const VulkanRenderer = struct {
         _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.handle));
 
         self.imgui_descriptor_pool = self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+            .flags = .{ .free_descriptor_set_bit = true },
             .max_sets = 16,
             .pool_size_count = 1,
             .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
@@ -734,6 +775,11 @@ pub const VulkanRenderer = struct {
         return @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     }
 
+    pub fn imguiRemoveTexture(self: *VulkanRenderer, id: c_ulonglong) void {
+        _ = self;
+        dcimgui.cImGui_ImplVulkan_RemoveTexture(@ptrFromInt(id));
+    }
+
     //
     // Common
     //
@@ -742,14 +788,17 @@ pub const VulkanRenderer = struct {
         if (rid.tryAs(VulkanBuffer)) |buffer| {
             vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.buffer)), buffer.allocation);
         } else if (rid.tryAs(VulkanImage)) |image| {
-            self.device.destroyImageView(image.view, null);
-            vma.vmaDestroyImage(self.vma_allocator, @ptrFromInt(@intFromEnum(image.image)), image.allocation);
+            image.deinit(self);
         } else if (rid.tryAs(VulkanFramebuffer)) |framebuffer| {
             self.device.destroyFramebuffer(framebuffer.framebuffer, null);
         } else if (rid.tryAs(VulkanRenderPass)) |render_pass| {
             self.device.destroyRenderPass(render_pass.render_pass, null);
+        } else if (rid.tryAs(VulkanMaterial)) |material| {
+            material.deinit(self);
+        } else if (rid.tryAs(VulkanMesh)) |mesh| {
+            mesh.deinit(self);
         } else {
-            unreachable;
+            std.debug.panic("Trying to free rid with signature {x}", .{@as(*const usize, @ptrFromInt(rid.inner)).*});
         }
     }
 
@@ -932,6 +981,7 @@ pub const VulkanRenderer = struct {
             .size = undefined,
             .layers = 1,
             .image = image,
+            .external_image = true,
             .view = image_view,
             .allocation = undefined,
             .layout = .undefined,
@@ -1228,6 +1278,7 @@ pub const VulkanRenderer = struct {
 
         return .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
             .render_pass = render_pass,
+            .attachments = try self.allocator.dupe(Renderer.Attachment, options.attachments),
         })) };
     }
 
@@ -1382,7 +1433,7 @@ pub const VulkanRenderer = struct {
             .base_pipeline_handle = .null_handle,
             .base_pipeline_index = -1,
         }), null, @ptrCast(&pipeline)) catch return error.Failed;
-        errdefer rdr().asVk().device.destroyPipeline(pipeline, null);
+        errdefer self.device.destroyPipeline(pipeline, null);
 
         return .{
             .pipeline = pipeline,
@@ -1577,11 +1628,17 @@ pub const VulkanImage = struct {
     size: usize,
 
     image: vk.Image,
+    external_image: bool = false,
     view: vk.ImageView,
     allocation: vma.VmaAllocation,
 
     layout: vk.ImageLayout,
     aspect_mask: vk.ImageAspectFlags,
+
+    pub fn deinit(self: *const VulkanImage, r: *VulkanRenderer) void {
+        r.device.destroyImageView(self.view, null);
+        if (!self.external_image) vma.vmaDestroyImage(r.vma_allocator, @ptrFromInt(@intFromEnum(self.image)), self.allocation);
+    }
 };
 
 pub const VulkanPipeline = struct {
@@ -1616,7 +1673,7 @@ const DynamicDescriptorPool = struct {
     }
 
     pub fn deinit(self: *const DynamicDescriptorPool) void {
-        for (self.pools.items) |pool| rdr().asVk().device.destroyQueryPool(pool, null);
+        for (self.pools.items) |pool| rdr().asVk().device.destroyDescriptorPool(pool, null);
         self.pools.deinit();
     }
 
@@ -1631,6 +1688,7 @@ const DynamicDescriptorPool = struct {
                 .{ .type = .uniform_buffer, .descriptor_count = pool_size },
             };
             const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
+                .flags = .{ .free_descriptor_set_bit = true },
                 .pool_size_count = @intCast(sizes.len),
                 .p_pool_sizes = sizes.ptr,
                 .max_sets = 1,
@@ -1654,6 +1712,7 @@ pub const VulkanRenderPass = struct {
 
     signature: usize = resource_signature,
     render_pass: vk.RenderPass,
+    attachments: []const Renderer.Attachment,
 };
 
 pub const VulkanFramebuffer = struct {
@@ -1681,6 +1740,16 @@ pub const VulkanMaterial = struct {
 
     params: []Param,
 
+    pub fn deinit(self: *const VulkanMaterial, r: *VulkanRenderer) void {
+        self.descriptor_pool.deinit();
+        r.device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
+
+        for (self.params) |param| r.allocator.free(param.name);
+        r.allocator.free(self.params);
+
+        self.shader_model.deinit();
+    }
+
     pub fn getParam(self: *const VulkanMaterial, name: []const u8) ?*Param {
         for (self.params) |*param| {
             if (std.mem.eql(u8, param.name, name)) return param;
@@ -1701,6 +1770,13 @@ pub const VulkanMesh = struct {
 
     indices_count: usize,
     index_type: vk.IndexType,
+
+    pub fn deinit(self: *const VulkanMesh, r: *VulkanRenderer) void {
+        r.freeRid(self.index_buffer);
+        r.freeRid(self.vertex_buffer);
+        r.freeRid(self.normal_buffer);
+        r.freeRid(self.texture_coords_buffer);
+    }
 };
 
 pub const GraphicsPipelineOptions = struct {
@@ -1713,6 +1789,11 @@ pub const GraphicsPipelineOptions = struct {
 const Pipeline = struct {
     pipeline: vk.Pipeline,
     layout: vk.PipelineLayout,
+
+    pub fn deinit(self: *const Pipeline, r: *VulkanRenderer) void {
+        r.device.destroyPipelineLayout(self.layout, null);
+        r.device.destroyPipeline(self.pipeline, null);
+    }
 };
 
 const PipelineKey = struct {
@@ -1723,6 +1804,12 @@ const PipelineKey = struct {
 
 const PipelineCache = struct {
     pipelines: std.AutoArrayHashMapUnmanaged(PipelineKey, Pipeline) = .empty,
+
+    pub fn deinit(self: *PipelineCache, r: *VulkanRenderer) void {
+        for (self.pipelines.values()) |pipeline| pipeline.deinit(r);
+
+        self.pipelines.deinit(r.allocator);
+    }
 
     pub fn getOrCreate(self: *PipelineCache, r: *VulkanRenderer, options: GraphicsPipelineOptions) error{ Failed, OutOfMemory, ShaderCompilationFailed }!Pipeline {
         var hasher = std.hash.Wyhash.init(0);
@@ -1768,4 +1855,44 @@ fn createWithDefault(comptime T: type, allocator: Allocator) Allocator.Error!*T 
     }
 
     return ptr;
+}
+
+const allocation_callbacks: vk.AllocationCallbacks = .{
+    .p_user_data = null,
+    .pfn_allocation = @ptrCast(&vkAllocate),
+    .pfn_reallocation = @ptrCast(&vkReallocate),
+    .pfn_free = @ptrCast(&vkFree),
+};
+
+fn vkAllocate(user_data: ?*anyopaque, size: usize, alignment: usize, allocation_scope: vk.SystemAllocationScope) callconv(vk.vulkan_call_conv) ?*anyopaque {
+    _ = user_data;
+    _ = alignment;
+    _ = allocation_scope;
+
+    if (size == 0) return null;
+
+    const allocator: Allocator = @import("root").allocator;
+    const slice = allocator.alignedAlloc(u8, 8, size) catch return null;
+
+    return @ptrCast(slice.ptr);
+}
+
+fn vkReallocate(user_data: ?*anyopaque, original: ?*anyopaque, size: usize, alignment: usize, allocation_scope: vk.SystemAllocationScope) callconv(vk.vulkan_call_conv) ?*anyopaque {
+    _ = user_data;
+    _ = alignment;
+    _ = allocation_scope;
+
+    const allocator: Allocator = @import("root").allocator;
+    const original_slice: []u8 = @as([*]u8, @ptrCast(original orelse unreachable))[0..0];
+    const slice = allocator.realloc(original_slice, size) catch return null;
+    return @ptrCast(slice.ptr);
+}
+
+fn vkFree(user_data: ?*anyopaque, memory: ?*anyopaque) callconv(vk.vulkan_call_conv) void {
+    _ = user_data;
+
+    const allocator: Allocator = @import("root").allocator;
+    const memory_slice: []u8 = @as([*]u8, @ptrCast(memory orelse unreachable))[0..0];
+
+    allocator.free(memory_slice);
 }

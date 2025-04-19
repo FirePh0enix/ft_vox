@@ -293,6 +293,7 @@ pub const VTable = struct {
 
     imgui_init: *const fn (*anyopaque, window: *const Window, render_pass_rid: RID) void,
     imgui_add_texture: *const fn (*anyopaque, image_rid: RID) ImGuiAddTextureError!c_ulonglong,
+    imgui_remove_texture: *const fn (*anyopaque, id: c_ulonglong) void,
 
     // --------------------------------------------- //
     // Resources
@@ -373,11 +374,15 @@ pub const CreateDeviceError = error{
     NoSuitableDevice,
 } || Allocator.Error;
 
-pub inline fn createDevice(self: *Self, window: *const Window, index: ?usize) CreateDeviceError!void {
+pub inline fn createDevice(self: *const Self, window: *const Window, index: ?usize) CreateDeviceError!void {
     return self.vtable.create_device(self.ptr, window, index);
 }
 
-pub inline fn processGraph(self: *Self, graph: *const Graph) ProcessGraphError!void {
+pub inline fn destroy(self: *const Self) void {
+    return self.vtable.destroy(self.ptr);
+}
+
+pub inline fn processGraph(self: *const Self, graph: *const Graph) ProcessGraphError!void {
     return self.vtable.process_graph(self.ptr, graph);
 }
 
@@ -424,6 +429,10 @@ pub const ImGuiAddTextureError = error{Failed};
 
 pub inline fn imguiAddTexture(self: *const Self, image_rid: RID) ImGuiAddTextureError!c_ulonglong {
     return self.vtable.imgui_add_texture(self.ptr, image_rid);
+}
+
+pub inline fn imguiRemoveTexture(self: *const Self, id: c_ulonglong) void {
+    return self.vtable.imgui_remove_texture(self.ptr, id);
 }
 
 //
@@ -557,7 +566,7 @@ pub const MaterialOptions = struct {
     /// Enable transparency for this material.
     transparency: bool = false,
 
-    params: []const MaterialParameter,
+    params: []const MaterialParameter = &.{},
 
     /// Desribe the layout of the instance buffer for this material.
     instance_layout: ?MaterialInstanceLayout = null,

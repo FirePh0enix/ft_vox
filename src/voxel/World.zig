@@ -8,8 +8,20 @@ const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
 const Ray = @import("../math.zig").Ray;
 const SimplexNoise = @import("../math.zig").SimplexNoiseWithOptions(f32);
+const Renderer = @import("../render/Renderer.zig");
+const Graph = @import("../render/Graph.zig");
+const RID = Renderer.RID;
+
+const rdr = Renderer.rdr;
 
 const world_directory: []const u8 = "user_data/worlds";
+
+pub const BlockInstanceData = extern struct {
+    position: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    textures0: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    textures1: [3]f32 = .{ 0.0, 0.0, 0.0 },
+    visibility: u32 = 0,
+};
 
 pub const Direction = enum(u3) {
     north = 0,
@@ -67,6 +79,21 @@ chunk_worker_state: std.atomic.Value(bool) = .init(false),
 chunk_load_worker: ChunkLoadWorker = .{},
 chunk_unload_worker: ChunkUnloadWorker = .{},
 
+// TODO: Instance buffers used by chunks to display blocks.
+//       This world struct should probably be split in two: The data store part and the updating/rendering part.
+// TODO: This array should be resized when changing the render distance at runtime.
+
+buffers: []BufferData = &.{},
+buffers_states: std.bit_set.DynamicBitSetUnmanaged = .{},
+buffers_mutex: std.Thread.Mutex = .{},
+
+render_distance: usize = 0,
+
+const BufferData = struct {
+    rid: RID,
+    instance_count: usize,
+};
+
 pub fn initEmpty(
     allocator: Allocator,
     seed: u64,
@@ -86,6 +113,15 @@ pub fn startWorkers(self: *Self, registry: *const Registry) !void {
     self.chunk_unload_worker.thread = try std.Thread.spawn(.{}, ChunkUnloadWorker.worker, .{ &self.chunk_unload_worker, self, registry });
 }
 
+pub fn createBuffers(self: *Self, render_distance: usize) !void {
+    self.render_distance = render_distance;
+
+    self.buffers_states = try .initFull(self.allocator, (render_distance + 1) * 2 * (render_distance + 1) * 2);
+
+    self.buffers = try self.allocator.alloc(BufferData, (render_distance + 1) * 2 * (render_distance + 1) * 2);
+    for (0..self.buffers.len) |index| self.buffers[index] = .{ .rid = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }), .instance_count = 0 };
+}
+
 pub fn deinit(self: *Self) void {
     self.chunk_worker_state.store(false, .release);
 
@@ -95,6 +131,12 @@ pub fn deinit(self: *Self) void {
         self.chunk_load_worker.orders.deinit(self.allocator);
     }
 
+    rdr().waitIdle();
+
+    for (self.buffers) |buffer| rdr().freeRid(buffer.rid);
+    self.allocator.free(self.buffers);
+
+    self.buffers_states.deinit(self.allocator);
     self.chunks.deinit(self.allocator);
 }
 
@@ -177,6 +219,8 @@ const ChunkLoadWorker = struct {
         while (world.chunk_worker_state.load(.acquire)) {
             if (remaining == 0) self.sleep_semaphore.wait();
 
+            const buffer_index = world.acquireBuffer() orelse continue;
+
             self.orders_mutex.lock();
             const chunk_pos = self.orders.pop();
             remaining = self.orders.items.len;
@@ -187,13 +231,18 @@ const ChunkLoadWorker = struct {
                     world.chunks_lock.lock();
                     defer world.chunks_lock.unlock();
 
-                    if (world.chunks.contains(pos)) continue;
+                    if (world.chunks.contains(pos)) {
+                        world.freeBuffer(buffer_index);
+                        continue;
+                    }
                 }
 
                 // TODO: How should chunk generation/load errors should be threated ?
                 var chunk = world_gen.generateChunk(world, world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
                 chunk.computeVisibility(null, null, null, null);
-                chunk.rebuildInstanceBuffer(registry) catch unreachable;
+                rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
+
+                chunk.instance_buffer_index = buffer_index;
 
                 world.chunks_lock.lock();
                 defer world.chunks_lock.unlock();
@@ -239,7 +288,7 @@ const ChunkUnloadWorker = struct {
                 const chunk = world.chunks.get(pos);
 
                 if (chunk) |c| {
-                    c.deinit();
+                    world.freeBuffer(c.instance_buffer_index);
                     _ = world.chunks.remove(pos);
                 }
             }
@@ -247,10 +296,10 @@ const ChunkUnloadWorker = struct {
     }
 };
 
-pub fn updateWorldAround(self: *Self, px: f32, pz: f32, render_distance: usize) !void {
+pub fn updateWorldAround(self: *Self, px: f32, pz: f32) !void {
     const chunk_x = @as(i64, @intFromFloat(px / 16));
     const chunk_z = @as(i64, @intFromFloat(pz / 16)) - 1;
-    const rd: i64 = @intCast(render_distance);
+    const rd: i64 = @intCast(self.render_distance);
 
     var x = -rd;
     while (x < rd) : (x += 1) {
@@ -273,6 +322,67 @@ pub fn updateWorldAround(self: *Self, px: f32, pz: f32, render_distance: usize) 
         if (entry.key_ptr.x < min_x or entry.key_ptr.x > max_x or entry.key_ptr.z < min_z or entry.key_ptr.z > max_z)
             try self.unloadChunk(entry.key_ptr.*);
     }
+}
+
+pub fn acquireBuffer(self: *Self) ?usize {
+    self.buffers_mutex.lock();
+    defer self.buffers_mutex.unlock();
+
+    const index = self.buffers_states.toggleFirstSet() orelse return null;
+    return index;
+}
+
+pub fn freeBuffer(self: *Self, index: usize) void {
+    self.buffers_mutex.lock();
+    defer self.buffers_mutex.unlock();
+
+    self.buffers_states.set(index);
+}
+
+pub fn encodeDrawCalls(self: *Self, cube_mesh: RID, shadow_pass: *Graph.RenderPass, shadow_material: RID, render_pass: *Graph.RenderPass, render_material: RID) !void {
+    self.chunks_lock.lock();
+    defer self.chunks_lock.unlock();
+
+    var chunk_iter = self.chunks.valueIterator();
+
+    while (chunk_iter.next()) |chunk| {
+        const buffer_data = &self.buffers[chunk.instance_buffer_index];
+
+        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.instance_count);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.instance_count);
+    }
+}
+
+pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *BufferData) !void {
+    var index: usize = 0;
+    var instances: [Chunk.block_count]BlockInstanceData = @splat(BlockInstanceData{});
+
+    for (0..Chunk.length) |x| {
+        for (0..Chunk.height) |y| {
+            for (0..Chunk.length) |z| {
+                const block: BlockState = chunk.blocks[z * Chunk.length * Chunk.height + y * Chunk.length + x];
+
+                if (block.id == 0 or block.visibility == 0) continue;
+
+                const textures = (registry.getBlock(block.id) orelse unreachable).visual.cube.textures;
+
+                instances[index] = .{
+                    .position = .{
+                        @floatFromInt(chunk.position.x * 16 + @as(isize, @intCast(x))),
+                        @floatFromInt(y),
+                        @floatFromInt(chunk.position.z * 16 + @as(isize, @intCast(z))),
+                    },
+                    .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
+                    .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
+                    .visibility = @intCast(block.visibility),
+                };
+                index += 1;
+            }
+        }
+    }
+
+    buffer.instance_count = index;
+    try rdr().bufferUpdate(buffer.rid, std.mem.sliceAsBytes(instances[0..index]), 0);
 }
 
 pub const ConfigZon = struct {

@@ -156,6 +156,8 @@ pub fn build(b: *Build) !void {
     const files: []const []const u8 = &.{
         "assets/shaders/basic_cube.vert",
         "assets/shaders/basic_cube.frag",
+
+        "assets/shaders/cube_shadow.vert",
     };
 
     for (files) |file| {

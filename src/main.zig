@@ -70,7 +70,7 @@ var running = true;
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
 
-var mesh: RID = undefined;
+var cube_mesh: RID = undefined;
 var material: RID = undefined;
 
 pub var the_world: World = undefined;
@@ -204,29 +204,17 @@ pub fn mainDesktop() !void {
         .driver = .vulkan,
         .resizable = true,
     });
+    defer window.deinit();
 
     try Renderer.create(allocator, .vulkan);
     try rdr().createDevice(&window, null);
+    defer rdr().destroy();
+
     try rdr().imguiInit(&window, rdr().getOutputRenderPass());
 
     const size = window.size();
 
     try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
-
-    render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
-        .attachments = .{ .color = true, .depth = true },
-        .max_draw_calls = 32 * 32,
-    });
-
-    // shadow_pass = try ShadowPass.init(.{});
-    // shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
-
-    // render_graph_pass.dependsOn(&shadow_graph_pass);
-
-    graph = Graph.init(allocator);
-    graph.main_render_pass = &render_graph_pass;
-
-    mesh = try createCube();
 
     const shader_model = try ShaderModel.init(allocator, .{
         .shaders = &.{
@@ -258,6 +246,24 @@ pub fn mainDesktop() !void {
     });
     defer shader_model.deinit();
 
+    render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
+        .max_draw_calls = 32 * 32,
+    });
+    defer render_graph_pass.deinit();
+
+    shadow_pass = try ShadowPass.init(.{ .allocator = allocator });
+    defer shadow_pass.deinit();
+
+    shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
+
+    // render_graph_pass.dependsOn(&shadow_graph_pass);
+
+    graph = Graph.init(allocator);
+    graph.main_render_pass = &render_graph_pass;
+
+    cube_mesh = try createCube();
+    defer rdr().freeRid(cube_mesh);
+
     var registry = Registry.init(allocator);
 
     try registry.registerBlockFromFile("dirt.zon", .{});
@@ -288,15 +294,20 @@ pub fn mainDesktop() !void {
     the_world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = args.options.seed,
     });
+    try the_world.createBuffers(10);
     try the_world.startWorkers(&registry);
-
     defer the_world.deinit();
+
+    render_graph_pass.addImguiHook(&statsDebugHook);
 
     input.init(&window);
 
     while (running) {
         try update(&window, &the_world);
     }
+
+    world_gen.deinit();
+    rdr().freeRid(registry.image_array orelse unreachable);
 }
 
 fn update(window: *Window, world: *World) !void {
@@ -335,21 +346,28 @@ fn update(window: *Window, world: *World) !void {
     render_graph_pass.reset();
     render_graph_pass.view_matrix = view_matrix;
 
-    {
-        world.chunks_lock.lock();
-        defer world.chunks_lock.unlock();
-
-        var chunk_iter = world.chunks.valueIterator();
-
-        while (chunk_iter.next()) |chunk| render_graph_pass.drawInstanced(mesh, material, chunk.instance_buffer, 0, rdr().meshGetIndicesCount(mesh), 0, chunk.instance_count);
-
-        try rdr().processGraph(&graph);
-    }
+    try the_world.encodeDrawCalls(cube_mesh, &shadow_graph_pass, shadow_pass.material, &render_graph_pass, material);
+    try rdr().processGraph(&graph);
 
     // const time_after = std.time.microTimestamp();
     // const elapsed = time_after - time_before;
 
     // rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
+}
+
+fn statsDebugHook(render_pass: *Graph.RenderPass) void {
+    _ = render_pass;
+
+    if (dcimgui.ImGui_Begin("Statistics", null, 0)) {
+        const stats = rdr().getStatistics();
+
+        var buf: [128]u8 = undefined;
+
+        dcimgui.ImGui_Text("Primitves  : %zu", stats.primitives_drawn);
+        dcimgui.ImGui_Text("GPU Time   : %.2f", stats.gpu_time);
+        dcimgui.ImGui_Text("GPU Memory : %s", (std.fmt.bufPrintZ(&buf, "{:.2}", .{std.fmt.fmtIntSizeBin(@intCast(stats.vram_used))}) catch unreachable).ptr);
+    }
+    dcimgui.ImGui_End();
 }
 
 const wgpu = @import("webgpu");

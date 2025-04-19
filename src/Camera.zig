@@ -48,7 +48,7 @@ pub fn updateCamera(self: *Self, world: *World) void {
         }
     }
 
-    @import("root").the_world.updateWorldAround(self.position[0], self.position[2], 11) catch unreachable;
+    @import("root").the_world.updateWorldAround(self.position[0], self.position[2]) catch unreachable;
 }
 
 pub fn getViewMatrix(self: *const Self) Mat {

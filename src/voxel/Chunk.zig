@@ -7,13 +7,6 @@ const Registry = @import("../voxel/Registry.zig");
 const Renderer = @import("../render/Renderer.zig");
 const RID = Renderer.RID;
 
-pub const BlockInstanceData = extern struct {
-    position: [3]f32 = .{ 0.0, 0.0, 0.0 },
-    textures0: [3]f32 = .{ 0.0, 0.0, 0.0 },
-    textures1: [3]f32 = .{ 0.0, 0.0, 0.0 },
-    visibility: u32 = 0,
-};
-
 const rdr = Renderer.rdr;
 
 pub const length = 16;
@@ -33,17 +26,7 @@ pub const LocalPos = packed struct(u16) {
 
 position: Pos,
 blocks: [block_count]BlockState = @splat(BlockState{}),
-
-/// GPU buffer used to store block instances.
-instance_buffer_created: bool = false,
-instance_buffer: RID = undefined,
-instance_count: usize = 0,
-
-pub fn deinit(self: *const Self) void {
-    rdr().waitIdle(); // TODO: Not optimal
-
-    rdr().freeRid(self.instance_buffer);
-}
+instance_buffer_index: usize = ~@as(usize, 0),
 
 pub fn getBlockState(self: *const Self, x: usize, y: usize, z: usize) ?BlockState {
     const block: BlockState = self.blocks[z * length * height + y * length + x];
@@ -114,39 +97,4 @@ pub fn computeVisibility(
             }
         }
     }
-}
-
-pub fn rebuildInstanceBuffer(self: *Self, registry: *const Registry) !void {
-    if (!self.instance_buffer_created)
-        self.instance_buffer = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * block_count, .usage = .{ .transfer_dst = true, .vertex_buffer = true } });
-
-    var index: usize = 0;
-    var instances: [block_count]BlockInstanceData = @splat(BlockInstanceData{});
-
-    for (0..length) |x| {
-        for (0..height) |y| {
-            for (0..length) |z| {
-                const block: BlockState = self.blocks[z * length * height + y * length + x];
-
-                if (block.id == 0 or block.visibility == 0) continue;
-
-                const textures = (registry.getBlock(block.id) orelse unreachable).visual.cube.textures;
-
-                instances[index] = .{
-                    .position = .{
-                        @floatFromInt(self.position.x * 16 + @as(isize, @intCast(x))),
-                        @floatFromInt(y),
-                        @floatFromInt(self.position.z * 16 + @as(isize, @intCast(z))),
-                    },
-                    .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
-                    .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
-                    .visibility = @intCast(block.visibility),
-                };
-                index += 1;
-            }
-        }
-    }
-
-    self.instance_count = index;
-    try rdr().bufferUpdate(self.instance_buffer, std.mem.sliceAsBytes(instances[0..index]), 0);
 }

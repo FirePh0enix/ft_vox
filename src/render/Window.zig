@@ -68,8 +68,8 @@ pub fn getVkGetInstanceProcAddr(self: *const Self) *const fn () callconv(.c) voi
     return sdl.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse unreachable;
 }
 
-pub fn createVkSurface(self: *const Self, instance: vk.Instance) vk.SurfaceKHR {
+pub fn createVkSurface(self: *const Self, instance: vk.Instance, callbacks: ?*const vk.AllocationCallbacks) vk.SurfaceKHR {
     var surface: sdl.VkSurfaceKHR = undefined;
-    _ = sdl.SDL_Vulkan_CreateSurface(self.handle, @ptrFromInt(@intFromEnum(instance)), null, &surface); // TODO: Check errors
+    _ = sdl.SDL_Vulkan_CreateSurface(self.handle, @ptrFromInt(@intFromEnum(instance)), @ptrCast(callbacks), &surface); // TODO: Check errors
     return @enumFromInt(@intFromPtr(surface));
 }

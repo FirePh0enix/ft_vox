@@ -8,6 +8,8 @@ const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 const Rect = Renderer.Rect;
 
+const rdr = Renderer.rdr;
+
 allocator: Allocator,
 main_render_pass: ?*RenderPass = null,
 
@@ -45,13 +47,7 @@ pub const PushConstants = extern struct {
     view_matrix: zm.Mat,
 };
 
-pub const RenderPassAttachments = packed struct {
-    color: bool = false,
-    depth: bool = false,
-};
-
 pub const RenderPassOptions = struct {
-    attachments: RenderPassAttachments = .{},
     target: RenderTarget = .{},
     max_draw_calls: usize = 0,
 };
@@ -64,7 +60,6 @@ pub const RenderPass = struct {
     render_pass: RID,
 
     target: RenderTarget,
-    attachments: RenderPassAttachments,
 
     view_matrix: zm.Mat = zm.identity(),
 
@@ -82,10 +77,16 @@ pub const RenderPass = struct {
         return .{
             .allocator = allocator,
             .target = options.target,
-            .attachments = options.attachments,
             .draw_calls = draw_calls,
             .render_pass = render_pass,
         };
+    }
+
+    pub fn deinit(self: *RenderPass) void {
+        self.dependencies.deinit(self.allocator);
+        self.draw_calls.deinit(self.allocator);
+        self.hooks.deinit(self.allocator);
+        self.imgui_hooks.deinit(self.allocator);
     }
 
     pub fn dependsOn(self: *RenderPass, dep: *RenderPass) void {
