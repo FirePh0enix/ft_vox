@@ -10,7 +10,8 @@ const Registry = @import("voxel/Registry.zig");
 const Renderer = @import("render/Renderer.zig");
 const RID = Renderer.RID;
 const Graph = @import("render/Graph.zig");
-const Biome = @import("biome.zig");
+const Biome = @import("Biome.zig");
+
 
 const rdr = Renderer.rdr;
 

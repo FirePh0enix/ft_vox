@@ -274,6 +274,8 @@ pub fn mainDesktop() !void {
     try registry.registerBlockFromFile("savanna_dirt.zon", .{});
     try registry.registerBlockFromFile("snow_dirt.zon", .{});
     try registry.registerBlockFromFile("sand.zon", .{});
+    try registry.registerBlockFromFile("snow.zon", .{});
+
 
     try registry.lock();
 
