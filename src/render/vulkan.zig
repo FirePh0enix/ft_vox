@@ -841,6 +841,11 @@ pub const VulkanRenderer = struct {
 
         std.debug.assert(s.len <= buffer.size - offset);
 
+        // Nothing to update, skip it otherwise `bufferCreate` will fail.
+        if (s.len == 0) {
+            return;
+        }
+
         var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
         const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
         defer self.bufferDestroy(staging_buffer_rid);
