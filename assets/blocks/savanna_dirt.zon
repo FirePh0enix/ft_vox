@@ -1,0 +1,15 @@
+.{
+    .name = "savanna_grass",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "Savanna_Side.png",
+                "Savanna_Side.png",
+                "Savanna_Side.png",
+                "Savanna_Side.png",
+                "Savanna_Top.png",
+                "Dirt.png",
+            },
+        },
+    },
+}

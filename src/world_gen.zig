@@ -10,6 +10,7 @@ const Registry = @import("voxel/Registry.zig");
 const Renderer = @import("render/Renderer.zig");
 const RID = Renderer.RID;
 const Graph = @import("render/Graph.zig");
+const Biome = @import("biome.zig");
 
 const rdr = Renderer.rdr;
 
@@ -30,6 +31,17 @@ var w_imgui_id: c_ulonglong = undefined;
 var pv_imgui_id: c_ulonglong = undefined;
 var h_imgui_id: c_ulonglong = undefined;
 var biome_imgui_id: c_ulonglong = undefined;
+
+const air = 0;
+const water = 1;
+const deep_water = 2;
+const stone = 3;
+const dirt = 4;
+const grass = 5;
+const savanna_dirt = 6;
+const snow_dirt = 7;
+const sand = 8;
+const snow = 9;
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
     const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
@@ -56,12 +68,12 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             const fx: f32 = @floatFromInt(x);
             const fz: f32 = @floatFromInt(z);
 
-            const noise = getNoise(&world, fx, fz);
+            const noise = Biome.getNoise(&world, fx, fz);
 
-            const temp_level = getTemperatureLevel(noise.temperature);
+            const temp_level = Biome.getTemperatureLevel(noise.temperature);
             temp_pixels[x + z * (width * 16)] = temp_level.getColor();
 
-            const hum_level: f32 = @as(f32, @floatFromInt(getHumidityLevel(noise.humidity))) / 5.0;
+            const hum_level: f32 = @as(f32, @floatFromInt(Biome.getHumidityLevel(noise.humidity))) / 5.0;
             hum_pixels[x + z * (width * 16)] = @intFromFloat(hum_level * 255);
 
             // const c_level = @as(f32, @floatFromInt(@intFromEnum(getContinentalnessLevel(noise.continentalness)))) / 6.0;
@@ -70,7 +82,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
             const c_level = (noise.continentalness + 1) / 2;
             c_pixels[x + z * (width * 16)] = @intFromFloat(c_level * 255);
 
-            const erosion_level: f32 = @as(f32, @floatFromInt(getErosionLevel(noise.erosion))) / 6.0;
+            const erosion_level: f32 = @as(f32, @floatFromInt(Biome.getErosionLevel(noise.erosion))) / 6.0;
             e_pixels[x + z * (width * 16)] = @intFromFloat(erosion_level * 255);
 
             w_pixels[x + z * (width * 16)] = @intFromFloat((noise.weirdness + 1) / 2 * 255);
@@ -78,7 +90,7 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
 
             // h_pixels[x + z * (width * 16)] = @intCast(generateHeight(@floatFromInt(x), @floatFromInt(z), @floatFromInt(settings.sea_level)));
 
-            const biome = getBiome(noise);
+            const biome = Biome.getBiome(noise);
             biome_pixels[x + z * (width * 16)] = biome.getColor();
         }
     }
@@ -168,13 +180,13 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
     const x = -render_pass.view_matrix[0][3];
     const z = -render_pass.view_matrix[2][3];
 
-    const noise = getNoise(&@import("root").the_world, x, z);
+    const noise = Biome.getNoise(&@import("root").the_world, x, z);
 
     if (dcimgui.ImGui_Begin("WorldGen", null, 0)) {
         dcimgui.ImGui_Text("t = %.2f | h = %.2f | c = %.2f | e = %.2f | d = ???\n", noise.temperature, noise.humidity, noise.continentalness, noise.erosion);
         dcimgui.ImGui_Text("w = %.2f | pv = %.2f | as = ??? | n = ???\n", noise.weirdness, noise.peaks_and_valleys);
 
-        dcimgui.ImGui_Text("el = %d\n", getErosionLevel(noise.erosion));
+        dcimgui.ImGui_Text("el = %d\n", Biome.getErosionLevel(noise.erosion));
 
         dcimgui.ImGui_Text("Temperature | Humidity\n");
         dcimgui.ImGui_Image(temp_imgui_id, .{ .x = 100, .y = 100 });
@@ -198,14 +210,6 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
     dcimgui.ImGui_End();
 }
 
-const air = 0;
-const dirt = 1;
-const grass = 2;
-const water = 3;
-const stone = 4;
-const sand = 5;
-const snow = 6;
-
 // https://www.youtube.com/watch?v=CSa5O6knuwI
 // https://minecraft.wiki/w/World_generation
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
@@ -219,19 +223,41 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
             const fx: f32 = @floatFromInt(chunk_x * 16 + @as(isize, @intCast(x)));
             const fz: f32 = @floatFromInt(chunk_z * 16 + @as(isize, @intCast(z)));
 
-            const noise = getNoise(world, fx, fz);
-            const biome = getBiome(noise);
+            const noise = Biome.getNoise(world, fx, fz);
+            const biome = Biome.getBiome(noise);
 
-            const baseLevel: f32 = getSplineLevel(world, fx, fz, biome);
-            const squishFactor: f32 = getSplineFactor(world, fx, fz);
+            const baseLevel: f32 = Biome.getSplineLevel(world, fx, fz, biome);
+            const squishFactor: f32 = Biome.getSplineFactor(world, fx, fz);
 
             for (0..256) |y| {
                 const ny = @as(f32, @floatFromInt(y));
                 const densityMod = (baseLevel - ny) * squishFactor;
                 const density = world.noise.sample3D(fx / 200.0, ny / 80.0, fz / 200.0);
 
+                // Place Block that fits to biome.
+                // TODO: Place correctly top block and bottom block by detecting If there is something above.
+                const block_id: u8 = switch (biome) {
+                    .cold_ocean, .ocean, .warm_ocean => water,
+                    .deep_cold_ocean, .deep_ocean, .deep_warm_ocean => deep_water,
+                    .mushroom_fields => grass,
+
+                    .frozen_river => water,
+                    .river => water,
+                    .stony_shore => stone,
+
+                    .snowy_beach => snow_dirt,
+                    .beach => sand,
+                    .desert => sand,
+
+                    .snowy_plains => snow_dirt,
+                    .plains, .forest, .jungle => grass,
+                    .savanna => savanna_dirt,
+                    .stony_peaks => stone,
+                    .frozen_peaks => snow_dirt,
+                };
+
                 if (density + densityMod > 0.0) {
-                    chunk.setBlockState(x, y, z, .{ .id = stone });
+                    chunk.setBlockState(x, y, z, .{ .id = block_id });
                 } else {
                     chunk.setBlockState(x, y, z, .{ .id = air });
                 }
@@ -246,311 +272,4 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
     }
 
     return chunk;
-}
-
-fn getBiomeHeightMultiplier(biome: Biome) f32 {
-    return switch (biome) {
-        .plains => 0.9,
-        .mountains => 2.0,
-        .cold_mountains => 3.5,
-        else => 1.0,
-    };
-}
-
-pub fn getSplineLevel(world: *const World, x: f32, z: f32, biome: Biome) f32 {
-    const noise = getNoise(world, x, z);
-
-    const c_height = calculateContHeight(noise.continentalness);
-    const e_height = calculateEroHeight(noise.erosion);
-    const pv_height = calculatePeaksValleyHeight(noise.weirdness);
-
-    var adjusted_c_height = c_height;
-    var adjusted_e_height = e_height;
-    var adjusted_pv_height = pv_height;
-
-    switch (biome) {
-        .plains => {
-            adjusted_c_height *= 0.9;
-            adjusted_e_height *= 1.0;
-            adjusted_pv_height *= 0.8;
-        },
-        else => {},
-    }
-
-    // clamp some biome like plain or beach to stay a constant flat value.
-    return adjusted_c_height + adjusted_e_height + adjusted_pv_height * getBiomeHeightMultiplier(biome);
-}
-
-fn calculateContHeight(cont: f32) f32 {
-    if (cont < 0.3) {
-        return std.math.lerp(25.0, 40.0, (cont + 1.0) / 1.3);
-    } else if (cont < 0.6) {
-        return std.math.lerp(40.0, 60.0, (cont - 0.3) / 0.3);
-    } else {
-        return std.math.lerp(60.0, 180.0, (cont - 0.6) / 0.4);
-    }
-}
-
-fn calculateEroHeight(e: f32) f32 {
-    return std.math.lerp(40.0, 10.0, (e + 1.0) * 0.5);
-}
-
-fn calculatePeaksValleyHeight(pv: f32) f32 {
-    if (pv < 0.0) {
-        return std.math.lerp(0.0, 5.0, (pv + 1.0));
-    } else {
-        return std.math.lerp(5.0, 50.0, pv);
-    }
-}
-
-pub fn getSplineFactor(world: *const World, x: f32, z: f32) f32 {
-    const c = calculateContFactor(getContinentalness(world, x, z));
-    const e = calculateEroFactor(getErosion(world, x, z));
-    const pv = calculateWeirdnessFactor(getWeirdness(world, x, z));
-    return c * e * pv;
-}
-
-fn calculateContFactor(c: f32) f32 {
-    return std.math.lerp(0.8, 1.2, (c + 1.0) * 0.5);
-}
-
-fn calculateEroFactor(e: f32) f32 {
-    return std.math.lerp(0.6, 1.3, (e + 1.0) * 0.5);
-}
-
-fn calculateWeirdnessFactor(pv: f32) f32 {
-    return std.math.lerp(0.7, 1.4, (pv + 1.0) * 0.5);
-}
-
-pub const Noise = struct {
-    temperature: f32,
-    humidity: f32,
-    continentalness: f32,
-    erosion: f32,
-
-    weirdness: f32,
-    peaks_and_valleys: f32,
-};
-
-pub fn getNoise(world: *const World, x: f32, z: f32) Noise {
-    const w = getWeirdness(world, x, z);
-
-    return .{
-        .temperature = getTemperature(world, x, z),
-        .humidity = getHumidity(world, x, z),
-        .continentalness = getContinentalness(world, x, z),
-        .erosion = getErosion(world, x, z),
-        .weirdness = w,
-        .peaks_and_valleys = 1.0 - @abs(3.0 * @abs(w) - 2.0),
-    };
-}
-
-fn getContinentalness(world: *const World, x: f32, z: f32) f32 {
-    return world.noise.fractal2D(4, x / 400.0, z / 400.0);
-}
-
-pub const Continentalness = enum(u32) {
-    deep_ocean,
-    ocean,
-    coast,
-    near_inland,
-    mid_inland,
-    far_inland,
-};
-
-pub fn getContinentalnessLevel(c: f32) Continentalness {
-    if (c >= -1.0 and c < -0.455) {
-        return .deep_ocean;
-    } else if (c >= -0.455 and c < -0.19) {
-        return .ocean;
-    } else if (c >= -0.19 and c < -0.11) {
-        return .coast;
-    } else if (c >= -0.11 and c < 0.03) {
-        return .near_inland;
-    } else if (c >= 0.03 and c < 0.3) {
-        return .mid_inland;
-    } else {
-        return .far_inland;
-    }
-}
-
-fn getErosion(world: *const World, x: f32, z: f32) f32 {
-    return world.noise.fractal2D(2, x / 600.0, z / 600.0);
-}
-
-pub fn getErosionLevel(e: f32) u32 {
-    std.debug.assert(e >= -1.0 and e <= 1.0);
-
-    if (e >= -1.0 and e < -0.78) {
-        return 0;
-    } else if (e >= -0.78 and e < -0.375) {
-        return 1;
-    } else if (e >= -0.375 and e < -0.2225) {
-        return 2;
-    } else if (e >= -0.2225 and e < 0.05) {
-        return 3;
-    } else if (e >= 0.05 and e < 0.45) {
-        return 4;
-    } else if (e >= 0.45 and e < 0.55) {
-        return 5;
-    } else {
-        return 6;
-    }
-}
-
-fn getWeirdness(world: *const World, x: f32, z: f32) f32 {
-    return world.noise.fractal2D(3, x / 200.0, z / 200.0);
-}
-
-pub const PeakValleys = enum(u32) {
-    valleys,
-    low,
-    mid,
-    high,
-    peaks,
-};
-
-pub fn getPeaksValleysLevel(pv: f32) PeakValleys {
-    if (pv >= -1.0 and pv < -0.85) {
-        return .valleys;
-    } else if (pv >= -0.85 and pv < -0.6) {
-        return .low;
-    } else if (pv >= -0.6 and pv < 0.2) {
-        return .mid;
-    } else if (pv >= 0.2 and pv < -0.7) {
-        return .high;
-    } else {
-        return .peaks;
-    }
-}
-
-fn getHumidity(world: *const World, x: f32, z: f32) f32 {
-    return world.noise.fractal2D(2, x / 350.0, z / 350.0);
-}
-
-pub fn getHumidityLevel(hum: f32) u32 {
-    std.debug.assert(hum >= -1.0 and hum <= 1.0);
-
-    if (hum >= -1.0 and hum < -0.35) {
-        return 0;
-    } else if (hum >= -0.35 and hum < -0.1) {
-        return 1;
-    } else if (hum >= -0.1 and hum < 0.1) {
-        return 2;
-    } else if (hum >= 0.1 and hum < 0.3) {
-        return 3;
-    } else {
-        return 4;
-    }
-}
-
-fn getTemperature(world: *const World, x: f32, z: f32) f32 {
-    return world.noise.fractal2D(1, x / 300.0, z / 300.0);
-}
-
-pub fn getTemperatureLevel(temp: f32) Temperature {
-    std.debug.assert(temp >= -1.0 and temp <= 1.0);
-
-    if (temp >= -1.0 and temp < -0.8) {
-        return .coldest;
-    } else if (temp >= -0.8 and temp < -0.15) {
-        return .cold;
-    } else if (temp >= -0.15 and temp < 0.2) {
-        return .mid;
-    } else if (temp >= 0.2 and temp < 0.55) {
-        return .hot;
-    } else {
-        return .hottest;
-    }
-}
-
-pub const Temperature = enum(u32) {
-    coldest = 0,
-    cold = 1,
-    mid = 2,
-    hot = 3,
-    hottest = 4,
-
-    pub fn getColor(self: Temperature) u32 {
-        return switch (self) {
-            .coldest => 0xffa5e2fa,
-            .cold => 0xff1673c9,
-            .mid => 0xff7f868f,
-            .hot => 0xffeb7457,
-            .hottest => 0xffd92118,
-        };
-    }
-};
-
-pub const Biome = enum {
-    deep_ocean,
-    ocean,
-    cold_ocean,
-
-    river,
-    plains,
-
-    mountains,
-    cold_mountains,
-
-    pub fn getColor(self: Biome) u32 {
-        return switch (self) {
-            .deep_ocean => 0xff212138,
-            .ocean => 0xff030364,
-            .cold_ocean => 0xff0e5682,
-
-            .river => 0xff1313d2,
-            .plains => 0xff87aa5e,
-
-            .mountains => 0xff5e4232,
-            .cold_mountains => 0xff63564f,
-        };
-    }
-};
-
-pub fn getBiome(noise: Noise) Biome {
-    const cont_level = getContinentalnessLevel(noise.continentalness);
-    const pv_level = getPeaksValleysLevel(noise.peaks_and_valleys);
-    const temp_level = getTemperatureLevel(noise.temperature);
-    const ero_level = getErosionLevel(noise.erosion);
-
-    return switch (cont_level) {
-        .deep_ocean => .deep_ocean,
-        .ocean => switch (temp_level) {
-            .coldest => .cold_ocean,
-            .cold, .mid, .hot, .hottest => .ocean,
-        },
-        .coast => switch (pv_level) {
-            .valleys => .river,
-            .low, .mid => .plains,
-            .high, .peaks => switch (temp_level) {
-                .coldest => .cold_mountains,
-                .cold, .mid, .hot, .hottest => .mountains,
-            },
-        },
-        .near_inland => switch (pv_level) {
-            .valleys => .river,
-            .low => .plains,
-            .mid, .high, .peaks => switch (temp_level) {
-                .coldest => .cold_mountains,
-                .cold, .mid, .hot, .hottest => .mountains,
-            },
-        },
-        .mid_inland => switch (pv_level) {
-            .valleys => if (ero_level >= 2) .river else .plains,
-            .low, .mid => .plains,
-            .high, .peaks => switch (temp_level) {
-                .coldest => .cold_mountains,
-                .cold, .mid, .hot, .hottest => .mountains,
-            },
-        },
-        .far_inland => switch (pv_level) {
-            .valleys => if (ero_level >= 2) .river else .plains,
-            .low, .mid => .plains,
-            .high, .peaks => switch (temp_level) {
-                .coldest => .cold_mountains,
-                .cold, .mid, .hot, .hottest => .mountains,
-            },
-        },
-    };
 }

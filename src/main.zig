@@ -266,12 +266,14 @@ pub fn mainDesktop() !void {
 
     var registry = Registry.init(allocator);
 
+    try registry.registerBlockFromFile("water.zon", .{});
+    try registry.registerBlockFromFile("deep_water.zon", .{});
+    try registry.registerBlockFromFile("stone.zon", .{});
     try registry.registerBlockFromFile("dirt.zon", .{});
     try registry.registerBlockFromFile("grass.zon", .{});
-    try registry.registerBlockFromFile("water.zon", .{});
-    try registry.registerBlockFromFile("stone.zon", .{});
+    try registry.registerBlockFromFile("savanna_dirt.zon", .{});
+    try registry.registerBlockFromFile("snow_dirt.zon", .{});
     try registry.registerBlockFromFile("sand.zon", .{});
-    try registry.registerBlockFromFile("snow.zon", .{});
 
     try registry.lock();
 

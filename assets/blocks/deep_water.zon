@@ -1,0 +1,15 @@
+.{
+    .name = "deep_water",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "Deep_Water.png",
+                "Deep_Water.png",
+                "Deep_Water.png",
+                "Deep_Water.png",
+                "Deep_Water.png",
+                "Deep_Water.png",
+            },
+        },
+    },
+}
