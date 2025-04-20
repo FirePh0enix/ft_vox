@@ -61,7 +61,7 @@ const cli = .{
 const Args = argzon.Args(cli, .{});
 
 var camera = Camera{
-    .position = .{ 10.0, 100.0, -10.0, 0.0 },
+    .position = .{ 0.0, 100.0, 0.0, 0.0 },
     .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
     .speed = 0.5,
 };
@@ -77,7 +77,6 @@ pub var the_world: World = undefined;
 
 var graph: Graph = undefined;
 pub var render_graph_pass: Graph.RenderPass = undefined;
-pub var shadow_graph_pass: Graph.RenderPass = undefined;
 
 var shadow_pass: ShadowPass = undefined;
 
@@ -130,35 +129,35 @@ pub fn createCube() !RID {
         })),
         .normals = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
             // front
-            n(.{ -0.5, -0.5, 0.5 }),
-            n(.{ 0.5, -0.5, 0.5 }),
-            n(.{ 0.5, 0.5, 0.5 }),
-            n(.{ -0.5, 0.5, 0.5 }),
+            .{ 0.0, 0.0, 1.0 },
+            .{ 0.0, 0.0, 1.0 },
+            .{ 0.0, 0.0, 1.0 },
+            .{ 0.0, 0.0, 1.0 },
             // back
-            n(.{ 0.5, -0.5, -0.5 }),
-            n(.{ -0.5, -0.5, -0.5 }),
-            n(.{ -0.5, 0.5, -0.5 }),
-            n(.{ 0.5, 0.5, -0.5 }),
+            .{ 0.0, 0.0, -1.0 },
+            .{ 0.0, 0.0, -1.0 },
+            .{ 0.0, 0.0, -1.0 },
+            .{ 0.0, 0.0, -1.0 },
             // left
-            n(.{ -0.5, -0.5, -0.5 }),
-            n(.{ -0.5, -0.5, 0.5 }),
-            n(.{ -0.5, 0.5, 0.5 }),
-            n(.{ -0.5, 0.5, -0.5 }),
+            .{ 1.0, 0.0, 0.0 },
+            .{ 1.0, 0.0, 0.0 },
+            .{ 1.0, 0.0, 0.0 },
+            .{ 1.0, 0.0, 0.0 },
             // right
-            n(.{ 0.5, -0.5, 0.5 }),
-            n(.{ 0.5, -0.5, -0.5 }),
-            n(.{ 0.5, 0.5, -0.5 }),
-            n(.{ 0.5, 0.5, 0.5 }),
+            .{ -1.0, 0.0, 0.0 },
+            .{ -1.0, 0.0, 0.0 },
+            .{ -1.0, 0.0, 0.0 },
+            .{ -1.0, 0.0, 0.0 },
             // top
-            n(.{ -0.5, 0.5, 0.5 }),
-            n(.{ 0.5, 0.5, 0.5 }),
-            n(.{ 0.5, 0.5, -0.5 }),
-            n(.{ -0.5, 0.5, -0.5 }),
+            .{ 0.0, 1.0, 0.0 },
+            .{ 0.0, 1.0, 0.0 },
+            .{ 0.0, 1.0, 0.0 },
+            .{ 0.0, 1.0, 0.0 },
             // bottom
-            n(.{ -0.5, -0.5, -0.5 }),
-            n(.{ 0.5, -0.5, -0.5 }),
-            n(.{ 0.5, -0.5, 0.5 }),
-            n(.{ -0.5, -0.5, 0.5 }),
+            .{ 0.0, -1.0, 0.0 },
+            .{ 0.0, -1.0, 0.0 },
+            .{ 0.0, -1.0, 0.0 },
+            .{ 0.0, -1.0, 0.0 },
         })),
         .texture_coords = std.mem.sliceAsBytes(@as([]const [2]f32, &.{
             .{ 0.0, 0.0 },
@@ -193,6 +192,9 @@ pub fn createCube() !RID {
         })),
     });
 }
+
+var light_rotation: zm.Vec = .{ 1.45, std.math.pi / 2.0, 0.0, 0.0 };
+var light_matrix: zm.Mat = undefined;
 
 pub fn mainDesktop() !void {
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
@@ -239,6 +241,8 @@ pub fn mainDesktop() !void {
         .descriptors = &.{
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // texture array
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 1, .stage = .fragment }, // shadow texture
+            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 2, .stage = .fragment }, // light buffer
+            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 3, .stage = .vertex }, // light space matrix
         },
         .push_constants = &.{
             ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
@@ -254,9 +258,7 @@ pub fn mainDesktop() !void {
     shadow_pass = try ShadowPass.init(.{ .allocator = allocator });
     defer shadow_pass.deinit();
 
-    shadow_graph_pass = try shadow_pass.createRenderPass(allocator);
-
-    // render_graph_pass.dependsOn(&shadow_graph_pass);
+    render_graph_pass.dependsOn(&shadow_pass.pass);
 
     graph = Graph.init(allocator);
     graph.main_render_pass = &render_graph_pass;
@@ -276,13 +278,43 @@ pub fn mainDesktop() !void {
     try registry.registerBlockFromFile("sand.zon", .{});
     try registry.registerBlockFromFile("snow.zon", .{});
 
-
     try registry.lock();
+
+    const LightData = struct {
+        dir: [3]f32,
+    };
+
+    const light_pitch = zm.quatFromAxisAngle(.{ 1.0, 0.0, 0.0, 0.0 }, light_rotation[0]);
+    const light_yaw = zm.quatFromAxisAngle(.{ 0.0, 1.0, 0.0, 0.0 }, light_rotation[1]);
+    const light_quat = zm.normalize4(zm.qmul(light_yaw, light_pitch));
+
+    const light_proj = zm.orthographicOffCenterRh(-10.0, 10.0, -10.0, 10.0, 0.01, 1000.0);
+    const light_translation = zm.translation(0.0, 100.0, 0);
+
+    light_matrix = zm.mul(light_proj, zm.mul(zm.matFromQuat(light_quat), light_translation));
+
+    const light_buffer_rid = try rdr().bufferCreate(.{
+        .size = @sizeOf(LightData),
+        .usage = .{ .uniform_buffer = true, .transfer_dst = true },
+    });
+    const light_data: LightData = .{
+        .dir = zm.vecToArr3(zm.rotate(light_quat, .{ -1.0, 0.0, 0.0, 0.0 })),
+    };
+    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
+
+    const light_vertex_buffer_rid = try rdr().bufferCreate(.{
+        .size = @sizeOf(zm.Mat),
+        .usage = .{ .uniform_buffer = true, .transfer_dst = true },
+    });
+    try rdr().bufferUpdate(light_vertex_buffer_rid, std.mem.sliceAsBytes(zm.matToArr(light_matrix)[0..16]), 0);
 
     material = try rdr().materialCreate(.{
         .shader_model = shader_model,
         .params = &.{
             .{ .name = "textures", .type = .image },
+            .{ .name = "shadowTexture", .type = .image },
+            .{ .name = "light", .type = .uniform },
+            .{ .name = "lightVertex", .type = .uniform },
         },
     });
     try rdr().materialSetParam(material, "textures", .{
@@ -295,6 +327,19 @@ pub fn mainDesktop() !void {
             },
         },
     });
+    try rdr().materialSetParam(material, "shadowTexture", .{
+        .image = .{
+            .rid = shadow_pass.depth_image_rid,
+            .sampler = .{
+                .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
+                .min_filter = .nearest,
+                .address_mode = .{ .u = .clamp_to_edge, .v = .clamp_to_edge, .w = .clamp_to_edge },
+            },
+            .layout = .depth_stencil_read_only_optimal,
+        },
+    });
+    try rdr().materialSetParam(material, "light", .{ .uniform = light_buffer_rid });
+    try rdr().materialSetParam(material, "lightVertex", .{ .uniform = light_vertex_buffer_rid });
 
     the_world = try world_gen.generateWorld(allocator, &registry, .{
         .seed = args.options.seed,
@@ -351,7 +396,10 @@ fn update(window: *Window, world: *World) !void {
     render_graph_pass.reset();
     render_graph_pass.view_matrix = view_matrix;
 
-    try the_world.encodeDrawCalls(cube_mesh, &shadow_graph_pass, shadow_pass.material, &render_graph_pass, material);
+    shadow_pass.pass.reset();
+    shadow_pass.pass.view_matrix = light_matrix;
+
+    try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material);
     try rdr().processGraph(&graph);
 
     // const time_after = std.time.microTimestamp();

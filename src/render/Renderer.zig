@@ -96,6 +96,7 @@ pub const ImageLayout = enum {
     color_attachment_optimal,
     depth_stencil_attachment_optimal,
     shader_read_only_optimal,
+    depth_stencil_read_only_optimal,
 
     transfer_dst_optimal,
 
@@ -106,6 +107,7 @@ pub const ImageLayout = enum {
             .undefined => .undefined,
             .color_attachment_optimal => .color_attachment_optimal,
             .depth_stencil_attachment_optimal => .depth_stencil_attachment_optimal,
+            .depth_stencil_read_only_optimal => .depth_stencil_read_only_optimal,
             .shader_read_only_optimal => .shader_read_only_optimal,
             .transfer_dst_optimal => .transfer_dst_optimal,
             .present_src => .present_src_khr,
@@ -521,13 +523,7 @@ pub const MaterialParameter = struct {
 
 pub const MaterialParameterValueType = enum {
     image,
-
-    float,
-    vec2,
-    vec3,
-    vec4,
-
-    mat4,
+    uniform,
 };
 
 pub const SamplerOptions = struct {
@@ -546,14 +542,9 @@ pub const MaterialParameterValue = union(MaterialParameterValueType) {
     image: struct {
         rid: RID,
         sampler: SamplerOptions,
+        layout: ImageLayout = .shader_read_only_optimal,
     },
-
-    float: f32,
-    vec2: [2]f32,
-    vec3: [3]f32,
-    vec4: [4]f32,
-
-    mat4: [16]f32,
+    uniform: RID,
 };
 
 pub const MaterialInstanceLayout = struct {
@@ -668,6 +659,9 @@ pub const Attachment = struct {
 
 pub const RenderPassOptions = struct {
     attachments: []const Attachment,
+
+    // TODO: Workaround to not have to expose subpass.
+    transition_depth_layout: bool = false,
 };
 
 pub const RenderPassCreateError = error{

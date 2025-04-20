@@ -116,9 +116,9 @@ pub fn startWorkers(self: *Self, registry: *const Registry) !void {
 pub fn createBuffers(self: *Self, render_distance: usize) !void {
     self.render_distance = render_distance;
 
-    self.buffers_states = try .initFull(self.allocator, (render_distance + 1) * 2 * (render_distance + 1) * 2);
+    self.buffers_states = try .initFull(self.allocator, (render_distance * 2 + 1) * (render_distance * 2 + 1));
 
-    self.buffers = try self.allocator.alloc(BufferData, (render_distance + 1) * 2 * (render_distance + 1) * 2);
+    self.buffers = try self.allocator.alloc(BufferData, (render_distance * 2 + 1) * (render_distance * 2 + 1));
     for (0..self.buffers.len) |index| self.buffers[index] = .{ .rid = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }), .instance_count = 0 };
 }
 

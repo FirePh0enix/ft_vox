@@ -17,21 +17,17 @@ height: usize,
 
 material: RID,
 
-pub const Resolution = enum(u32) {
-    full = 1,
-    half = 2,
-};
+pass: Graph.RenderPass,
 
 pub const Options = struct {
-    resolution: Resolution = .full,
+    width: usize = 1024,
+    height: usize = 1024,
     allocator: std.mem.Allocator,
 };
 
 pub fn init(options: Options) !Self {
-    const size = rdr().getSize();
-
-    const res_w = size.width / @intFromEnum(options.resolution);
-    const res_h = size.height / @intFromEnum(options.resolution);
+    const res_w = options.width;
+    const res_h = options.height;
 
     const depth_image_rid = try rdr().imageCreate(.{
         .width = res_w,
@@ -50,9 +46,10 @@ pub fn init(options: Options) !Self {
                 .store_op = .store,
                 .stencil_load_op = .dont_care,
                 .stencil_store_op = .dont_care,
-                .final_layout = .depth_stencil_attachment_optimal,
+                .final_layout = .depth_stencil_read_only_optimal,
             },
         },
+        .transition_depth_layout = true,
     });
     const framebuffer_rid = try rdr().framebufferCreate(.{
         .attachments = &.{depth_image_rid},
@@ -90,6 +87,15 @@ pub fn init(options: Options) !Self {
         .shader_model = shader_model,
     });
 
+    const render_pass = try Graph.RenderPass.create(options.allocator, render_pass_rid, .{
+        .max_draw_calls = 32 * 32,
+        .target = .{
+            .framebuffer = .{ .custom = framebuffer_rid },
+            .scissor = .{ .custom = .{ .x = 0, .y = 0, .width = res_w, .height = res_h } },
+            .viewport = .{ .custom = .{ .x = 0, .y = 0, .width = res_w, .height = res_h } },
+        },
+    });
+
     return .{
         .depth_image_rid = depth_image_rid,
         .render_pass_rid = render_pass_rid,
@@ -97,23 +103,15 @@ pub fn init(options: Options) !Self {
         .width = res_w,
         .height = res_h,
         .material = material,
+        .pass = render_pass,
     };
 }
 
-pub fn deinit(self: *const Self) void {
+pub fn deinit(self: *Self) void {
+    self.pass.deinit();
+
     rdr().freeRid(self.material);
     rdr().freeRid(self.framebuffer_rid);
     rdr().freeRid(self.render_pass_rid);
     rdr().freeRid(self.depth_image_rid);
-}
-
-pub fn createRenderPass(self: *const Self, allocator: std.mem.Allocator) !Graph.RenderPass {
-    return try Graph.RenderPass.create(allocator, self.render_pass_rid, .{
-        .max_draw_calls = 32 * 32,
-        .target = .{
-            .framebuffer = .{ .custom = self.framebuffer_rid },
-            .scissor = .{ .custom = .{ .x = 0, .y = 0, .width = self.width, .height = self.height } },
-            .viewport = .{ .custom = .{ .x = 0, .y = 0, .width = self.width, .height = self.height } },
-        },
-    });
 }

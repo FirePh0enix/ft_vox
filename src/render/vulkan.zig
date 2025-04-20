@@ -470,9 +470,6 @@ pub const VulkanRenderer = struct {
 
         var clears: [4]vk.ClearValue = undefined;
 
-        clears[0] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } };
-        clears[1] = .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } };
-
         for (render_pass.attachments, 0..render_pass.attachments.len) |attach, index| {
             switch (attach.type) {
                 .color => {
@@ -1154,7 +1151,7 @@ pub const VulkanRenderer = struct {
 
                 const image = i.rid.as(VulkanImage);
 
-                const image_info: vk.DescriptorImageInfo = .{ .image_view = image.view, .sampler = sampler, .image_layout = .shader_read_only_optimal };
+                const image_info: vk.DescriptorImageInfo = .{ .image_view = image.view, .sampler = sampler, .image_layout = i.layout.asVk() };
                 const writes: []const vk.WriteDescriptorSet = &.{
                     vk.WriteDescriptorSet{
                         .dst_set = material.descriptor_set,
@@ -1170,7 +1167,26 @@ pub const VulkanRenderer = struct {
 
                 self.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
             },
-            else => unreachable,
+            .uniform => |u| {
+                const buffer = u.as(VulkanBuffer);
+
+                const buffer_info: vk.DescriptorBufferInfo = .{ .buffer = buffer.buffer, .offset = 0, .range = buffer.size };
+
+                const writes: []const vk.WriteDescriptorSet = &.{
+                    vk.WriteDescriptorSet{
+                        .dst_set = material.descriptor_set,
+                        .dst_binding = @intCast(param.binding),
+                        .dst_array_element = 0,
+                        .descriptor_count = 1,
+                        .descriptor_type = .uniform_buffer,
+                        .p_image_info = undefined,
+                        .p_buffer_info = @ptrCast(&buffer_info),
+                        .p_texel_buffer_view = undefined,
+                    },
+                };
+
+                self.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
+            },
         }
     }
 
@@ -1256,23 +1272,49 @@ pub const VulkanRenderer = struct {
             };
         }
 
-        // TODO: Modify this
-        const dependency: vk.SubpassDependency = .{
-            .src_subpass = vk.SUBPASS_EXTERNAL,
-            .dst_subpass = 0,
-            .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
-            .src_access_mask = .{},
-            .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
-        };
+        var dependencies: []const vk.SubpassDependency = undefined;
+
+        if (!options.transition_depth_layout) {
+            dependencies = &.{
+                .{
+                    .src_subpass = vk.SUBPASS_EXTERNAL,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+                    .dst_stage_mask = .{ .color_attachment_output_bit = true, .early_fragment_tests_bit = true },
+                    .src_access_mask = .{},
+                    .dst_access_mask = .{ .color_attachment_write_bit = true, .depth_stencil_attachment_write_bit = true },
+                },
+            };
+        } else {
+            dependencies = &.{
+                .{
+                    .src_subpass = vk.SUBPASS_EXTERNAL,
+                    .dst_subpass = 0,
+                    .src_stage_mask = .{ .fragment_shader_bit = true },
+                    .dst_stage_mask = .{ .early_fragment_tests_bit = true },
+                    .src_access_mask = .{ .shader_read_bit = true },
+                    .dst_access_mask = .{ .depth_stencil_attachment_write_bit = true },
+                    .dependency_flags = .{ .by_region_bit = true },
+                },
+                .{
+                    .src_subpass = 0,
+                    .dst_subpass = vk.SUBPASS_EXTERNAL,
+                    .src_stage_mask = .{ .late_fragment_tests_bit = true },
+                    .dst_stage_mask = .{ .fragment_shader_bit = true },
+                    .src_access_mask = .{ .depth_stencil_attachment_write_bit = true },
+                    .dst_access_mask = .{ .shader_read_bit = true },
+                    .dependency_flags = .{ .by_region_bit = true },
+                },
+            };
+        }
 
         const render_pass = self.device.createRenderPass(&vk.RenderPassCreateInfo{
             .attachment_count = @intCast(options.attachments.len),
             .p_attachments = &descriptions,
             .subpass_count = 1,
             .p_subpasses = @ptrCast(&subpass),
-            .dependency_count = 1,
-            .p_dependencies = @ptrCast(&dependency),
+            .dependency_count = @intCast(dependencies.len),
+            .p_dependencies = dependencies.ptr,
         }, null) catch return error.Failed;
         errdefer self.device.destroyRenderPass(render_pass, null);
 
