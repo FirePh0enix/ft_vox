@@ -12,7 +12,6 @@ const RID = Renderer.RID;
 const Graph = @import("render/Graph.zig");
 const Biome = @import("Biome.zig");
 
-
 const rdr = Renderer.rdr;
 
 var temp_image_rid: RID = undefined;
@@ -45,8 +44,7 @@ const sand = 8;
 const snow = 9;
 
 pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: World.GenerationSettings) !World {
-    const seed = settings.seed orelse @as(u64, @bitCast(std.time.timestamp()));
-    const world = World.initEmpty(allocator, seed, settings);
+    const world = World.initEmpty(allocator, settings);
 
     const width = 22;
     const depth = 22;
@@ -216,7 +214,7 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
 // https://www.reddit.com/r/VoxelGameDev/comments/zedp39/how_does_minecraft_use_2d_and_3d_noise_to/
 
-pub fn generateChunk(world: *const World, settings: World.GenerationSettings, chunk_x: isize, chunk_z: isize) !Chunk {
+pub fn generateChunk(world: *const World, chunk_x: isize, chunk_z: isize) !Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
     for (0..16) |x| {
@@ -263,8 +261,8 @@ pub fn generateChunk(world: *const World, settings: World.GenerationSettings, ch
                     chunk.setBlockState(x, y, z, .{ .id = air });
                 }
 
-                if (y < settings.sea_level) {
-                    for (y..settings.sea_level) |s| {
+                if (y < world.generation_settings.sea_level) {
+                    for (y..world.generation_settings.sea_level) |s| {
                         chunk.setBlockState(x, s, z, .{ .id = water });
                     }
                 }

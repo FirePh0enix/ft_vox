@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const world_gen = @import("../world_gen.zig");
+const wg2 = @import("wg2.zig");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -96,13 +97,14 @@ const BufferData = struct {
 
 pub fn initEmpty(
     allocator: Allocator,
-    seed: u64,
     settings: GenerationSettings,
 ) Self {
+    const seed = settings.seed orelse 0;
+
     return .{
         .allocator = allocator,
-        .seed = seed,
         .generation_settings = settings,
+        .seed = seed,
         .noise = SimplexNoise.initWithSeed(seed),
     };
 }
@@ -238,7 +240,7 @@ const ChunkLoadWorker = struct {
                 }
 
                 // TODO: How should chunk generation/load errors should be threated ?
-                var chunk = world_gen.generateChunk(world, world.generation_settings, @intCast(pos.x), @intCast(pos.z)) catch unreachable;
+                var chunk = world_gen.generateChunk(world, pos.x, pos.z) catch unreachable;
                 chunk.computeVisibility(null, null, null, null);
                 rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
 

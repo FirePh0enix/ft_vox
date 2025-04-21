@@ -341,9 +341,7 @@ pub fn mainDesktop() !void {
     try rdr().materialSetParam(material, "light", .{ .uniform = light_buffer_rid });
     try rdr().materialSetParam(material, "lightVertex", .{ .uniform = light_vertex_buffer_rid });
 
-    the_world = try world_gen.generateWorld(allocator, &registry, .{
-        .seed = args.options.seed,
-    });
+    the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
     try the_world.createBuffers(10);
     try the_world.startWorkers(&registry);
     defer the_world.deinit();
@@ -356,7 +354,6 @@ pub fn mainDesktop() !void {
         try update(&window, &the_world);
     }
 
-    world_gen.deinit();
     rdr().freeRid(registry.image_array orelse unreachable);
 }
 
