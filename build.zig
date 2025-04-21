@@ -99,21 +99,6 @@ pub fn build(b: *Build) !void {
             b.getInstallStep().dependOn(&install_icd.step);
             b.getInstallStep().dependOn(&install_lib.step);
         }
-
-        const vma = b.dependency("vma", .{});
-        exe.root_module.addCSourceFile(.{ .file = b.path("src/render/vk_mem_alloc_impl.cpp") });
-
-        const vma_translate_c = b.addTranslateC(.{
-            .root_source_file = vma.path("include/vk_mem_alloc.h"),
-            .target = target,
-            .optimize = optimize,
-        });
-        vma_translate_c.addIncludePath(vulkan_headers.path("include"));
-
-        exe.root_module.addImport("vma", vma_translate_c.createModule());
-        exe.root_module.addIncludePath(vma.path("include"));
-        exe.root_module.addIncludePath(vulkan_headers.path("include"));
-        exe.linkLibCpp();
     }
 
     // For now WebGPU is imported unconditionally or else zls does not provide completions. In the future webgpu
@@ -158,6 +143,7 @@ pub fn build(b: *Build) !void {
         "assets/shaders/basic_cube.frag",
 
         "assets/shaders/cube_shadow.vert",
+        "assets/shaders/cube_shadow.frag",
     };
 
     for (files) |file| {

@@ -258,6 +258,7 @@ pub fn mainDesktop() !void {
     shadow_pass = try ShadowPass.init(.{ .allocator = allocator });
     defer shadow_pass.deinit();
 
+    render_graph_pass.addImguiHook(&ShadowPass.debugHook);
     render_graph_pass.dependsOn(&shadow_pass.pass);
 
     graph = Graph.init(allocator);
@@ -289,7 +290,7 @@ pub fn mainDesktop() !void {
     const light_quat = zm.normalize4(zm.qmul(light_yaw, light_pitch));
 
     const light_proj = zm.orthographicOffCenterRh(-10.0, 10.0, -10.0, 10.0, 0.01, 1000.0);
-    const light_translation = zm.translation(0.0, 100.0, 0);
+    const light_translation = zm.translation(0.0, 10.0, 0);
 
     light_matrix = zm.mul(light_proj, zm.mul(zm.matFromQuat(light_quat), light_translation));
 
@@ -312,7 +313,7 @@ pub fn mainDesktop() !void {
         .shader_model = shader_model,
         .params = &.{
             .{ .name = "textures", .type = .image },
-            .{ .name = "shadowTexture", .type = .image },
+            .{ .name = "shadowMap", .type = .image },
             .{ .name = "light", .type = .uniform },
             .{ .name = "lightVertex", .type = .uniform },
         },
@@ -327,7 +328,7 @@ pub fn mainDesktop() !void {
             },
         },
     });
-    try rdr().materialSetParam(material, "shadowTexture", .{
+    try rdr().materialSetParam(material, "shadowMap", .{
         .image = .{
             .rid = shadow_pass.depth_image_rid,
             .sampler = .{

@@ -38,13 +38,15 @@ pub fn setBlockState(self: *Self, x: usize, y: usize, z: usize, state: BlockStat
     self.blocks[z * length * height + y * length + x] = state;
 }
 
-pub fn computeVisibility(
+pub fn computeVisibilityNoLock(
     self: *Self,
-    north: ?*const Self,
-    south: ?*const Self,
-    west: ?*const Self,
-    east: ?*const Self,
+    world: *const World,
 ) void {
+    const north = world.getChunk(self.position.x, self.position.z - 1);
+    const south = world.getChunk(self.position.x, self.position.z + 1);
+    const west = world.getChunk(self.position.x - 1, self.position.z);
+    const east = world.getChunk(self.position.x + 1, self.position.z);
+
     for (0..length) |x| {
         for (0..height) |y| {
             for (0..length) |z| {

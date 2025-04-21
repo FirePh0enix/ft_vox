@@ -2,14 +2,12 @@ const std = @import("std");
 const vk = @import("vulkan");
 const sdl = @import("sdl");
 const builtin = @import("builtin");
-const vma = @import("vma");
 const zm = @import("zmath");
 const zigimg = @import("zigimg");
 const dcimgui = @import("dcimgui");
 const assets = @import("../assets.zig");
 
 const Allocator = std.mem.Allocator;
-const VmaAllocator = vma.VmaAllocator;
 const Camera = @import("../Camera.zig");
 const World = @import("../voxel/World.zig");
 const Window = @import("Window.zig");
@@ -65,13 +63,14 @@ pub const VulkanRenderer = struct {
     render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
     in_flight_fences: [max_frames_in_flight]vk.Fence,
 
+    // Device memory allocation
+    memory_properties: vk.PhysicalDeviceMemoryProperties,
+
     output_render_pass: RID,
     pipeline_cache: PipelineCache = .{},
 
     /// Buffer used when transfering data from buffer to buffer.
     transfer_command_buffer: vk.CommandBufferProxy,
-
-    vma_allocator: VmaAllocator,
 
     features: Features,
     statistics: Renderer.Statistics = .{},
@@ -329,18 +328,7 @@ pub const VulkanRenderer = struct {
             self.in_flight_fences[index] = try self.device.createFence(&vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } }, null);
         }
 
-        // Create the VmaAllocator
-        if (vma.vmaCreateAllocator(&vma.VmaAllocatorCreateInfo{
-            .flags = if (features.vk_memory_budget) vma.VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT else 0,
-            .vulkanApiVersion = @bitCast(vk.API_VERSION_1_2),
-            .physicalDevice = @ptrFromInt(@as(usize, @intFromEnum(self.physical_device))),
-            .device = @ptrFromInt(@as(usize, @intFromEnum(device_handle))),
-            .instance = @ptrFromInt(@as(usize, @intFromEnum(instance_handle))),
-            .pVulkanFunctions = @ptrCast(&vma.VmaVulkanFunctions{
-                .vkGetInstanceProcAddr = @ptrCast(get_instance_proc_addr),
-                .vkGetDeviceProcAddr = @ptrCast(get_device_proc_addr),
-            }),
-        }, &self.vma_allocator) != vma.VK_SUCCESS) return error.Internal;
+        self.memory_properties = self.instance.getPhysicalDeviceMemoryProperties(self.physical_device);
 
         // Allocate a command buffer to transfer data between buffers.
         var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
@@ -567,19 +555,19 @@ pub const VulkanRenderer = struct {
     }
 
     pub fn getStatistics(self: *const VulkanRenderer) Renderer.Statistics {
-        var total_vram: usize = 0;
+        // var total_vram: usize = 0;
 
-        var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
-        vma.vmaGetHeapBudgets(self.vma_allocator, &budgets);
-        var index: usize = 0;
-        while (index < @as(usize, @intCast(vma.VK_MAX_MEMORY_HEAPS))) : (index += 1) {
-            total_vram += budgets[index].statistics.allocationBytes;
-        }
+        // var budgets: [vma.VK_MAX_MEMORY_HEAPS]vma.VmaBudget = @splat(.{});
+        // vma.vmaGetHeapBudgets(self.vma_allocator, &budgets);
+        // var index: usize = 0;
+        // while (index < @as(usize, @intCast(vma.VK_MAX_MEMORY_HEAPS))) : (index += 1) {
+        //     total_vram += budgets[index].statistics.allocationBytes;
+        // }
 
         return .{
             .gpu_time = self.statistics.gpu_time,
             .primitives_drawn = self.statistics.primitives_drawn,
-            .vram_used = total_vram,
+            .vram_used = 0,
         };
     }
 
@@ -768,8 +756,8 @@ pub const VulkanRenderer = struct {
         }, null) catch return error.Failed;
     }
 
-    pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID) Renderer.ImGuiAddTextureError!c_ulonglong {
-        return @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), dcimgui.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID, layout: Renderer.ImageLayout) Renderer.ImGuiAddTextureError!c_ulonglong {
+        return @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), @intCast(@intFromEnum(layout.asVk()))));
     }
 
     pub fn imguiRemoveTexture(self: *VulkanRenderer, id: c_ulonglong) void {
@@ -783,7 +771,7 @@ pub const VulkanRenderer = struct {
 
     pub fn freeRid(self: *VulkanRenderer, rid: RID) void {
         if (rid.tryAs(VulkanBuffer)) |buffer| {
-            vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.buffer)), buffer.allocation);
+            buffer.deinit(self);
         } else if (rid.tryAs(VulkanImage)) |image| {
             image.deinit(self);
         } else if (rid.tryAs(VulkanFramebuffer)) |framebuffer| {
@@ -804,36 +792,37 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn bufferCreate(self: *const VulkanRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
-        const alloc_info: vma.VmaAllocationCreateInfo = .{
-            .usage = switch (options.alloc_usage) {
-                .gpu_only => vma.VMA_MEMORY_USAGE_GPU_ONLY,
-                .cpu_to_gpu => vma.VMA_MEMORY_USAGE_CPU_TO_GPU,
-            },
+        const alloc_flags: vk.MemoryPropertyFlags = switch (options.alloc_usage) {
+            .gpu_only => .{ .device_local_bit = true },
+            .cpu_to_gpu => .{ .device_local_bit = true, .host_visible_bit = true },
         };
 
-        const buffer_info: vk.BufferCreateInfo = .{
+        const buffer = self.device.createBuffer(&vk.BufferCreateInfo{
             .size = @intCast(options.size),
             .usage = options.usage.asVk(),
             .sharing_mode = .exclusive,
+        }, null) catch return error.Failed;
+        errdefer self.device.destroyBuffer(buffer, null);
+
+        const memory = self.allocMemoryForBuffer(buffer, alloc_flags) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfDeviceMemory => return error.OutOfDeviceMemory,
+            else => return error.Failed,
         };
+        errdefer self.device.freeMemory(memory, null);
 
-        var buffer: vk.Buffer = undefined;
-        var allocation: vma.VmaAllocation = undefined;
+        // var buffer: vk.Buffer = undefined;
+        // var allocation: vma.VmaAllocation = undefined;
 
-        if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
-            return error.Failed;
-        }
+        // if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
+        //     return error.Failed;
+        // }
 
         return .{ .inner = @intFromPtr(try createWithInit(VulkanBuffer, self.allocator, .{
             .size = options.size,
             .buffer = buffer,
-            .allocation = allocation,
+            .memory = memory,
         })) };
-    }
-
-    pub fn bufferDestroy(self: *VulkanRenderer, buffer_rid: RID) void {
-        const buffer = buffer_rid.as(VulkanBuffer);
-        vma.vmaDestroyBuffer(self.vma_allocator, @ptrFromInt(@intFromEnum(buffer.buffer)), buffer.allocation);
     }
 
     pub fn bufferUpdate(self: *VulkanRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
@@ -848,7 +837,7 @@ pub const VulkanRenderer = struct {
 
         var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
         const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
-        defer self.bufferDestroy(staging_buffer_rid);
+        defer self.freeRid(staging_buffer_rid);
 
         {
             const map_data = try self.bufferMap(staging_buffer_rid);
@@ -883,11 +872,7 @@ pub const VulkanRenderer = struct {
     pub fn bufferMap(self: *VulkanRenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
         const buffer = buffer_rid.as(VulkanBuffer);
 
-        var data: ?*anyopaque = null;
-
-        if (vma.vmaMapMemory(self.vma_allocator, buffer.allocation, &data) != vma.VK_SUCCESS) {
-            return error.Failed;
-        }
+        const data: ?*anyopaque = self.device.mapMemory(buffer.memory, 0, buffer.size, .{}) catch return error.Failed;
 
         if (data) |ptr| {
             return @as([*]u8, @ptrCast(ptr))[0..buffer.size];
@@ -898,7 +883,7 @@ pub const VulkanRenderer = struct {
 
     pub fn bufferUnmap(self: *VulkanRenderer, buffer_rid: RID) void {
         const buffer = buffer_rid.as(VulkanBuffer);
-        vma.vmaUnmapMemory(self.vma_allocator, buffer.allocation);
+        self.device.unmapMemory(buffer.memory);
     }
 
     //
@@ -906,7 +891,7 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn imageCreate(self: *VulkanRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
-        const image_info: vk.ImageCreateInfo = .{
+        const image = self.device.createImage(&vk.ImageCreateInfo{
             .image_type = .@"2d",
             .format = options.format.asVk(),
             .extent = .{ .width = @intCast(options.width), .height = @intCast(options.height), .depth = 1 },
@@ -917,18 +902,15 @@ pub const VulkanRenderer = struct {
             .initial_layout = .undefined,
             .tiling = options.tiling.asVk(),
             .usage = options.usage.asVk(),
+        }, null) catch return error.Failed;
+        errdefer self.device.destroyImage(image, null);
+
+        const memory = self.allocMemoryForImage(image, .{ .device_local_bit = true }) catch |e| switch (e) {
+            error.OutOfDeviceMemory => return error.OutOfDeviceMemory,
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.Failed,
         };
-
-        const alloc_info: vma.VmaAllocationCreateInfo = .{
-            .usage = vma.VMA_MEMORY_USAGE_GPU_ONLY,
-        };
-
-        var image: vk.Image = .null_handle;
-        var alloc: vma.VmaAllocation = undefined;
-
-        if (vma.vmaCreateImage(self.vma_allocator, @ptrCast(&image_info), @ptrCast(&alloc_info), @ptrCast(&image), &alloc, null) != vma.VK_SUCCESS)
-            return error.OutOfDeviceMemory;
-        errdefer vma.vmaDestroyImage(self.vma_allocator, @ptrFromInt(@as(usize, @intFromEnum(image))), alloc);
+        errdefer self.device.freeMemory(memory, null);
 
         const image_view = self.device.createImageView(&vk.ImageViewCreateInfo{
             .image = image,
@@ -955,7 +937,7 @@ pub const VulkanRenderer = struct {
             .size = options.format.sizeBytes() * options.width * options.height,
             .image = image,
             .view = image_view,
-            .allocation = alloc,
+            .memory = memory,
             .layout = .undefined,
             .aspect_mask = options.aspect_mask.asVk(),
         })) };
@@ -985,7 +967,7 @@ pub const VulkanRenderer = struct {
             .image = image,
             .external_image = true,
             .view = image_view,
-            .allocation = undefined,
+            .memory = undefined,
             .layout = .undefined,
             .aspect_mask = .{ .color_bit = true },
         })) };
@@ -998,7 +980,7 @@ pub const VulkanRenderer = struct {
 
         var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
         const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
-        defer self.bufferDestroy(staging_buffer_rid);
+        defer self.freeRid(staging_buffer_rid);
 
         {
             const map_data = try self.bufferMap(staging_buffer_rid);
@@ -1488,6 +1470,53 @@ pub const VulkanRenderer = struct {
         };
     }
 
+    fn allocMemoryForImage(self: *const VulkanRenderer, image: vk.Image, flags: vk.MemoryPropertyFlags) error{ InvalidParam, OutOfMemory, OutOfDeviceMemory }!vk.DeviceMemory {
+        const memory_requirements: vk.MemoryRequirements = self.device.getImageMemoryRequirements(image);
+        const device_memory = self.device.allocateMemory(&vk.MemoryAllocateInfo{
+            .memory_type_index = self.findMemoryTypeIndex(memory_requirements.memory_type_bits, flags) orelse return error.InvalidParam,
+            .allocation_size = memory_requirements.size,
+        }, null) catch |e| switch (e) {
+            error.OutOfHostMemory => return error.OutOfMemory,
+            else => return error.OutOfDeviceMemory,
+        };
+        self.device.bindImageMemory(image, device_memory, 0) catch |e| switch (e) {
+            error.OutOfHostMemory => return error.OutOfMemory,
+            else => return error.OutOfDeviceMemory,
+        };
+        return device_memory;
+    }
+
+    fn allocMemoryForBuffer(self: *const VulkanRenderer, buffer: vk.Buffer, flags: vk.MemoryPropertyFlags) error{ InvalidParam, OutOfMemory, OutOfDeviceMemory }!vk.DeviceMemory {
+        const memory_requirements: vk.MemoryRequirements = self.device.getBufferMemoryRequirements(buffer);
+        const device_memory = self.device.allocateMemory(&vk.MemoryAllocateInfo{
+            .memory_type_index = self.findMemoryTypeIndex(memory_requirements.memory_type_bits, flags) orelse return error.InvalidParam,
+            .allocation_size = memory_requirements.size,
+        }, null) catch |e| switch (e) {
+            error.OutOfHostMemory => return error.OutOfMemory,
+            else => return error.OutOfDeviceMemory,
+        };
+        self.device.bindBufferMemory(buffer, device_memory, 0) catch |e| switch (e) {
+            error.OutOfHostMemory => return error.OutOfMemory,
+            else => return error.OutOfDeviceMemory,
+        };
+        return device_memory;
+    }
+
+    /// Find the index of a memory types with all the required properties bits.
+    fn findMemoryTypeIndex(self: *const VulkanRenderer, type_bits: u32, properties: vk.MemoryPropertyFlags) ?u32 {
+        var bits = type_bits;
+
+        for (0..@as(usize, @intCast(self.memory_properties.memory_type_count))) |i| {
+            if ((bits & 1) == 1 and self.memory_properties.memory_types[i].property_flags.contains(properties)) {
+                return @intCast(i);
+            }
+
+            bits >>= 1;
+        }
+
+        return null;
+    }
+
     const DeviceWithInfo = struct {
         physical_device: vk.PhysicalDevice,
         properties: vk.PhysicalDeviceProperties,
@@ -1659,7 +1688,12 @@ pub const VulkanBuffer = struct {
     signature: usize = resource_signature,
     size: usize,
     buffer: vk.Buffer,
-    allocation: vma.VmaAllocation,
+    memory: vk.DeviceMemory,
+
+    pub fn deinit(self: *const VulkanBuffer, r: *VulkanRenderer) void {
+        r.device.freeMemory(self.memory, null);
+        r.device.destroyBuffer(self.buffer, null);
+    }
 };
 
 pub const VulkanImage = struct {
@@ -1677,14 +1711,17 @@ pub const VulkanImage = struct {
     image: vk.Image,
     external_image: bool = false,
     view: vk.ImageView,
-    allocation: vma.VmaAllocation,
+    memory: vk.DeviceMemory,
 
     layout: vk.ImageLayout,
     aspect_mask: vk.ImageAspectFlags,
 
     pub fn deinit(self: *const VulkanImage, r: *VulkanRenderer) void {
         r.device.destroyImageView(self.view, null);
-        if (!self.external_image) vma.vmaDestroyImage(r.vma_allocator, @ptrFromInt(@intFromEnum(self.image)), self.allocation);
+        if (!self.external_image) {
+            r.device.freeMemory(self.memory, null);
+            r.device.destroyImage(self.image, null);
+        }
     }
 };
 

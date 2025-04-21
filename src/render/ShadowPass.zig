@@ -1,4 +1,5 @@
 const std = @import("std");
+const dcimgui = @import("dcimgui");
 
 const Self = @This();
 const Graph = @import("Graph.zig");
@@ -18,6 +19,9 @@ height: usize,
 material: RID,
 
 pass: Graph.RenderPass,
+
+var global_depth_image_rid: RID = undefined;
+var global_depth_imgui_id: c_ulonglong = undefined;
 
 pub const Options = struct {
     width: usize = 1024,
@@ -61,6 +65,7 @@ pub fn init(options: Options) !Self {
     const shader_model = try ShaderModel.init(options.allocator, .{
         .shaders = &.{
             .{ .path = "cube_shadow.vert.spv", .stage = .vertex },
+            .{ .path = "cube_shadow.frag.spv", .stage = .fragment },
         },
         .buffers = &.{
             ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
@@ -96,6 +101,9 @@ pub fn init(options: Options) !Self {
         },
     });
 
+    global_depth_image_rid = depth_image_rid;
+    global_depth_imgui_id = try rdr().imguiAddTexture(global_depth_image_rid, .depth_stencil_read_only_optimal);
+
     return .{
         .depth_image_rid = depth_image_rid,
         .render_pass_rid = render_pass_rid,
@@ -105,6 +113,15 @@ pub fn init(options: Options) !Self {
         .material = material,
         .pass = render_pass,
     };
+}
+
+pub fn debugHook(render_pass: *Graph.RenderPass) void {
+    _ = render_pass;
+
+    if (dcimgui.ImGui_Begin("Shadow", null, 0)) {
+        dcimgui.ImGui_Image(global_depth_imgui_id, .{ .x = 200, .y = 200 });
+    }
+    dcimgui.ImGui_End();
 }
 
 pub fn deinit(self: *Self) void {

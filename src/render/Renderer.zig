@@ -42,6 +42,7 @@ pub const AllocUsage = enum {
 
 pub const UpdateImageError = error{
     Failed,
+    OutOfDeviceMemory,
 } || Allocator.Error;
 
 pub const ImageTiling = enum {
@@ -294,7 +295,7 @@ pub const VTable = struct {
     //
 
     imgui_init: *const fn (*anyopaque, window: *const Window, render_pass_rid: RID) void,
-    imgui_add_texture: *const fn (*anyopaque, image_rid: RID) ImGuiAddTextureError!c_ulonglong,
+    imgui_add_texture: *const fn (*anyopaque, image_rid: RID, layout: ImageLayout) ImGuiAddTextureError!c_ulonglong,
     imgui_remove_texture: *const fn (*anyopaque, id: c_ulonglong) void,
 
     // --------------------------------------------- //
@@ -429,8 +430,8 @@ pub inline fn imguiInit(self: *const Self, window: *const Window, render_pass_ri
 
 pub const ImGuiAddTextureError = error{Failed};
 
-pub inline fn imguiAddTexture(self: *const Self, image_rid: RID) ImGuiAddTextureError!c_ulonglong {
-    return self.vtable.imgui_add_texture(self.ptr, image_rid);
+pub inline fn imguiAddTexture(self: *const Self, image_rid: RID, layout: ImageLayout) ImGuiAddTextureError!c_ulonglong {
+    return self.vtable.imgui_add_texture(self.ptr, image_rid, layout);
 }
 
 pub inline fn imguiRemoveTexture(self: *const Self, id: c_ulonglong) void {
@@ -451,6 +452,7 @@ pub inline fn freeRid(self: *const Self, rid: RID) void {
 
 pub const BufferCreateError = error{
     Failed,
+    OutOfDeviceMemory,
 } || Allocator.Error;
 
 pub inline fn bufferCreate(self: *const Self, options: BufferOptions) BufferCreateError!RID {
@@ -493,6 +495,7 @@ pub const ImageOptions = struct {
 };
 
 pub const ImageCreateError = error{
+    Failed,
     OutOfDeviceMemory,
 } || Allocator.Error;
 

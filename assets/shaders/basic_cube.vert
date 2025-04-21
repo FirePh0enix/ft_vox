@@ -3,7 +3,7 @@
 // Per vertex data
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
-layout(location = 2) in vec2 textureCoords;
+layout(location = 2) in vec2 uv;
 
 // Per instance data
 layout(location = 3) in vec3 instancePosition;
@@ -12,9 +12,9 @@ layout(location = 5) in vec3 texture1;
 layout(location = 6) in uint visibility;
 
 layout(location = 0) out vec4 fragPos;
-layout(location = 1) out vec2 fragTextureCoords;
+layout(location = 1) out vec2 fragUV;
 layout(location = 2) out vec3 fragNormal;
-layout(location = 3) out vec4 fragPosLightSpace;
+layout(location = 3) out vec4 fragShadowCoords;
 layout(location = 4) out uint textureIndex;
 
 layout(push_constant) uniform PushConstants {
@@ -24,6 +24,13 @@ layout(push_constant) uniform PushConstants {
 layout(binding = 3) uniform LightVertex {
     mat4 matrix;
 } lv;
+
+const mat4 biasMat = mat4(
+    0.5, 0.0, 0.0, 0.0,
+    0.0, 0.5, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.5, 0.5, 0.0, 1.0
+);
 
 void main() {
     // Discard vertices by setting the position to nan, the GPU will ignore them.
@@ -50,9 +57,9 @@ void main() {
     gl_Position = viewMatrix * modelMatrix * vec4(position, 1.0);
 
     fragPos = modelMatrix * vec4(position, 1.0);
-    fragTextureCoords = textureCoords;
+    fragUV = uv;
     fragNormal = normal;
-    fragPosLightSpace = lv.matrix * fragPos;
+    fragShadowCoords = biasMat * lv.matrix * modelMatrix * vec4(position, 1.0);
 
     uint textureIndices[] = uint[](uint(texture0.x), uint(texture0.y), uint(texture0.z), uint(texture1.x), uint(texture1.y), uint(texture1.z));
     textureIndex = textureIndices[gl_VertexIndex / 4];

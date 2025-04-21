@@ -97,49 +97,49 @@ pub fn generateWorld(allocator: Allocator, registry: *const Registry, settings: 
     const w = 16 * 22;
 
     temp_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .b8g8r8a8_srgb });
-    temp_imgui_id = try rdr().imguiAddTexture(temp_image_rid);
+    temp_imgui_id = try rdr().imguiAddTexture(temp_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(temp_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(temp_image_rid, std.mem.sliceAsBytes(&temp_pixels), 0, 0);
     try rdr().imageSetLayout(temp_image_rid, .shader_read_only_optimal);
 
     hum_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    hum_imgui_id = try rdr().imguiAddTexture(hum_image_rid);
+    hum_imgui_id = try rdr().imguiAddTexture(hum_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(hum_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(hum_image_rid, std.mem.sliceAsBytes(&hum_pixels), 0, 0);
     try rdr().imageSetLayout(hum_image_rid, .shader_read_only_optimal);
 
     c_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    c_imgui_id = try rdr().imguiAddTexture(c_image_rid);
+    c_imgui_id = try rdr().imguiAddTexture(c_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(c_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(c_image_rid, std.mem.sliceAsBytes(&c_pixels), 0, 0);
     try rdr().imageSetLayout(c_image_rid, .shader_read_only_optimal);
 
     e_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    e_imgui_id = try rdr().imguiAddTexture(e_image_rid);
+    e_imgui_id = try rdr().imguiAddTexture(e_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(e_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(e_image_rid, std.mem.sliceAsBytes(&e_pixels), 0, 0);
     try rdr().imageSetLayout(e_image_rid, .shader_read_only_optimal);
 
     w_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    w_imgui_id = try rdr().imguiAddTexture(w_image_rid);
+    w_imgui_id = try rdr().imguiAddTexture(w_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(w_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(w_image_rid, std.mem.sliceAsBytes(&w_pixels), 0, 0);
     try rdr().imageSetLayout(w_image_rid, .shader_read_only_optimal);
 
     pv_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    pv_imgui_id = try rdr().imguiAddTexture(pv_image_rid);
+    pv_imgui_id = try rdr().imguiAddTexture(pv_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(pv_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(pv_image_rid, std.mem.sliceAsBytes(&pv_pixels), 0, 0);
     try rdr().imageSetLayout(pv_image_rid, .shader_read_only_optimal);
 
     biome_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .b8g8r8a8_srgb });
-    biome_imgui_id = try rdr().imguiAddTexture(biome_image_rid);
+    biome_imgui_id = try rdr().imguiAddTexture(biome_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(biome_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(biome_image_rid, std.mem.sliceAsBytes(&biome_pixels), 0, 0);
     try rdr().imageSetLayout(biome_image_rid, .shader_read_only_optimal);
 
     h_image_rid = try rdr().imageCreate(.{ .width = w, .height = w, .format = .r8_srgb, .pixel_mapping = .grayscale });
-    h_imgui_id = try rdr().imguiAddTexture(h_image_rid);
+    h_imgui_id = try rdr().imguiAddTexture(h_image_rid, .shader_read_only_optimal);
     try rdr().imageSetLayout(h_image_rid, .transfer_dst_optimal);
     try rdr().imageUpdate(h_image_rid, std.mem.sliceAsBytes(&h_pixels), 0, 0);
     try rdr().imageSetLayout(h_image_rid, .shader_read_only_optimal);

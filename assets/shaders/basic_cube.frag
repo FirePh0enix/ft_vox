@@ -1,9 +1,9 @@
 #version 450
 
 layout(location = 0) in vec4 position;
-layout(location = 1) in vec2 textureCoords;
+layout(location = 1) in vec2 uv;
 layout(location = 2) in vec3 normal;
-layout(location = 3) in vec4 posLightSpace;
+layout(location = 3) in vec4 shadowCoords;
 layout(location = 4) flat in uint textureIndex;
 
 layout(location = 0) out vec4 outColor;
@@ -56,19 +56,19 @@ float filterPCF(vec4 sc)
 }
 
 void main() {
-    vec2 textureCoords2 = textureCoords;
-    textureCoords2.y = 1.0 - textureCoords2.y;
+    vec2 uv2 = uv;
+    uv2.y = 1.0 - uv2.y;
     
-    vec3 color = texture(images, vec3(textureCoords2, float(textureIndex))).rgb;
-    float shadow = filterPCF(posLightSpace / posLightSpace.w);
+    vec3 color = texture(images, vec3(uv2, float(textureIndex))).rgb;
+    float shadow = textureProj(shadowCoords / shadowCoords.w, vec2(0.0)); // filterPCF(shadowCoords / shadowCoords.w);
 
-    vec3 lightDir = vec3(-1.0, 1.0, 0.0);
+    vec3 lightDir = vec3(-1.0, -1.0, 0.0);
 
     vec3 N = normalize(normal);
     vec3 L = normalize(lightDir);
     vec3 V = normalize(position.xyz);
     vec3 R = normalize(-reflect(L, N));
-    vec3 diffuse = max(dot(N, L), ambient) * color;
+    vec3 diffuse = max(dot(N, -L), ambient) * color;
 
-    outColor = vec4(diffuse, 1.0);
+    outColor = vec4(shadow * diffuse, 1.0);
 }

@@ -241,13 +241,43 @@ const ChunkLoadWorker = struct {
 
                 // TODO: How should chunk generation/load errors should be threated ?
                 var chunk = world_gen.generateChunk(world, pos.x, pos.z) catch unreachable;
-                chunk.computeVisibility(null, null, null, null);
-                rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
-
-                chunk.instance_buffer_index = buffer_index;
 
                 world.chunks_lock.lock();
                 defer world.chunks_lock.unlock();
+
+                chunk.computeVisibilityNoLock(world);
+                rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
+
+                // Recompute visibility for neighbours
+                // TODO: Not perfect...
+                {
+                    const north = world.getChunk(pos.x, pos.z - 1);
+                    const south = world.getChunk(pos.x, pos.z + 1);
+                    const west = world.getChunk(pos.x - 1, pos.z);
+                    const east = world.getChunk(pos.x + 1, pos.z);
+
+                    if (north) |c| {
+                        c.computeVisibilityNoLock(world);
+                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
+                    }
+
+                    if (south) |c| {
+                        c.computeVisibilityNoLock(world);
+                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
+                    }
+
+                    if (west) |c| {
+                        c.computeVisibilityNoLock(world);
+                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
+                    }
+
+                    if (east) |c| {
+                        c.computeVisibilityNoLock(world);
+                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
+                    }
+                }
+
+                chunk.instance_buffer_index = buffer_index;
 
                 world.chunks.put(world.allocator, pos, chunk) catch unreachable;
             }

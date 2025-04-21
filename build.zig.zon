@@ -12,10 +12,6 @@
             .url = "git+https://github.com/Snektron/vulkan-zig#40ad90a912eafb81581a121e585688fbbd7d8ddf",
             .hash = "vulkan-0.0.0-r7Ytx1JTAwC3R0cfA3SxaWPGJa6p3EUw3OTXTgSPr_hF",
         },
-        .vma = .{
-            .url = "git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator#29b35ea4232688c0f42cdff0c10848290760a417",
-            .hash = "N-V-__8AAEagQQA-UWlVvPJf78W4o-KcjTjV3WIYfUI81Zam",
-        },
         .moltenvk = .{
             .url = "https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11-artifacts/MoltenVK-macos.tar",
             .hash = "N-V-__8AAHJVDAQ_Q3ypg6Itg72ll6Kh7CSfBCFzOCi5IUHf",
