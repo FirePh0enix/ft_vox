@@ -127,6 +127,8 @@ pub fn debugHook(render_pass: *Graph.RenderPass) void {
 pub fn deinit(self: *Self) void {
     self.pass.deinit();
 
+    rdr().imguiRemoveTexture(global_depth_imgui_id);
+
     rdr().freeRid(self.material);
     rdr().freeRid(self.framebuffer_rid);
     rdr().freeRid(self.render_pass_rid);
