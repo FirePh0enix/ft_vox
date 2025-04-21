@@ -38,8 +38,12 @@ pub fn init(allocator: Allocator) Self {
 }
 
 pub fn deinit(self: *Self) void {
-    _ = self;
-    // TODO: block_ids keys are heap allocated.
+    self.blocks.deinit(self.allocator);
+    self.block_ids.deinit(self.allocator);
+
+    self.images_ids.deinit(self.allocator);
+
+    if (self.image_array) |rid| rdr().freeRid(rid);
 }
 
 pub fn lock(self: *Self) !void {

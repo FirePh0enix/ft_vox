@@ -268,6 +268,7 @@ pub fn mainDesktop() !void {
     defer rdr().freeRid(cube_mesh);
 
     var registry = Registry.init(allocator);
+    defer registry.deinit();
 
     try registry.registerBlockFromFile("water.zon", .{});
     try registry.registerBlockFromFile("deep_water.zon", .{});
@@ -298,6 +299,7 @@ pub fn mainDesktop() !void {
         .size = @sizeOf(LightData),
         .usage = .{ .uniform_buffer = true, .transfer_dst = true },
     });
+    defer rdr().freeRid(light_buffer_rid);
     const light_data: LightData = .{
         .dir = zm.vecToArr3(zm.rotate(light_quat, .{ -1.0, 0.0, 0.0, 0.0 })),
     };
@@ -307,6 +309,7 @@ pub fn mainDesktop() !void {
         .size = @sizeOf(zm.Mat),
         .usage = .{ .uniform_buffer = true, .transfer_dst = true },
     });
+    defer rdr().freeRid(light_vertex_buffer_rid);
     try rdr().bufferUpdate(light_vertex_buffer_rid, std.mem.sliceAsBytes(zm.matToArr(light_matrix)[0..16]), 0);
 
     material = try rdr().materialCreate(.{
@@ -318,6 +321,8 @@ pub fn mainDesktop() !void {
             .{ .name = "lightVertex", .type = .uniform },
         },
     });
+    defer rdr().freeRid(material);
+
     try rdr().materialSetParam(material, "textures", .{
         .image = .{
             .rid = registry.image_array orelse unreachable,
@@ -343,9 +348,10 @@ pub fn mainDesktop() !void {
     try rdr().materialSetParam(material, "lightVertex", .{ .uniform = light_vertex_buffer_rid });
 
     the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
+    defer the_world.deinit();
+
     try the_world.createBuffers(10);
     try the_world.startWorkers(&registry);
-    defer the_world.deinit();
 
     render_graph_pass.addImguiHook(&statsDebugHook);
 
@@ -354,8 +360,6 @@ pub fn mainDesktop() !void {
     while (running) {
         try update(&window, &the_world);
     }
-
-    rdr().freeRid(registry.image_array orelse unreachable);
 }
 
 fn update(window: *Window, world: *World) !void {

@@ -12,7 +12,6 @@ const Camera = @import("../Camera.zig");
 const World = @import("../voxel/World.zig");
 const Window = @import("Window.zig");
 const Graph = @import("Graph.zig");
-
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 const ShaderModel = @import("ShaderModel.zig");
@@ -23,6 +22,10 @@ const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) ca
 const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () callconv(.c) void;
 
 const use_moltenvk = builtin.os.tag.isDarwin();
+
+const RIDAllocInfo = struct {
+    stack_trace: std.debug.Trace,
+};
 
 pub const VulkanRenderer = struct {
     allocator: Allocator,
@@ -78,6 +81,8 @@ pub const VulkanRenderer = struct {
     imgui_context: *dcimgui.ImGuiContext,
     imgui_sampler: vk.Sampler,
     imgui_descriptor_pool: vk.DescriptorPool,
+
+    rid_infos: if (builtin.mode == .Debug) std.AutoArrayHashMapUnmanaged(RID, RIDAllocInfo) else void = if (builtin.mode == .Debug) .empty else {},
 
     const max_frames_in_flight: usize = 2;
 
@@ -598,6 +603,21 @@ pub const VulkanRenderer = struct {
         self.device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&self.transfer_command_buffer.handle));
         self.device.destroyCommandPool(self.command_pool, null);
 
+        self.freeRid(self.depth_image);
+
+        if (builtin.mode == .Debug) {
+            if (self.rid_infos.count() > 0) {
+                std.log.err("Found RIDs when destroying the rendering device:", .{});
+
+                var iter = self.rid_infos.iterator();
+
+                while (iter.next()) |entry| {
+                    std.debug.print("RID 0x{x}\n", .{entry.key_ptr.inner});
+                    entry.value_ptr.stack_trace.dump();
+                }
+            }
+        }
+
         self.device.destroyDevice(null);
         self.instance.destroySurfaceKHR(self.surface, null);
         self.instance.destroyInstance(null);
@@ -785,13 +805,23 @@ pub const VulkanRenderer = struct {
         } else {
             std.debug.panic("Trying to free rid with signature {x}", .{@as(*const usize, @ptrFromInt(rid.inner)).*});
         }
+
+        _ = self.rid_infos.swapRemove(rid);
+    }
+
+    inline fn addRIDInfo(self: *VulkanRenderer, rid: RID, ret_addr: usize) error{OutOfMemory}!void {
+        if (builtin.mode == .Debug) {
+            var trace: std.debug.Trace = .init;
+            trace.addAddr(ret_addr, "");
+            try self.rid_infos.put(self.allocator, rid, .{ .stack_trace = trace });
+        }
     }
 
     //
     // Buffer
     //
 
-    pub fn bufferCreate(self: *const VulkanRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
+    pub fn bufferCreate(self: *VulkanRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
         const alloc_flags: vk.MemoryPropertyFlags = switch (options.alloc_usage) {
             .gpu_only => .{ .device_local_bit = true },
             .cpu_to_gpu => .{ .device_local_bit = true, .host_visible_bit = true },
@@ -811,18 +841,13 @@ pub const VulkanRenderer = struct {
         };
         errdefer self.device.freeMemory(memory, null);
 
-        // var buffer: vk.Buffer = undefined;
-        // var allocation: vma.VmaAllocation = undefined;
-
-        // if (vma.vmaCreateBuffer(self.vma_allocator, @ptrCast(&buffer_info), @ptrCast(&alloc_info), @ptrCast(&buffer), @ptrCast(&allocation), null) != vma.VK_SUCCESS) {
-        //     return error.Failed;
-        // }
-
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanBuffer, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanBuffer, self.allocator, .{
             .size = options.size,
             .buffer = buffer,
             .memory = memory,
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     pub fn bufferUpdate(self: *VulkanRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
@@ -836,8 +861,9 @@ pub const VulkanRenderer = struct {
         }
 
         var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
-        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
         defer self.freeRid(staging_buffer_rid);
+
+        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
 
         {
             const map_data = try self.bufferMap(staging_buffer_rid);
@@ -959,7 +985,7 @@ pub const VulkanRenderer = struct {
         }, null) catch return error.OutOfDeviceMemory;
         errdefer self.device.destroyImageView(image_view, null);
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
             .width = undefined,
             .height = undefined,
             .size = undefined,
@@ -971,6 +997,8 @@ pub const VulkanRenderer = struct {
             .layout = .undefined,
             .aspect_mask = .{ .color_bit = true },
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     pub fn imageUpdate(self: *VulkanRenderer, image_rid: RID, s: []const u8, offset: usize, layer: usize) Renderer.UpdateImageError!void {
@@ -1102,13 +1130,15 @@ pub const VulkanRenderer = struct {
             };
         }
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanMaterial, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanMaterial, self.allocator, .{
             .descriptor_pool = descriptor_pool,
             .descriptor_set = descriptor_set,
             .descriptor_set_layout = descriptor_pool.descriptor_set_layout,
             .params = params,
             .shader_model = options.shader_model,
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     pub fn materialSetParam(self: *VulkanRenderer, material_rid: RID, name: []const u8, value: Renderer.MaterialParameterValue) Renderer.MaterialSetParamError!void {
@@ -1192,7 +1222,7 @@ pub const VulkanRenderer = struct {
         self.bufferUpdate(normal_buffer, options.normals, 0) catch return error.Failed;
         self.bufferUpdate(texture_coords_buffer, options.texture_coords, 0) catch return error.Failed;
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanMesh, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanMesh, self.allocator, .{
             .index_buffer = index_buffer,
             .vertex_buffer = vertex_buffer,
             .normal_buffer = normal_buffer,
@@ -1200,6 +1230,8 @@ pub const VulkanRenderer = struct {
             .indices_count = options.indices.len / options.index_type.bytes(),
             .index_type = options.index_type.asVk(),
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     pub fn meshGetIndicesCount(self: *VulkanRenderer, mesh_rid: RID) usize {
@@ -1305,10 +1337,12 @@ pub const VulkanRenderer = struct {
         }, null) catch return error.Failed;
         errdefer self.device.destroyRenderPass(render_pass, null);
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanRenderPass, self.allocator, .{
             .render_pass = render_pass,
             .attachments = try self.allocator.dupe(Renderer.Attachment, options.attachments),
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     //
@@ -1336,9 +1370,11 @@ pub const VulkanRenderer = struct {
             .layers = 1,
         }, null) catch return error.Failed;
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
             .framebuffer = framebuffer,
         })) };
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     fn createShaderModule(self: *VulkanRenderer, spirv: [:0]align(4) const u8) vk.DeviceProxy.CreateShaderModuleError!vk.ShaderModule {
@@ -1772,7 +1808,7 @@ const DynamicDescriptorPool = struct {
                 .{ .type = .uniform_buffer, .descriptor_count = pool_size },
             };
             const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
-                .flags = .{ .free_descriptor_set_bit = true },
+                .flags = .{}, // .{ .free_descriptor_set_bit = true },
                 .pool_size_count = @intCast(sizes.len),
                 .p_pool_sizes = sizes.ptr,
                 .max_sets = 1,
@@ -1830,8 +1866,6 @@ pub const VulkanMaterial = struct {
 
         for (self.params) |param| r.allocator.free(param.name);
         r.allocator.free(self.params);
-
-        self.shader_model.deinit();
     }
 
     pub fn getParam(self: *const VulkanMaterial, name: []const u8) ?*Param {
