@@ -1,10 +1,12 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
+const dcimgui = @import("dcimgui");
 
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
 const Rgb24 = zigimg.color.Rgb24;
 const SimplexNoise = @import("../math/noise.zig").SimplexNoiseWithOptions(f32);
+const Graph = @import("../render/Graph.zig");
 
 const air = 0;
 const water = 1;
@@ -30,15 +32,18 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
             const noises = getNoises(&world.noise, fx, fz);
             const biome = getBiome(noises);
 
-            const block: u16 = switch (biome) {
-                .ocean => stone,
-                .rivers => water,
-                .beach => sand,
-                .plains => grass,
-                .desert => sand,
-            };
-
             const height = getHeight(sea_level, noises, fx, fz);
+
+            const block: u16 = if (height >= sea_level)
+                switch (biome) {
+                    .ocean => sand,
+                    .river => sand,
+                    .beach => sand,
+                    .plains => grass,
+                    .desert => sand,
+                }
+            else
+                stone;
 
             for (0..height) |ly| {
                 chunk.setBlockState(lx, ly, lz, .{ .id = block });
@@ -66,21 +71,23 @@ fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
     const ridge_value = remapValue(noises.ridge, -1.0, 1.0, -0.2, 1.0) * 1.0;
 
     const cont = noises.cont;
+    const cont01 = (cont + 1.0) / 2.0;
 
     // Flatten land with some erosion
-    // const erosion = remapValue(noises.erosion, -1.0, 1.0, 0.0, 1.0);
+    const erosion = noises.erosion;
+    // const erosion01 = (erosion + 1.0) / 2.0;
 
     // Create peaks, valleys and rivers
-    const peaks_and_valleys = noises.peaks_and_valleys * cont * cont * cont * 15.0;
+    const peaks_and_valleys = noises.peaks_and_valleys * cont01 * 80.0 * erosion * cont01 * 2.0;
 
-    const value = sea_levelf + (cont + 0.19) * 40.0 + peaks_and_valleys + noises.erosion * 3.0 + ridge_value;
+    const value = sea_levelf + (cont + 0.19) * 40.0 + peaks_and_valleys + ridge_value;
 
     return @intFromFloat(value);
 }
 
 const Biome = enum {
     ocean,
-    rivers,
+    river,
     beach,
     plains,
     desert,

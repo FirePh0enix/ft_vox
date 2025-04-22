@@ -60,7 +60,7 @@ const cli = .{
 };
 const Args = argzon.Args(cli, .{});
 
-var camera = Camera{
+pub var camera = Camera{
     .position = .{ 0.0, 100.0, 0.0, 0.0 },
     .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
     .speed = 0.5,
@@ -202,6 +202,8 @@ var light_matrix: zm.Mat = undefined;
 var light_buffer_rid: RID = undefined;
 
 pub fn mainDesktop() !void {
+    // defer _ = debug_allocator.detectLeaks();
+
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
     var window = try Window.create(.{
