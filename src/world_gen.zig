@@ -214,7 +214,7 @@ fn debugHook(render_pass: *Graph.RenderPass) void {
 // https://www.alanzucconi.com/2022/06/05/minecraft-world-generation/
 // https://www.reddit.com/r/VoxelGameDev/comments/zedp39/how_does_minecraft_use_2d_and_3d_noise_to/
 
-pub fn generateChunk(world: *const World, chunk_x: isize, chunk_z: isize) !Chunk {
+pub fn generateChunk(world: *const World, chunk_x: isize, chunk_z: isize) Chunk {
     var chunk: Chunk = .{ .position = .{ .x = chunk_x, .z = chunk_z } };
 
     for (0..16) |x| {

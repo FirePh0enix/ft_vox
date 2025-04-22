@@ -240,7 +240,7 @@ const ChunkLoadWorker = struct {
                 }
 
                 // TODO: How should chunk generation/load errors should be threated ?
-                var chunk = world_gen.generateChunk(world, pos.x, pos.z) catch unreachable;
+                var chunk = world_gen.generateChunk(world, pos.x, pos.z);
 
                 world.chunks_lock.lock();
                 defer world.chunks_lock.unlock();

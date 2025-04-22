@@ -17,7 +17,7 @@ const snow_dirt = 7;
 const sand = 8;
 const snow = 9;
 
-pub fn generateChunk(world: *const World, x: i64, z: i64) !Chunk {
+pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
 
     const sea_level = world.generation_settings.sea_level;
@@ -31,20 +31,51 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) !Chunk {
             const biome = getBiome(noises);
 
             const block: u16 = switch (biome) {
-                .ocean => water,
+                .ocean => stone,
                 .rivers => water,
                 .beach => sand,
                 .plains => grass,
                 .desert => sand,
             };
 
-            for (0..sea_level) |ly| {
+            const height = getHeight(sea_level, noises, fx, fz);
+
+            for (0..height) |ly| {
                 chunk.setBlockState(lx, ly, lz, .{ .id = block });
+            }
+
+            // Fill the rest with water
+            if (height < sea_level) {
+                for (height..sea_level) |ly| {
+                    chunk.setBlockState(lx, ly, lz, .{ .id = water });
+                }
             }
         }
     }
 
     return chunk;
+}
+
+fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
+    _ = x;
+    _ = z;
+
+    const sea_levelf: f32 = @floatFromInt(sea_level);
+
+    // Break the terrain smoothness with some noise.
+    const ridge_value = remapValue(noises.ridge, -1.0, 1.0, -0.2, 1.0) * 1.0;
+
+    const cont = noises.cont;
+
+    // Flatten land with some erosion
+    // const erosion = remapValue(noises.erosion, -1.0, 1.0, 0.0, 1.0);
+
+    // Create peaks, valleys and rivers
+    const peaks_and_valleys = noises.peaks_and_valleys * cont * cont * cont * 15.0;
+
+    const value = sea_levelf + (cont + 0.19) * 40.0 + peaks_and_valleys + noises.erosion * 3.0 + ridge_value;
+
+    return @intFromFloat(value);
 }
 
 const Biome = enum {
@@ -85,26 +116,56 @@ const Continentalness = enum {
     }
 };
 
+const Temperature = enum {
+    freezing,
+    cold,
+    temperate,
+    hot,
+    burning,
+};
+
 fn getBiome(noises: Noises) Biome {
     return switch (noises.cont_level) {
         .deep_ocean, .ocean => .ocean,
         .coast => .beach,
-        .near_inland, .mid_inland, .far_inland => .plains,
+        .near_inland, .mid_inland, .far_inland => switch (noises.temperature) {
+            .freezing, .cold, .temperate => .plains,
+            .hot, .burning => .desert,
+        },
     };
 }
 
 const Noises = struct {
     cont: f32,
     cont_level: Continentalness,
+
+    erosion: f32,
+    weirdness: f32,
+    peaks_and_valleys: f32,
+
+    ridge: f32,
+
+    // Use only by biomes
+    temperature: Temperature,
 };
 
 fn getNoises(noise: *const SimplexNoise, x: f32, z: f32) Noises {
     const cont = getContinentalness(noise, x, z);
     const cont_level = getContinentalnessLevel(cont);
+    const erosion = getErosion(noise, x, z);
+    const weirdness = getWeirdness(noise, x, z);
+    const peaks_and_valleys = 1.0 - @abs(3.0 * @abs(weirdness) - 2.0);
+    const ridge = getRidge(noise, x, z);
+    const temperature = getTemperature(noise, x, z);
 
     return .{
         .cont = cont,
         .cont_level = cont_level,
+        .erosion = erosion,
+        .weirdness = weirdness,
+        .peaks_and_valleys = peaks_and_valleys,
+        .ridge = ridge,
+        .temperature = temperature,
     };
 }
 
@@ -112,7 +173,7 @@ fn getContinentalness(noise: *const SimplexNoise, x: f32, z: f32) f32 {
     return noise.fractal2D(5, x / 500.0, z / 500.0);
 }
 
-pub fn getContinentalnessLevel(c: f32) Continentalness {
+fn getContinentalnessLevel(c: f32) Continentalness {
     if (c >= -1.0 and c < -0.455) {
         return .deep_ocean;
     } else if (c >= -0.455 and c < -0.19) {
@@ -126,4 +187,39 @@ pub fn getContinentalnessLevel(c: f32) Continentalness {
     } else {
         return .far_inland;
     }
+}
+
+fn getErosion(noise: *const SimplexNoise, x: f32, z: f32) f32 {
+    return noise.fractal2D(4, x / 600.0, z / 600.0);
+}
+
+fn getWeirdness(noise: *const SimplexNoise, x: f32, z: f32) f32 {
+    return noise.fractal2D(3, x / 200.0, z / 200.0);
+}
+
+fn getRidge(noise: *const SimplexNoise, x: f32, z: f32) f32 {
+    return noise.sample2D(x / 15.0, z / 15.0);
+}
+
+fn getTemperature(noise: *const SimplexNoise, x: f32, z: f32) Temperature {
+    const v = noise.fractal2D(4, x / 800.0, z / 800.0);
+
+    // -1.0          -0.8       -0.3            0.3      0.8        1.0
+    //      freezing      cold      temperate       hot      burning
+
+    if (v >= -1.0 and v < -0.8) {
+        return .freezing;
+    } else if (v >= -0.8 and v < -0.3) {
+        return .cold;
+    } else if (v >= -0.3 and v < 0.3) {
+        return .temperate;
+    } else if (v >= 0.3 and v < 0.8) {
+        return .hot;
+    } else {
+        return .burning;
+    }
+}
+
+fn remapValue(value: f32, low1: f32, high1: f32, low2: f32, high2: f32) f32 {
+    return low2 + (value - low1) * (high2 - low2) / (high1 - low1);
 }
