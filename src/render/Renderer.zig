@@ -295,6 +295,7 @@ pub const VTable = struct {
     //
 
     imgui_init: *const fn (*anyopaque, window: *const Window, render_pass_rid: RID) void,
+    imgui_destroy: *const fn (*anyopaque) void,
     imgui_add_texture: *const fn (*anyopaque, image_rid: RID, layout: ImageLayout) ImGuiAddTextureError!c_ulonglong,
     imgui_remove_texture: *const fn (*anyopaque, id: c_ulonglong) void,
 
@@ -426,6 +427,10 @@ pub const ImGuiInitError = error{Failed};
 
 pub inline fn imguiInit(self: *const Self, window: *const Window, render_pass_rid: RID) ImGuiInitError!void {
     return self.vtable.imgui_init(self.ptr, window, render_pass_rid);
+}
+
+pub inline fn imguiDestroy(self: *const Self) void {
+    return self.vtable.imgui_destroy(self.ptr);
 }
 
 pub const ImGuiAddTextureError = error{Failed};

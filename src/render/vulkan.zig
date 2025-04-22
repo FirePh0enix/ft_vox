@@ -106,6 +106,7 @@ pub const VulkanRenderer = struct {
         .wait_idle = @ptrCast(&waitIdle),
 
         .imgui_init = @ptrCast(&imguiInit),
+        .imgui_destroy = @ptrCast(&imguiDestroy),
         .imgui_add_texture = @ptrCast(&imguiAddTexture),
         .imgui_remove_texture = @ptrCast(&imguiRemoveTexture),
 
@@ -774,6 +775,12 @@ pub const VulkanRenderer = struct {
             .border_color = .int_opaque_black,
             .unnormalized_coordinates = vk.FALSE,
         }, null) catch return error.Failed;
+    }
+
+    pub fn imguiDestroy(self: *VulkanRenderer) void {
+        dcimgui.cImGui_ImplVulkan_Shutdown();
+        dcimgui.cImGui_ImplSDL3_Shutdown();
+        dcimgui.ImGui_DestroyContext(self.imgui_context);
     }
 
     pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID, layout: Renderer.ImageLayout) Renderer.ImGuiAddTextureError!c_ulonglong {

@@ -193,8 +193,13 @@ pub fn createCube() !RID {
     });
 }
 
-var light_rotation: zm.Vec = .{ 1.45, std.math.pi / 2.0, 0.0, 0.0 };
+const LightData = struct {
+    matrix: [16]f32,
+    position: [3]f32,
+};
+
 var light_matrix: zm.Mat = undefined;
+var light_buffer_rid: RID = undefined;
 
 pub fn mainDesktop() !void {
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
@@ -213,6 +218,7 @@ pub fn mainDesktop() !void {
     defer rdr().destroy();
 
     try rdr().imguiInit(&window, rdr().getOutputRenderPass());
+    defer rdr().imguiDestroy();
 
     const size = window.size();
 
@@ -241,8 +247,7 @@ pub fn mainDesktop() !void {
         .descriptors = &.{
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // texture array
             ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 1, .stage = .fragment }, // shadow texture
-            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 2, .stage = .fragment }, // light buffer
-            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 3, .stage = .vertex }, // light space matrix
+            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 2, .stage = .vertex }, // light buffer
         },
         .push_constants = &.{
             ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
@@ -282,35 +287,11 @@ pub fn mainDesktop() !void {
 
     try registry.lock();
 
-    const LightData = struct {
-        dir: [3]f32,
-    };
-
-    const light_pitch = zm.quatFromAxisAngle(.{ 1.0, 0.0, 0.0, 0.0 }, light_rotation[0]);
-    const light_yaw = zm.quatFromAxisAngle(.{ 0.0, 1.0, 0.0, 0.0 }, light_rotation[1]);
-    const light_quat = zm.normalize4(zm.qmul(light_yaw, light_pitch));
-
-    const light_proj = zm.orthographicOffCenterRh(-10.0, 10.0, -10.0, 10.0, 0.01, 1000.0);
-    const light_translation = zm.translation(0.0, 10.0, 0);
-
-    light_matrix = zm.mul(light_proj, zm.mul(zm.matFromQuat(light_quat), light_translation));
-
-    const light_buffer_rid = try rdr().bufferCreate(.{
+    light_buffer_rid = try rdr().bufferCreate(.{
         .size = @sizeOf(LightData),
         .usage = .{ .uniform_buffer = true, .transfer_dst = true },
     });
     defer rdr().freeRid(light_buffer_rid);
-    const light_data: LightData = .{
-        .dir = zm.vecToArr3(zm.rotate(light_quat, .{ -1.0, 0.0, 0.0, 0.0 })),
-    };
-    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
-
-    const light_vertex_buffer_rid = try rdr().bufferCreate(.{
-        .size = @sizeOf(zm.Mat),
-        .usage = .{ .uniform_buffer = true, .transfer_dst = true },
-    });
-    defer rdr().freeRid(light_vertex_buffer_rid);
-    try rdr().bufferUpdate(light_vertex_buffer_rid, std.mem.sliceAsBytes(zm.matToArr(light_matrix)[0..16]), 0);
 
     material = try rdr().materialCreate(.{
         .shader_model = shader_model,
@@ -318,7 +299,6 @@ pub fn mainDesktop() !void {
             .{ .name = "textures", .type = .image },
             .{ .name = "shadowMap", .type = .image },
             .{ .name = "light", .type = .uniform },
-            .{ .name = "lightVertex", .type = .uniform },
         },
     });
     defer rdr().freeRid(material);
@@ -345,7 +325,6 @@ pub fn mainDesktop() !void {
         },
     });
     try rdr().materialSetParam(material, "light", .{ .uniform = light_buffer_rid });
-    try rdr().materialSetParam(material, "lightVertex", .{ .uniform = light_vertex_buffer_rid });
 
     the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
     defer the_world.deinit();
@@ -397,6 +376,23 @@ fn update(window: *Window, world: *World) !void {
     // Record draw calls into the render pass
     render_graph_pass.reset();
     render_graph_pass.view_matrix = view_matrix;
+
+    const light_proj_bound: f32 = 100.0;
+
+    const light_proj = zm.orthographicOffCenterRh(-light_proj_bound, light_proj_bound, -light_proj_bound, light_proj_bound, 0.01, 1000.0);
+    const light_pos = -(camera.position + zm.Vec{ 0.0, 0.0, -100.0, 0.0 });
+    const light_translation = zm.translationV(light_pos);
+
+    const light_rotation: zm.Vec = .{ std.math.pi / 2.0, 0.0, 0.0, 0.0 };
+    const light_rot_matrix = zm.mul(zm.rotationY(light_rotation[1]), zm.rotationX(light_rotation[0]));
+
+    light_matrix = zm.mul(zm.mul(light_translation, light_rot_matrix), light_proj);
+
+    const light_data: LightData = .{
+        .matrix = zm.matToArr(light_matrix),
+        .position = zm.vecToArr3(light_pos),
+    };
+    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
 
     shadow_pass.pass.reset();
     shadow_pass.pass.view_matrix = light_matrix;

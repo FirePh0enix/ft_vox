@@ -14,16 +14,18 @@ layout(location = 6) in uint visibility;
 layout(location = 0) out vec4 fragPos;
 layout(location = 1) out vec2 fragUV;
 layout(location = 2) out vec3 fragNormal;
-layout(location = 3) out vec4 fragShadowCoords;
-layout(location = 4) out uint textureIndex;
+layout(location = 3) out vec3 fragLightVec;
+layout(location = 4) out vec4 fragShadowCoords;
+layout(location = 5) out uint textureIndex;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewMatrix;
 };
 
-layout(binding = 3) uniform LightVertex {
+layout(binding = 2) uniform LightData {
     mat4 matrix;
-} lv;
+    vec3 position;
+} light;
 
 const mat4 biasMat = mat4(
     0.5, 0.0, 0.0, 0.0,
@@ -59,7 +61,8 @@ void main() {
     fragPos = modelMatrix * vec4(position, 1.0);
     fragUV = uv;
     fragNormal = normal;
-    fragShadowCoords = biasMat * lv.matrix * modelMatrix * vec4(position, 1.0);
+    fragLightVec = normalize(light.position - position);
+    fragShadowCoords = biasMat * light.matrix * modelMatrix * vec4(position, 1.0);
 
     uint textureIndices[] = uint[](uint(texture0.x), uint(texture0.y), uint(texture0.z), uint(texture1.x), uint(texture1.y), uint(texture1.z));
     textureIndex = textureIndices[gl_VertexIndex / 4];
