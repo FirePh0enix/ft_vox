@@ -235,30 +235,45 @@ pub fn generateChunk(world: *const World, chunk_x: isize, chunk_z: isize) Chunk 
 
                 // Place Block that fits to biome.
                 // TODO: Place correctly top block and bottom block by detecting If there is something above.
-                const block_id: u8 = switch (biome) {
-                    .cold_ocean, .ocean, .warm_ocean => water,
-                    .deep_cold_ocean, .deep_ocean, .deep_warm_ocean => deep_water,
+                var block_id: u8 = switch (biome) {
                     .mushroom_fields => grass,
-
-                    .frozen_river => water,
-                    .river => water,
                     .stony_shore => stone,
 
-                    .snowy_beach => snow_dirt,
+                    .snowy_beach => snow,
                     .beach => sand,
                     .desert => sand,
 
-                    .snowy_plains => snow_dirt,
-                    .plains, .forest, .jungle => grass,
+                    .snowy_plains => snow,
+                    .plains, .forest, .jungle => dirt,
                     .savanna => savanna_dirt,
                     .stony_peaks => stone,
-                    .frozen_peaks => snow_dirt,
+                    .frozen_peaks => snow,
+                    else => stone,
                 };
 
                 if (density + densityMod > 0.0) {
                     chunk.setBlockState(x, y, z, .{ .id = block_id });
                 } else {
                     chunk.setBlockState(x, y, z, .{ .id = air });
+                    // Choose top texture if it's the last block at top.
+                    if (chunk.getBlockState(x, y - 1, z) != null and chunk.getBlockState(x, y - 1, z).?.id != air and chunk.getBlockState(x, y - 1, z).?.id != water) {
+                        block_id = switch (biome) {
+                            .mushroom_fields => grass,
+                            .stony_shore => stone,
+
+                            .snowy_beach => snow_dirt,
+                            .beach => sand,
+                            .desert => sand,
+
+                            .snowy_plains => snow_dirt,
+                            .plains, .forest, .jungle => grass,
+                            .savanna => savanna_dirt,
+                            .stony_peaks => stone,
+                            .frozen_peaks => snow,
+                            else => stone,
+                        };
+                        chunk.setBlockState(x, y - 1, z, .{ .id = block_id });
+                    }
                 }
 
                 if (y < world.generation_settings.sea_level) {
