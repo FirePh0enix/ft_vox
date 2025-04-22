@@ -297,25 +297,15 @@ pub fn getSplineLevel(world: *const World, x: f32, z: f32, biome: Biome) f32 {
     var adjusted_pv_height = pv_height;
 
     switch (biome) {
-        .cold_ocean, .ocean, .warm_ocean, .deep_cold_ocean, .deep_ocean, .deep_warm_ocean => {
+        .frozen_river, .river, .cold_ocean, .ocean, .warm_ocean, .deep_cold_ocean, .deep_ocean, .deep_warm_ocean => {
             adjusted_c_height *= 0.6;
             adjusted_e_height *= 0.5;
             adjusted_pv_height *= 0.3;
         },
-        .frozen_river, .river => {
-            adjusted_c_height *= 0.6;
-            adjusted_e_height *= 0.4;
-            adjusted_pv_height = 0.0;
-        },
 
-        .mushroom_fields, .stony_shore, .snowy_plains, .plains, .savanna, .snowy_beach, .beach, .desert => {
-            adjusted_c_height *= 1.0;
-            adjusted_e_height *= 0.2;
-            adjusted_pv_height *= 0.05;
-        },
-        .forest, .jungle => {
-            adjusted_c_height *= 1.0;
-            adjusted_e_height *= 1.1;
+        .mushroom_fields, .stony_shore, .snowy_plains, .plains, .savanna, .snowy_beach, .beach, .desert, .forest, .jungle => {
+            adjusted_c_height *= 1.5;
+            adjusted_e_height *= 1.2;
             adjusted_pv_height *= 0.7;
         },
 
@@ -326,7 +316,7 @@ pub fn getSplineLevel(world: *const World, x: f32, z: f32, biome: Biome) f32 {
         },
     }
 
-    return 30 + adjusted_c_height + adjusted_e_height + adjusted_pv_height * getBiomeHeightMultiplier(biome);
+    return adjusted_c_height + adjusted_e_height + adjusted_pv_height * getBiomeHeightMultiplier(biome);
 }
 
 /// Local multiplier, each Biome can affect themselves in his local scale.
