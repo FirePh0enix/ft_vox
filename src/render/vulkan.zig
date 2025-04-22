@@ -595,6 +595,9 @@ pub const VulkanRenderer = struct {
 
         self.device.destroySwapchainKHR(self.swapchain, null);
 
+        self.device.destroyQueryPool(self.timestamp_query_pool, null);
+        self.device.destroyQueryPool(self.primitives_query_pool, null);
+
         // Destroy resources allocated for each frame in flight.
         for (self.command_buffers) |cb| self.device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&cb.handle));
         for (self.image_available_semaphores) |semaphore| self.device.destroySemaphore(semaphore, null);
@@ -781,6 +784,8 @@ pub const VulkanRenderer = struct {
         dcimgui.cImGui_ImplVulkan_Shutdown();
         dcimgui.cImGui_ImplSDL3_Shutdown();
         dcimgui.ImGui_DestroyContext(self.imgui_context);
+
+        self.device.destroyDescriptorPool(self.imgui_descriptor_pool, null);
     }
 
     pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID, layout: Renderer.ImageLayout) Renderer.ImGuiAddTextureError!c_ulonglong {
@@ -1154,24 +1159,31 @@ pub const VulkanRenderer = struct {
 
         switch (value) {
             .image => |i| {
-                // TODO: Store this sampler somewhere
-                const sampler = self.device.createSampler(&vk.SamplerCreateInfo{
-                    .min_filter = i.sampler.min_filter.asVk(),
-                    .mag_filter = i.sampler.mag_filter.asVk(),
-                    .address_mode_u = i.sampler.address_mode.u.asVk(),
-                    .address_mode_v = i.sampler.address_mode.v.asVk(),
-                    .address_mode_w = i.sampler.address_mode.w.asVk(),
-                    .mipmap_mode = .nearest, // TODO: Implement Mipmaps
-                    .mip_lod_bias = 0.0,
-                    .anisotropy_enable = vk.FALSE, // TODO: What is this
-                    .max_anisotropy = 0.0,
-                    .compare_enable = vk.FALSE,
-                    .compare_op = .equal,
-                    .min_lod = 0.0,
-                    .max_lod = 0.0,
-                    .border_color = .int_opaque_black,
-                    .unnormalized_coordinates = vk.FALSE,
-                }, null) catch return error.Failed;
+                var sampler: vk.Sampler = undefined;
+
+                if (param.value == null or !std.meta.eql(i.sampler, param.value.?.image.sampler_options)) {
+                    sampler = self.device.createSampler(&vk.SamplerCreateInfo{
+                        .min_filter = i.sampler.min_filter.asVk(),
+                        .mag_filter = i.sampler.mag_filter.asVk(),
+                        .address_mode_u = i.sampler.address_mode.u.asVk(),
+                        .address_mode_v = i.sampler.address_mode.v.asVk(),
+                        .address_mode_w = i.sampler.address_mode.w.asVk(),
+                        .mipmap_mode = .nearest, // TODO: Implement Mipmaps
+                        .mip_lod_bias = 0.0,
+                        .anisotropy_enable = vk.FALSE, // TODO: What is this
+                        .max_anisotropy = 0.0,
+                        .compare_enable = vk.FALSE,
+                        .compare_op = .equal,
+                        .min_lod = 0.0,
+                        .max_lod = 0.0,
+                        .border_color = .int_opaque_black,
+                        .unnormalized_coordinates = vk.FALSE,
+                    }, null) catch return error.Failed;
+                } else {
+                    sampler = param.value.?.image.sampler;
+                }
+
+                param.value = .{ .image = .{ .sampler = sampler, .sampler_options = i.sampler, .rid = i.rid } };
 
                 const image = i.rid.as(VulkanImage);
 
@@ -1193,6 +1205,8 @@ pub const VulkanRenderer = struct {
             },
             .uniform => |u| {
                 const buffer = u.as(VulkanBuffer);
+
+                param.value = .{ .uniform = u };
 
                 const buffer_info: vk.DescriptorBufferInfo = .{ .buffer = buffer.buffer, .offset = 0, .range = buffer.size };
 
@@ -1403,6 +1417,8 @@ pub const VulkanRenderer = struct {
                 .p_name = shader.fn_name orelse "main",
             };
         }
+
+        defer for (0..options.shader_model.shaders.len) |index| self.device.destroyShaderModule(shader_stages[index].module, null);
 
         const dynamic_states: []const vk.DynamicState = &.{ .viewport, .scissor };
         const dynamic_state_info: vk.PipelineDynamicStateCreateInfo = .{
@@ -1799,15 +1815,13 @@ const DynamicDescriptorPool = struct {
         };
     }
 
-    pub fn deinit(self: *const DynamicDescriptorPool) void {
-        for (self.pools.items) |pool| rdr().asVk().device.destroyDescriptorPool(pool, null);
+    pub fn deinit(self: *const DynamicDescriptorPool, r: *VulkanRenderer) void {
+        for (self.pools.items) |pool| r.device.destroyDescriptorPool(pool, null);
         self.pools.deinit();
     }
 
     pub fn createDescriptorSet(self: *DynamicDescriptorPool) !vk.DescriptorSet {
         if (self.count >= self.pools.items.len * pool_size) {
-            // TODO: Should probably allocate as much of each bindings.
-
             // Funnily enough, on linux it seems that it does not care about what we are giving it here, but it crash
             // with moltenvk if we don't correctly specify the pool size.
             const sizes: []const vk.DescriptorPoolSize = &.{
@@ -1815,7 +1829,7 @@ const DynamicDescriptorPool = struct {
                 .{ .type = .uniform_buffer, .descriptor_count = pool_size },
             };
             const pool = try rdr().asVk().device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
-                .flags = .{}, // .{ .free_descriptor_set_bit = true },
+                .flags = .{ .free_descriptor_set_bit = true },
                 .pool_size_count = @intCast(sizes.len),
                 .p_pool_sizes = sizes.ptr,
                 .max_sets = 1,
@@ -1852,10 +1866,20 @@ pub const VulkanFramebuffer = struct {
 pub const VulkanMaterial = struct {
     pub const resource_signature: usize = @truncate(0x53df5135a9cc62f3);
 
+    pub const ParamCachedValue = union(Renderer.MaterialParameterValueType) {
+        image: struct {
+            sampler_options: Renderer.SamplerOptions,
+            sampler: vk.Sampler,
+            rid: RID,
+        },
+        uniform: RID,
+    };
+
     pub const Param = struct {
         name: []const u8,
         binding: usize,
         type: Renderer.MaterialParameterValueType,
+        value: ?ParamCachedValue = null,
     };
 
     signature: usize = resource_signature,
@@ -1868,8 +1892,17 @@ pub const VulkanMaterial = struct {
     params: []Param,
 
     pub fn deinit(self: *const VulkanMaterial, r: *VulkanRenderer) void {
-        self.descriptor_pool.deinit();
+        self.descriptor_pool.deinit(r);
         r.device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
+
+        for (self.params) |param| {
+            if (param.value) |value| switch (value) {
+                .image => |i| {
+                    r.device.destroySampler(i.sampler, null);
+                },
+                else => {},
+            };
+        }
 
         for (self.params) |param| r.allocator.free(param.name);
         r.allocator.free(self.params);
