@@ -10,7 +10,6 @@ const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
 
 const Renderer = @import("render/Renderer.zig");
-const ShaderModel = @import("render/ShaderModel.zig");
 const Window = @import("render/Window.zig");
 const Graph = @import("render/Graph.zig");
 const ShadowPass = @import("render/ShadowPass.zig");
@@ -24,11 +23,16 @@ const RID = Renderer.RID;
 
 const rdr = Renderer.rdr;
 
+// pub const std_options: std.Options = .{};
+// pub const panic = zemscripten.panic;
+
 pub const BlockZon = Registry.BlockZon;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-pub var tracking_allocator = if (builtin.mode == .Debug)
+pub var tracking_allocator = if (builtin.cpu.arch.isWasm())
+    TrackingAllocator{ .backing_allocator = std.heap.wasm_allocator }
+else if (builtin.mode == .Debug)
     TrackingAllocator{ .backing_allocator = debug_allocator.allocator() }
 else
     TrackingAllocator{ .backing_allocator = std.heap.smp_allocator };
@@ -227,37 +231,6 @@ pub fn mainDesktop() !void {
 
     try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
 
-    const shader_model = try ShaderModel.init(allocator, .{
-        .shaders = &.{
-            .{ .path = "basic_cube.vert.spv", .stage = .vertex },
-            .{ .path = "basic_cube.frag.spv", .stage = .fragment },
-        },
-        .buffers = &.{
-            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .{ .buffer = &.{ .vec3, .vec3, .vec3, .uint } }, .rate = .instance },
-        },
-        .inputs = &.{
-            ShaderModel.Input{ .binding = 0, .type = .vec3 }, // position
-            ShaderModel.Input{ .binding = 1, .type = .vec3 }, // normal
-            ShaderModel.Input{ .binding = 2, .type = .vec2 }, // texture coordinates
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 0 }, // instance position
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 3 * @sizeOf(f32) }, // instance texture indices 0
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 6 * @sizeOf(f32) }, // instance texture indices 1
-            ShaderModel.Input{ .binding = 3, .type = .uint, .offset = 9 * @sizeOf(f32) }, // instance visibility
-        },
-        .descriptors = &.{
-            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 0, .stage = .fragment }, // texture array
-            ShaderModel.Descriptor{ .type = .combined_image_sampler, .binding = 1, .stage = .fragment }, // shadow texture
-            ShaderModel.Descriptor{ .type = .uniform_buffer, .binding = 2, .stage = .vertex }, // light buffer
-        },
-        .push_constants = &.{
-            ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
-        },
-    });
-    defer shader_model.deinit();
-
     render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
         .max_draw_calls = 32 * 32,
     });
@@ -293,11 +266,23 @@ pub fn mainDesktop() !void {
     defer rdr().freeRid(light_buffer_rid);
 
     material = try rdr().materialCreate(.{
-        .shader_model = shader_model,
+        .shaders = &.{
+            .{ .path = "basic_cube.vert.spv", .stage = .{ .vertex = true } },
+            .{ .path = "basic_cube.frag.spv", .stage = .{ .fragment = true } },
+        },
+        .instance_layout = .{
+            .inputs = &.{
+                .{ .type = .vec3, .offset = 0 }, // instance position
+                .{ .type = .vec3, .offset = 3 * @sizeOf(f32) }, // instance texture indices 0
+                .{ .type = .vec3, .offset = 6 * @sizeOf(f32) }, // instance texture indices 1
+                .{ .type = .uint, .offset = 9 * @sizeOf(f32) }, // instance visibility
+            },
+            .stride = @sizeOf(World.BlockInstanceData),
+        },
         .params = &.{
-            .{ .name = "textures", .type = .image },
-            .{ .name = "shadowMap", .type = .image },
-            .{ .name = "light", .type = .uniform },
+            .{ .name = "textures", .type = .image, .stage = .{ .fragment = true } },
+            .{ .name = "shadowMap", .type = .image, .stage = .{ .fragment = true } },
+            .{ .name = "light", .type = .buffer, .stage = .{ .vertex = true } },
         },
     });
     defer rdr().freeRid(material);
@@ -321,7 +306,7 @@ pub fn mainDesktop() !void {
             .layout = .depth_stencil_read_only_optimal,
         },
     });
-    try rdr().materialSetParam(material, "light", .{ .uniform = light_buffer_rid });
+    try rdr().materialSetParam(material, "light", .{ .buffer = light_buffer_rid });
 
     the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
     defer the_world.deinit();
@@ -425,13 +410,7 @@ const wgpu = @import("webgpu");
 pub fn mainEmscripten() !void {
     std.debug.print("Hello world!\n", .{});
 
-    const instance = wgpu.createInstance(null);
-    std.debug.print("{*}\n", .{instance});
-
-    // instance.requestAdapterSync(&wgpu.RequestAdapterOptions{
-    //     .backend_type = .web_gpu,
-    //     .feature_level = .compatibility,
-    // });
+    try Renderer.create(allocator, .webgpu);
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())

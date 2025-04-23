@@ -1,21 +1,31 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const dcimgui = @import("dcimgui");
-const vk = @import("vulkan");
+const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
+const wgpu = if (builtin.os.tag == .emscripten) @import("webgpu") else void;
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
 const Window = @import("Window.zig");
-const ShaderModel = @import("ShaderModel.zig");
-const VulkanRenderer = @import("vulkan.zig").VulkanRenderer;
+const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("vulkan.zig").VulkanRenderer else void;
+const WebGPURenderer = if (builtin.os.tag == .emscripten) @import("webgpu.zig").WebGPURenderer else void;
 
 ptr: *anyopaque,
 vtable: *const VTable,
 
-pub const Driver = enum {
+pub const Driver = if (builtin.os.tag == .emscripten)
+    DriverWeb
+else
+    DriverDesktop;
+
+pub const DriverDesktop = enum {
     vulkan,
+};
+
+pub const DriverWeb = enum {
+    webgpu,
 };
 
 pub const VSync = enum {
@@ -216,6 +226,39 @@ pub const IndexType = enum {
     }
 };
 
+pub const ShaderStage = packed struct {
+    vertex: bool = false,
+    fragment: bool = false,
+    compute: bool = false,
+
+    pub fn asVk(self: ShaderStage) vk.ShaderStageFlags {
+        return .{
+            .vertex_bit = self.vertex,
+            .fragment_bit = self.fragment,
+            .compute_bit = self.compute,
+        };
+    }
+};
+
+pub const ShaderType = enum {
+    float,
+    vec2,
+    vec3,
+    vec4,
+
+    uint,
+
+    pub fn asVkFormat(self: ShaderType) vk.Format {
+        return switch (self) {
+            .float => .r32_sfloat,
+            .vec2 => .r32g32_sfloat,
+            .vec3 => .r32g32b32_sfloat,
+            .vec4 => .r32g32b32a32_sfloat,
+            .uint => .r32_uint,
+        };
+    }
+};
+
 pub const Size = struct {
     width: usize,
     height: usize,
@@ -271,19 +314,13 @@ pub const RID = extern struct {
 };
 
 pub const VTable = struct {
-    /// Initialize the driver and create the rendering device. If `index` is not null then the driver will try to use it, otherwise the most
-    /// suitable device will be selected.
     create_device: *const fn (self: *anyopaque, window: *const Window, index: ?usize) CreateDeviceError!void,
 
-    /// Free resources directly held by the renderer. Does not free RIDs.
     destroy: *const fn (self: *anyopaque) void,
 
-    /// Process a render graph, displaying an image to the window at the end.
     process_graph: *const fn (self: *anyopaque, graph: *const Graph) ProcessGraphError!void,
 
-    /// Returns the renderer window size.
     get_size: *const fn (self: *const anyopaque) Size,
-
     get_statistics: *const fn (self: *const anyopaque) Statistics,
 
     configure: *const fn (*anyopaque, options: ConfigureOptions) void,
@@ -361,15 +398,38 @@ pub fn rdr() *Self {
 }
 
 pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
-    _ = driver; // We only have `vulkan` for now.
-    const renderer = try VulkanRenderer.create(allocator);
-    singleton = .{
-        .ptr = renderer,
-        .vtable = &VulkanRenderer.vtable,
-    };
+    if (builtin.os.tag == .emscripten) {
+        switch (driver) {
+            .webgpu => {
+                const renderer = try createWithDefault(WebGPURenderer, allocator);
+                renderer.allocator = allocator;
+
+                singleton = .{
+                    .ptr = renderer,
+                    .vtable = &WebGPURenderer.vtable,
+                };
+            },
+        }
+    } else {
+        switch (driver) {
+            .vulkan => {
+                const renderer = try createWithDefault(VulkanRenderer, allocator);
+                renderer.allocator = allocator;
+
+                singleton = .{
+                    .ptr = renderer,
+                    .vtable = &VulkanRenderer.vtable,
+                };
+            },
+        }
+    }
 }
 
 pub inline fn asVk(self: *const Self) *VulkanRenderer {
+    return @ptrCast(@alignCast(self.ptr));
+}
+
+pub inline fn asWGPU(self: *const Self) *WebGPURenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
@@ -378,10 +438,13 @@ pub const CreateDeviceError = error{
     NoSuitableDevice,
 } || Allocator.Error;
 
+/// Initialize the driver and create the rendering device. If `index` is not null then the driver will try to use it, otherwise the most
+/// suitable device will be selected.
 pub inline fn createDevice(self: *const Self, window: *const Window, index: ?usize) CreateDeviceError!void {
     return self.vtable.create_device(self.ptr, window, index);
 }
 
+/// Free resources directly held by the renderer. Does not free RIDs.
 pub inline fn destroy(self: *const Self) void {
     return self.vtable.destroy(self.ptr);
 }
@@ -390,6 +453,7 @@ pub inline fn processGraph(self: *const Self, graph: *const Graph) ProcessGraphE
     return self.vtable.process_graph(self.ptr, graph);
 }
 
+/// Returns the renderer window size.
 pub inline fn getSize(self: *const Self) Size {
     return self.vtable.get_size(self.ptr);
 }
@@ -527,11 +591,19 @@ pub inline fn imageSetLayout(self: *const Self, image_rid: RID, new_layout: Imag
 pub const MaterialParameter = struct {
     name: []const u8,
     type: MaterialParameterValueType,
+    stage: ShaderStage,
 };
 
 pub const MaterialParameterValueType = enum {
     image,
-    uniform,
+    buffer,
+
+    pub fn asVk(self: MaterialParameterValueType) vk.DescriptorType {
+        return switch (self) {
+            .image => .combined_image_sampler,
+            .buffer => .uniform_buffer,
+        };
+    }
 };
 
 pub const SamplerOptions = struct {
@@ -552,15 +624,40 @@ pub const MaterialParameterValue = union(MaterialParameterValueType) {
         sampler: SamplerOptions,
         layout: ImageLayout = .shader_read_only_optimal,
     },
-    uniform: RID,
+    buffer: RID,
 };
 
 pub const MaterialInstanceLayout = struct {
-    entry_size: usize,
+    pub const Input = struct {
+        type: ShaderType,
+        offset: usize,
+    };
+
+    inputs: []const Input,
+    stride: usize,
 };
 
+pub const ShaderRef = struct {
+    path: []const u8,
+    stage: ShaderStage,
+};
+
+/// Mimimum input for vertex shaders are:
+///
+///```glsl
+///layout(location = 0) in vec3 position;
+///layout(location = 1) in vec3 normal;
+///layout(location = 2) in vec2 uv;
+///
+///layout(push_constant) uniform PushConstants {
+///    mat4 viewMatrix;
+///};
+///```
+///
+/// A shader can have optionally instance data, specified in `instance_layout`, which will
+/// start at location 3.
 pub const MaterialOptions = struct {
-    shader_model: ShaderModel,
+    shaders: []const ShaderRef,
 
     /// Enable transparency for this material.
     transparency: bool = false,
@@ -569,6 +666,10 @@ pub const MaterialOptions = struct {
 
     /// Desribe the layout of the instance buffer for this material.
     instance_layout: ?MaterialInstanceLayout = null,
+
+    topology: vk.PrimitiveTopology = .triangle_list,
+    polygon_mode: vk.PolygonMode = .fill,
+    cull_mode: vk.CullModeFlags = .{ .back_bit = true },
 };
 
 pub const MaterialCreateError = error{
@@ -695,4 +796,29 @@ pub const FramebufferCreateError = error{Failed} || Allocator.Error;
 
 pub inline fn framebufferCreate(self: *const Self, options: FramebufferOptions) FramebufferCreateError!RID {
     return self.vtable.framebuffer_create(self.ptr, options);
+}
+
+/// Create a value and initialize it right away to prevent `undefined` values from getting into `T`.
+pub fn createWithInit(comptime T: type, allocator: Allocator, value: T) Allocator.Error!*T {
+    const ptr = try allocator.create(T);
+    ptr.* = value;
+    return ptr;
+}
+
+/// Create a value and fill its field with default values if applicable.
+pub fn createWithDefault(comptime T: type, allocator: Allocator) Allocator.Error!*T {
+    const info = @typeInfo(T);
+    const ptr = try allocator.create(T);
+
+    switch (info) {
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                if (field.defaultValue()) |value|
+                    @field(ptr.*, field.name) = value;
+            }
+        },
+        else => {},
+    }
+
+    return ptr;
 }

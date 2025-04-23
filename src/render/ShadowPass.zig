@@ -2,8 +2,8 @@ const std = @import("std");
 const dcimgui = @import("dcimgui");
 
 const Self = @This();
+const World = @import("../voxel/World.zig");
 const Graph = @import("Graph.zig");
-const ShaderModel = @import("ShaderModel.zig");
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
 
@@ -62,34 +62,20 @@ pub fn init(options: Options) !Self {
         .height = res_h,
     });
 
-    const shader_model = try ShaderModel.init(options.allocator, .{
-        .shaders = &.{
-            .{ .path = "cube_shadow.vert.spv", .stage = .vertex },
-            .{ .path = "cube_shadow.frag.spv", .stage = .fragment },
-        },
-        .buffers = &.{
-            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .vec3, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .vec2, .rate = .vertex },
-            ShaderModel.Buffer{ .element_type = .{ .buffer = &.{ .vec3, .vec3, .vec3, .uint } }, .rate = .instance },
-        },
-        .inputs = &.{
-            ShaderModel.Input{ .binding = 0, .type = .vec3 }, // position
-            ShaderModel.Input{ .binding = 1, .type = .vec3 }, // normal
-            ShaderModel.Input{ .binding = 2, .type = .vec2 }, // texture coordinates
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 0 }, // instance position
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 3 * @sizeOf(f32) }, // instance texture indices 0
-            ShaderModel.Input{ .binding = 3, .type = .vec3, .offset = 6 * @sizeOf(f32) }, // instance texture indices 1
-            ShaderModel.Input{ .binding = 3, .type = .uint, .offset = 9 * @sizeOf(f32) }, // instance visibility
-        },
-        .descriptors = &.{},
-        .push_constants = &.{
-            ShaderModel.PushConstant{ .type = .{ .buffer = &.{.mat4} }, .stage = .vertex },
-        },
-    });
-
     const material = try rdr().materialCreate(.{
-        .shader_model = shader_model,
+        .shaders = &.{
+            .{ .path = "cube_shadow.vert.spv", .stage = .{ .vertex = true } },
+            .{ .path = "cube_shadow.frag.spv", .stage = .{ .fragment = true } },
+        },
+        .instance_layout = .{
+            .inputs = &.{
+                .{ .type = .vec3, .offset = 0 }, // position
+                .{ .type = .vec3, .offset = 3 * @sizeOf(f32) }, // texture indices 0
+                .{ .type = .vec3, .offset = 6 * @sizeOf(f32) }, // texture indices 1
+                .{ .type = .uint, .offset = 9 * @sizeOf(f32) }, // visibility
+            },
+            .stride = @sizeOf(World.BlockInstanceData),
+        },
     });
 
     const render_pass = try Graph.RenderPass.create(options.allocator, render_pass_rid, .{

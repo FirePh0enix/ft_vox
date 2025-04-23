@@ -229,7 +229,7 @@ pub fn build(b: *Build) !void {
         //     args
         // else
         //     &.{};
-        const args: []const []const u8 = &.{ "--browser", "brave-browser" }; // "chromium" };
+        const args: []const []const u8 = &.{ "--browser", "chromium" };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
         emrun_step.dependOn(b.getInstallStep());

@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdl = @import("sdl");
+const builtin = @import("builtin");
 
 const Self = @This();
 const Driver = @import("Renderer.zig").Driver;
@@ -15,27 +16,37 @@ pub const Options = struct {
 };
 
 pub fn create(options: Options) !Self {
-    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS)) {
+    var init_flags: sdl.SDL_InitFlags = sdl.SDL_INIT_EVENTS;
+
+    if (builtin.os.tag != .emscripten) init_flags |= sdl.SDL_INIT_VIDEO;
+
+    if (!sdl.SDL_Init(init_flags)) {
         return error.NoWindow;
     }
 
-    var window_flags: sdl.SDL_WindowFlags = 0;
+    if (builtin.os.tag != .emscripten) {
+        var window_flags: sdl.SDL_WindowFlags = 0;
 
-    if (options.resizable) window_flags |= sdl.SDL_WINDOW_RESIZABLE;
+        if (options.resizable) window_flags |= sdl.SDL_WINDOW_RESIZABLE;
 
-    switch (options.driver) {
-        .vulkan => window_flags |= sdl.SDL_WINDOW_VULKAN,
+        switch (options.driver) {
+            .vulkan => window_flags |= sdl.SDL_WINDOW_VULKAN,
+        }
+
+        const window = sdl.SDL_CreateWindow(options.title.ptr, @intCast(options.width), @intCast(options.height), window_flags);
+
+        return .{
+            .handle = window orelse return error.NoWindow,
+        };
+    } else {
+        return .{
+            .handle = undefined,
+        };
     }
-
-    const window = sdl.SDL_CreateWindow(options.title.ptr, @intCast(options.width), @intCast(options.height), window_flags);
-
-    return .{
-        .handle = window orelse return error.NoWindow,
-    };
 }
 
 pub fn deinit(self: *const Self) void {
-    sdl.SDL_DestroyWindow(self.handle);
+    if (builtin.os.tag != .emscripten) sdl.SDL_DestroyWindow(self.handle);
     sdl.SDL_Quit();
 }
 

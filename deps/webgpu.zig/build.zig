@@ -176,6 +176,7 @@ const instance_methods: []const u8 =
     \\        const CallbackResult = struct {
     \\            status: RequestAdapterStatus = .success,
     \\            adapter: ?Adapter = null,
+    \\            mutex: std.Thread.Mutex = .{},
     \\        };
     \\
     \\        const callback = struct {
@@ -183,19 +184,56 @@ const instance_methods: []const u8 =
     \\                _ = message;
     \\                user_data.status = status;
     \\                user_data.adapter = adapter;
+    \\                user_data.mutex.unlock();
     \\            }
     \\        }.callback;
     \\
     \\        var user_data: CallbackResult = .{};
+    \\        user_data.mutex.lock();
     \\
-    \\        const future = self.requestAdapter(options, .{
+    \\        _ = self.requestAdapter(options, .{
     \\            .callback = @ptrCast(&callback),
     \\            .user_data1 = @ptrCast(&user_data),
     \\        });
     \\
-    \\        _ = self.waitAny(1, @ptrCast(&FutureWaitInfo{ .future = future, .completed = TRUE }), std.math.maxInt(u64));
+    \\        user_data.mutex.lock();
+    \\        defer user_data.mutex.unlock();
+    \\
     \\        return user_data.adapter orelse unreachable;
     \\    }
+;
+
+const adapter_methods: []const u8 =
+    \\    pub fn requestDeviceSync(self: Adapter, descriptor: ?*const DeviceDescriptor) Device {
+    \\        const CallbackResult = struct {
+    \\            status: RequestAdapterStatus = .success,
+    \\            device: ?Device = null,
+    \\            mutex: std.Thread.Mutex = .{},
+    \\        };
+    \\
+    \\        const callback = struct {
+    \\            fn callback(status: RequestDeviceStatus, device: Device, message: [*:0]const u8, user_data: *CallbackResult) callconv(.c) void {
+    \\                _ = message;
+    \\                user_data.status = status;
+    \\                user_data.device = device;
+    \\                user_data.mutex.unlock();
+    \\            }
+    \\        }.callback;
+    \\
+    \\        var user_data: CallbackResult = .{};
+    \\        user_data.mutex.lock();
+    \\
+    \\        _ = self.requestDevice(descriptor, .{
+    \\            .callback = @ptrCast(&callback),
+    \\            .user_data1 = @ptrCast(&user_data),
+    \\        });
+    \\
+    \\        user_data.mutex.lock();
+    \\        defer user_data.mutex.unlock();
+    \\
+    \\        return user_data.adapter orelse unreachable;
+    \\    }
+    \\
 ;
 
 const toplevel_structs: []const u8 =
@@ -259,7 +297,7 @@ fn generateStruct(@"struct": Struct, file: *DynamicWriter) !void {
     try writeDocs(@"struct".doc, file);
     try file.writeAll(bufPrint(&buf, "pub const {s} = extern struct {{\n", .{convertToCamelCase(&name_buf, @"struct".name, true)}) catch unreachable);
 
-    if (std.mem.eql(u8, @"struct".type, "extensible")) try file.writeAll("    next: ?*anyopaque = null,\n");
+    if (std.mem.eql(u8, @"struct".type, "extensible")) try file.writeAll("    next: ?*const anyopaque = null,\n");
 
     for (@"struct".members) |member| {
         const member_name = convertToSnakeCase(&name_buf, member.name);
@@ -358,6 +396,10 @@ fn generateObject(object: Object, file: *DynamicWriter) !void {
         if (method.returns) |ret| {
             const arg_type = typeToString(&arg_buf, ret.type);
 
+            if (ret.optional) |_| {
+                try file.writeAll("?");
+            }
+
             try file.writeAll(arg_type);
         } else if (method.callback) |_| {
             try file.writeAll("Future");
@@ -368,6 +410,8 @@ fn generateObject(object: Object, file: *DynamicWriter) !void {
         try file.writeAll(" {\n");
 
         if (method.returns) |_|
+            try file.writeAll("        return ")
+        else if (method.callback) |_|
             try file.writeAll("        return ")
         else
             try file.writeAll("        ");
@@ -396,7 +440,10 @@ fn generateObject(object: Object, file: *DynamicWriter) !void {
         try file.writeAll(");\n    }\n");
     }
 
-    if (std.mem.eql(u8, object.name, "instance")) try file.writeAll(instance_methods);
+    if (std.mem.eql(u8, object.name, "instance"))
+        try file.writeAll(instance_methods)
+    else if (std.mem.eql(u8, object.name, "adapter"))
+        try file.writeAll(adapter_methods);
 
     try file.writeAll("};\n\n");
 }
@@ -410,11 +457,11 @@ fn generateCallback(callback: Callback, file: *DynamicWriter) !void {
 
     try file.writeAll(bufPrint(&buf,
         \\pub const {s}CallbackInfo = extern struct {{
-        \\  next: ?*anyopaque = null,
-        \\  mode: CallbackMode = .null,
-        \\  callback: {s}Callback,
-        \\  user_data1: ?*anyopaque = null,
-        \\  user_data2: ?*anyopaque = null,
+        \\    next: ?*anyopaque = null,
+        \\    mode: CallbackMode = .null,
+        \\    callback: {s}Callback,
+        \\    user_data1: ?*anyopaque = null,
+        \\    user_data2: ?*anyopaque = null,
         \\}};
         \\
     , .{ name, name }) catch unreachable);

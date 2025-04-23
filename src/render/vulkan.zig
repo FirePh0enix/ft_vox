@@ -14,9 +14,9 @@ const Window = @import("Window.zig");
 const Graph = @import("Graph.zig");
 const Renderer = @import("Renderer.zig");
 const RID = Renderer.RID;
-const ShaderModel = @import("ShaderModel.zig");
 
 const rdr = Renderer.rdr;
+const createWithInit = Renderer.createWithInit;
 
 const GetInstanceProcAddrFn = fn (instance: vk.Instance, name: [*:0]const u8) callconv(.c) ?*const fn () callconv(.c) void;
 const GetDeviceProcAddrFn = fn (device: vk.Device, name: [*:0]const u8) callconv(.c) ?*const fn () callconv(.c) void;
@@ -137,13 +137,6 @@ pub const VulkanRenderer = struct {
 
         .framebuffer_create = @ptrCast(&framebufferCreate),
     };
-
-    pub fn create(allocator: Allocator) Allocator.Error!*VulkanRenderer {
-        const driver = try createWithDefault(VulkanRenderer, allocator);
-        driver.allocator = allocator;
-
-        return driver;
-    }
 
     pub fn createDevice(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
         self.createDeviceVk(window) catch |e| switch (e) {
@@ -501,7 +494,6 @@ pub const VulkanRenderer = struct {
 
             const pipeline = try self.pipeline_cache.getOrCreate(self, .{
                 .render_pass = pass.render_pass,
-                .shader_model = material.shader_model,
                 .transparency = false, // TODO
                 .material = material,
             });
@@ -1152,7 +1144,7 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn materialCreate(self: *VulkanRenderer, options: Renderer.MaterialOptions) Renderer.MaterialCreateError!RID {
-        var descriptor_pool = DynamicDescriptorPool.init(self.allocator, options.shader_model) catch return error.Failed;
+        var descriptor_pool = DynamicDescriptorPool.init(self.allocator, options.params) catch return error.Failed;
         const descriptor_set = descriptor_pool.createDescriptorSet() catch return error.Failed;
 
         const params = try self.allocator.alloc(VulkanMaterial.Param, options.params.len);
@@ -1165,13 +1157,19 @@ pub const VulkanRenderer = struct {
             };
         }
 
-        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanMaterial, self.allocator, .{
-            .descriptor_pool = descriptor_pool,
-            .descriptor_set = descriptor_set,
-            .descriptor_set_layout = descriptor_pool.descriptor_set_layout,
-            .params = params,
-            .shader_model = options.shader_model,
-        })) };
+        const rid: RID = .{
+            .inner = @intFromPtr(try createWithInit(VulkanMaterial, self.allocator, .{
+                .descriptor_pool = descriptor_pool,
+                .descriptor_set = descriptor_set,
+                .descriptor_set_layout = descriptor_pool.descriptor_set_layout,
+                .shaders = options.shaders, // TODO: Duplicate this ?
+                .params = params,
+                .instance_layout = options.instance_layout,
+                .topology = options.topology,
+                .polygon_mode = options.polygon_mode,
+                .cull_mode = options.cull_mode,
+            })),
+        };
 
         self.rid_infos_mutex.lock();
         defer self.rid_infos_mutex.unlock();
@@ -1230,10 +1228,10 @@ pub const VulkanRenderer = struct {
 
                 self.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
             },
-            .uniform => |u| {
-                const buffer = u.as(VulkanBuffer);
+            .buffer => |b| {
+                const buffer = b.as(VulkanBuffer);
 
-                param.value = .{ .uniform = u };
+                param.value = .{ .buffer = b };
 
                 const buffer_info: vk.DescriptorBufferInfo = .{ .buffer = buffer.buffer, .offset = 0, .range = buffer.size };
 
@@ -1444,20 +1442,44 @@ pub const VulkanRenderer = struct {
         }, null);
     }
 
-    pub fn createGraphicsPipeline(self: *VulkanRenderer, options: GraphicsPipelineOptions) error{ Failed, ShaderCompilationFailed }!Pipeline {
+    pub fn createGraphicsPipeline(self: *VulkanRenderer, options: GraphicsPipelineOptions) error{ OutOfMemory, Failed, ShaderCompilationFailed }!Pipeline {
         // TODO: `options.transparency`.
 
         var shader_stages: [4]vk.PipelineShaderStageCreateInfo = undefined;
 
-        for (options.shader_model.shaders, 0..options.shader_model.shaders.len) |shader, index| {
+        for (options.material.shaders, 0..options.material.shaders.len) |shader, index| {
             shader_stages[index] = .{
-                .stage = shader.getStage().toVkFlags(),
+                .stage = shader.stage.asVk(),
                 .module = self.createShaderModule(assets.getShaderData(shader.path)) catch return error.ShaderCompilationFailed,
-                .p_name = shader.fn_name orelse "main",
+                .p_name = "main",
             };
         }
 
-        defer for (0..options.shader_model.shaders.len) |index| self.device.destroyShaderModule(shader_stages[index].module, null);
+        defer for (0..options.material.shaders.len) |index| self.device.destroyShaderModule(shader_stages[index].module, null);
+
+        var input_bindings: std.ArrayList(vk.VertexInputBindingDescription) = try .initCapacity(self.allocator, if (options.material.instance_layout) |_| 4 else 3);
+        defer input_bindings.deinit();
+
+        var input_attribs: std.ArrayList(vk.VertexInputAttributeDescription) = try .initCapacity(self.allocator, if (options.material.instance_layout) |layout| 3 + layout.inputs.len else 3);
+        defer input_attribs.deinit();
+
+        // Vertex attributes
+        input_bindings.appendAssumeCapacity(.{ .binding = 0, .stride = 3 * @sizeOf(f32), .input_rate = .vertex });
+        input_bindings.appendAssumeCapacity(.{ .binding = 1, .stride = 3 * @sizeOf(f32), .input_rate = .vertex });
+        input_bindings.appendAssumeCapacity(.{ .binding = 2, .stride = 2 * @sizeOf(f32), .input_rate = .vertex });
+
+        input_attribs.appendAssumeCapacity(.{ .binding = 0, .location = 0, .format = .r32g32b32_sfloat, .offset = 0 });
+        input_attribs.appendAssumeCapacity(.{ .binding = 1, .location = 1, .format = .r32g32b32_sfloat, .offset = 0 });
+        input_attribs.appendAssumeCapacity(.{ .binding = 2, .location = 2, .format = .r32g32_sfloat, .offset = 0 });
+
+        // Instance inputs
+        if (options.material.instance_layout) |instance_layout| {
+            input_bindings.appendAssumeCapacity(.{ .binding = 3, .stride = @intCast(instance_layout.stride), .input_rate = .instance });
+
+            for (instance_layout.inputs, 0..instance_layout.inputs.len) |input, index| {
+                input_attribs.appendAssumeCapacity(.{ .binding = 3, .location = 3 + @as(u32, @intCast(index)), .format = input.type.asVkFormat(), .offset = @intCast(input.offset) });
+            }
+        }
 
         const dynamic_states: []const vk.DynamicState = &.{ .viewport, .scissor };
         const dynamic_state_info: vk.PipelineDynamicStateCreateInfo = .{
@@ -1466,14 +1488,14 @@ pub const VulkanRenderer = struct {
         };
 
         const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
-            .vertex_binding_description_count = @intCast(options.shader_model.vk_bindings.items.len),
-            .p_vertex_binding_descriptions = options.shader_model.vk_bindings.items.ptr,
-            .vertex_attribute_description_count = @intCast(options.shader_model.vk_attribs.items.len),
-            .p_vertex_attribute_descriptions = options.shader_model.vk_attribs.items.ptr,
+            .vertex_binding_description_count = @intCast(input_bindings.items.len),
+            .p_vertex_binding_descriptions = input_bindings.items.ptr,
+            .vertex_attribute_description_count = @intCast(input_attribs.items.len),
+            .p_vertex_attribute_descriptions = input_attribs.items.ptr,
         };
 
         const input_assembly_info: vk.PipelineInputAssemblyStateCreateInfo = .{
-            .topology = options.shader_model.topology,
+            .topology = options.material.topology,
             .primitive_restart_enable = vk.FALSE,
         };
 
@@ -1486,7 +1508,7 @@ pub const VulkanRenderer = struct {
             .depth_clamp_enable = vk.FALSE,
             .depth_bias_clamp = 0.0,
             .rasterizer_discard_enable = vk.FALSE,
-            .polygon_mode = options.shader_model.polygon_mode,
+            .polygon_mode = options.material.polygon_mode,
             .line_width = 1.0,
             .cull_mode = .{ .back_bit = true },
             .front_face = .counter_clockwise,
@@ -1535,16 +1557,23 @@ pub const VulkanRenderer = struct {
             .back = std.mem.zeroes(vk.StencilOpState),
         };
 
+        // TODO: Probably should not hardcode push constant ranges. For now it can only store one mat4.
+        // TODO: Reuse the pipeline layout for the same material ?
+
+        const push_constant_rages: []const vk.PushConstantRange = &.{
+            .{ .offset = 0, .size = @sizeOf([16]f32), .stage_flags = .{ .vertex_bit = true } },
+        };
+
         const layout = self.device.createPipelineLayout(&vk.PipelineLayoutCreateInfo{
             .set_layout_count = 1,
             .p_set_layouts = @ptrCast(&options.material.descriptor_pool.descriptor_set_layout),
-            .push_constant_range_count = @intCast(options.shader_model.vk_push_constants.items.len),
-            .p_push_constant_ranges = options.shader_model.vk_push_constants.items.ptr,
+            .push_constant_range_count = @intCast(push_constant_rages.len),
+            .p_push_constant_ranges = push_constant_rages.ptr,
         }, null) catch return error.Failed;
 
         var pipeline: vk.Pipeline = .null_handle;
         _ = self.device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&vk.GraphicsPipelineCreateInfo{
-            .stage_count = @intCast(options.shader_model.shaders.len),
+            .stage_count = @intCast(options.material.shaders.len),
             .p_stages = &shader_stages,
             .p_vertex_input_state = &vertex_input_info,
             .p_input_assembly_state = &input_assembly_info,
@@ -1829,28 +1858,48 @@ pub const VulkanPipeline = struct {
     signature: usize = resource_signature,
     pipeline: vk.Pipeline,
     layout: vk.PipelineLayout,
-    descriptor_pool: DynamicDescriptorPool,
+    // descriptor_pool: DynamicDescriptorPool,
+};
+
+pub const VulkanRenderPass = struct {
+    pub const resource_signature: usize = @truncate(0xb848438b714985aa);
+
+    signature: usize = resource_signature,
+    render_pass: vk.RenderPass,
+    attachments: []const Renderer.Attachment,
+};
+
+pub const VulkanFramebuffer = struct {
+    pub const resource_signature: usize = @truncate(0x264657ac2e68fd36);
+
+    signature: usize = resource_signature,
+    framebuffer: vk.Framebuffer,
 };
 
 const DynamicDescriptorPool = struct {
     pools: std.ArrayList(vk.DescriptorPool),
     count: usize,
     descriptor_set_layout: vk.DescriptorSetLayout,
-    shader_model: ShaderModel,
 
     const pool_size: usize = 16;
 
-    pub fn init(allocator: Allocator, shader_model: ShaderModel) !DynamicDescriptorPool {
+    pub fn init(allocator: Allocator, params: []const Renderer.MaterialParameter) !DynamicDescriptorPool {
+        var descriptor_bindings: std.ArrayList(vk.DescriptorSetLayoutBinding) = .init(allocator);
+        defer descriptor_bindings.deinit();
+
+        for (params, 0..params.len) |param, index| {
+            try descriptor_bindings.append(.{ .binding = @intCast(index), .stage_flags = param.stage.asVk(), .descriptor_type = param.type.asVk(), .descriptor_count = 1, .p_immutable_samplers = null });
+        }
+
         const descriptor_set_layout = try rdr().asVk().device.createDescriptorSetLayout(&vk.DescriptorSetLayoutCreateInfo{
-            .binding_count = @intCast(shader_model.vk_descriptor_bindings.items.len),
-            .p_bindings = shader_model.vk_descriptor_bindings.items.ptr,
+            .binding_count = @intCast(descriptor_bindings.items.len),
+            .p_bindings = descriptor_bindings.items.ptr,
         }, null);
 
         return .{
             .pools = .init(allocator),
             .count = 0,
             .descriptor_set_layout = descriptor_set_layout,
-            .shader_model = shader_model,
         };
     }
 
@@ -1887,21 +1936,6 @@ const DynamicDescriptorPool = struct {
     }
 };
 
-pub const VulkanRenderPass = struct {
-    pub const resource_signature: usize = @truncate(0xb848438b714985aa);
-
-    signature: usize = resource_signature,
-    render_pass: vk.RenderPass,
-    attachments: []const Renderer.Attachment,
-};
-
-pub const VulkanFramebuffer = struct {
-    pub const resource_signature: usize = @truncate(0x264657ac2e68fd36);
-
-    signature: usize = resource_signature,
-    framebuffer: vk.Framebuffer,
-};
-
 pub const VulkanMaterial = struct {
     pub const resource_signature: usize = @truncate(0x53df5135a9cc62f3);
 
@@ -1911,7 +1945,7 @@ pub const VulkanMaterial = struct {
             sampler: vk.Sampler,
             rid: RID,
         },
-        uniform: RID,
+        buffer: RID,
     };
 
     pub const Param = struct {
@@ -1926,9 +1960,13 @@ pub const VulkanMaterial = struct {
     descriptor_set: vk.DescriptorSet,
     descriptor_set_layout: vk.DescriptorSetLayout,
 
-    shader_model: ShaderModel, // TODO: should not store this.
-
+    shaders: []const Renderer.ShaderRef,
+    instance_layout: ?Renderer.MaterialInstanceLayout,
     params: []Param,
+
+    topology: vk.PrimitiveTopology = .triangle_list,
+    polygon_mode: vk.PolygonMode = .fill,
+    cull_mode: vk.CullModeFlags = .{ .back_bit = true },
 
     pub fn deinit(self: *const VulkanMaterial, r: *VulkanRenderer) void {
         self.descriptor_pool.deinit(r);
@@ -1977,7 +2015,6 @@ pub const VulkanMesh = struct {
 };
 
 pub const GraphicsPipelineOptions = struct {
-    shader_model: ShaderModel,
     render_pass: RID,
     transparency: bool,
     material: *VulkanMaterial,
@@ -2011,7 +2048,7 @@ const PipelineCache = struct {
     pub fn getOrCreate(self: *PipelineCache, r: *VulkanRenderer, options: GraphicsPipelineOptions) error{ Failed, OutOfMemory, ShaderCompilationFailed }!Pipeline {
         var hasher = std.hash.Wyhash.init(0);
 
-        for (options.shader_model.shaders) |shader_ref| hasher.update(shader_ref.path);
+        for (options.material.shaders) |shader| hasher.update(shader.path);
 
         const key: PipelineKey = .{
             .name_hash = @truncate(hasher.final()),
@@ -2028,31 +2065,6 @@ const PipelineCache = struct {
         }
     }
 };
-
-/// Create a value and initialize it right away to prevent `undefined` values from getting into `T`.
-fn createWithInit(comptime T: type, allocator: Allocator, value: T) Allocator.Error!*T {
-    const ptr = try allocator.create(T);
-    ptr.* = value;
-    return ptr;
-}
-
-/// Create a value and fill its field with default values if applicable.
-fn createWithDefault(comptime T: type, allocator: Allocator) Allocator.Error!*T {
-    const info = @typeInfo(T);
-    const ptr = try allocator.create(T);
-
-    switch (info) {
-        .@"struct" => |s| {
-            inline for (s.fields) |field| {
-                if (field.defaultValue()) |value|
-                    @field(ptr.*, field.name) = value;
-            }
-        },
-        else => {},
-    }
-
-    return ptr;
-}
 
 const allocation_callbacks: vk.AllocationCallbacks = .{
     .p_user_data = null,
