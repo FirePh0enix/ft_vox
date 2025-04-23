@@ -78,7 +78,10 @@ fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
     // const erosion01 = (erosion + 1.0) / 2.0;
 
     // Create peaks, valleys and rivers
-    const peaks_and_valleys = noises.peaks_and_valleys * cont01 * 80.0 * erosion * cont01 * 2.0;
+    const pv = remapValue(noises.peaks_and_valleys, -1.0, 1.0, -3.0, 1.0);
+    // const pv01 = (pv + 1.0) / 2.0;
+
+    const peaks_and_valleys = pv * cont01 * 20.0 * erosion * cont01 * 2.0;
 
     const value = sea_levelf + (cont + 0.19) * 40.0 + peaks_and_valleys + ridge_value;
 
@@ -201,7 +204,8 @@ fn getErosion(noise: *const SimplexNoise, x: f32, z: f32) f32 {
 }
 
 fn getWeirdness(noise: *const SimplexNoise, x: f32, z: f32) f32 {
-    return noise.fractal2D(3, x / 200.0, z / 200.0);
+    const scale = 1.0 / 100.0;
+    return noise.fractal2D(3, x * scale, z * scale);
 }
 
 fn getRidge(noise: *const SimplexNoise, x: f32, z: f32) f32 {
