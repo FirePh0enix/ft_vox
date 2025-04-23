@@ -541,7 +541,7 @@ pub const SamplerOptions = struct {
         u: SamplerAddressMode = .clamp_to_edge,
         v: SamplerAddressMode = .clamp_to_edge,
         w: SamplerAddressMode = .clamp_to_edge,
-    },
+    } = .{},
 
     // TODO: More of `vk.SamplerCreateInfo` could be implemented
 };

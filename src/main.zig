@@ -279,14 +279,10 @@ pub fn mainDesktop() !void {
     defer registry.deinit();
 
     try registry.registerBlockFromFile("water.zon", .{});
-    try registry.registerBlockFromFile("deep_water.zon", .{});
     try registry.registerBlockFromFile("stone.zon", .{});
     try registry.registerBlockFromFile("dirt.zon", .{});
     try registry.registerBlockFromFile("grass.zon", .{});
-    try registry.registerBlockFromFile("savanna_dirt.zon", .{});
-    try registry.registerBlockFromFile("snow_dirt.zon", .{});
     try registry.registerBlockFromFile("sand.zon", .{});
-    try registry.registerBlockFromFile("snow.zon", .{});
 
     try registry.lock();
 
@@ -312,7 +308,6 @@ pub fn mainDesktop() !void {
             .sampler = .{
                 .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
                 .min_filter = .nearest,
-                .address_mode = .{ .u = .clamp_to_edge, .v = .clamp_to_edge, .w = .clamp_to_edge },
             },
         },
     });
@@ -322,7 +317,6 @@ pub fn mainDesktop() !void {
             .sampler = .{
                 .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
                 .min_filter = .nearest,
-                .address_mode = .{ .u = .clamp_to_edge, .v = .clamp_to_edge, .w = .clamp_to_edge },
             },
             .layout = .depth_stencil_read_only_optimal,
         },

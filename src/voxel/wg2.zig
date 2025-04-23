@@ -10,14 +10,10 @@ const Graph = @import("../render/Graph.zig");
 
 const air = 0;
 const water = 1;
-const deep_water = 2;
-const stone = 3;
-const dirt = 4;
-const grass = 5;
-const savanna_dirt = 6;
-const snow_dirt = 7;
-const sand = 8;
-const snow = 9;
+const stone = 2;
+const dirt = 3;
+const grass = 4;
+const sand = 5;
 
 pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
