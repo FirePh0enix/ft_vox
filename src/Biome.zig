@@ -106,6 +106,11 @@ pub const Temperature = enum(u32) {
     }
 };
 
+const BlendedBiome = struct {
+    base_height: f32,
+    squish: f32,
+};
+
 /// Return a Biome by analyzing continentalness, erosion, peaks and valleys, weirdness, temperature and humidity.
 /// Biome are categorized as either Non Inland Biomes (Ocean...) and Inland Biomes (plains...).
 pub fn getBiome(noise: Noise) Biome {
@@ -281,6 +286,43 @@ fn getPlateauBiomes(temp: Temperature, hum: u32) Biome {
         1, 2, 3, 4 => if (temp == .coldest) .snowy_plains else .forest,
         else => .plains,
     };
+}
+
+// https://gamedev.stackexchange.com/questions/208485/biome-blending-using-multiple-biome-altitude-humidity-points
+// https://www.reddit.com/r/proceduralgeneration/comments/uhlkcb/any_tips_for_blending_procedurally_generated/
+pub fn blendSplineAttributes(world: *const World, fx: f32, fz: f32) BlendedBiome {
+    var total_weight: f32 = 0.0;
+    var blended_height: f32 = 0.0;
+    var blended_squish: f32 = 0.0;
+
+    // 2 radius allows me to create a 5x5 grid to check around.
+    const sample_radius: i32 = 2;
+    var dx: i32 = -sample_radius;
+    while (dx <= sample_radius) : (dx += 1) {
+        var dz: i32 = -sample_radius;
+        while (dz <= sample_radius) : (dz += 1) {
+            const sx: f32 = fx + @as(f32, @floatFromInt(dx * 4));
+            const sz: f32 = fz + @as(f32, @floatFromInt(dz * 4));
+
+            const biome = getBiome(getNoise(world, sx, sz));
+            const height = getSplineLevel(world, sx, sz, biome);
+            const squish = getSplineFactor(world, sx, sz);
+
+            // The distance will help us to determine which biome will affect more.
+            // If it's closer then he will affect more, the most the distance longer, the less he will affect.
+            const distance: f32 = std.math.sqrt(@as(f32, (@floatFromInt(@abs(dx * dx + dz * dz)))));
+
+            // Squaring the distance causes the weight to decrease as the distance increases.
+            // + 1.0 ensure we do not divide per 0.
+            const weight: f32 = 1.0 / (distance * distance + 1.0);
+
+            total_weight += weight;
+            blended_height += height * weight;
+            blended_squish += squish * weight;
+        }
+    }
+
+    return .{ .base_height = blended_height / total_weight, .squish = blended_squish / total_weight };
 }
 
 /// Return a base height in world scale, mainly, its the noise that decide the height but each biome can affect a little bit.

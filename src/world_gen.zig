@@ -225,8 +225,9 @@ pub fn generateChunk(world: *const World, chunk_x: isize, chunk_z: isize) Chunk 
             const noise = Biome.getNoise(world, fx, fz);
             const biome = Biome.getBiome(noise);
 
-            const baseLevel: f32 = Biome.getSplineLevel(world, fx, fz, biome);
-            const squishFactor: f32 = Biome.getSplineFactor(world, fx, fz);
+            const blended = Biome.blendSplineAttributes(world, fx, fz);
+            const baseLevel = blended.base_height;
+            const squishFactor = blended.squish;
 
             for (0..256) |y| {
                 const ny = @as(f32, @floatFromInt(y));
