@@ -82,9 +82,15 @@ pub const VulkanRenderer = struct {
     imgui_sampler: vk.Sampler,
     imgui_descriptor_pool: vk.DescriptorPool,
 
+    rid_infos_mutex: if (builtin.mode == .Debug) std.Thread.Mutex else DummyMutex = .{},
     rid_infos: if (builtin.mode == .Debug) std.AutoArrayHashMapUnmanaged(RID, RIDAllocInfo) else void = if (builtin.mode == .Debug) .empty else {},
 
     const max_frames_in_flight: usize = 2;
+
+    const DummyMutex = struct {
+        pub inline fn lock(_: *DummyMutex) void {}
+        pub inline fn unlock(_: *DummyMutex) void {}
+    };
 
     pub const QueueInfo = struct {
         graphics_index: ?u32 = null,
@@ -818,6 +824,9 @@ pub const VulkanRenderer = struct {
             std.debug.panic("Trying to free rid with signature {x}", .{@as(*const usize, @ptrFromInt(rid.inner)).*});
         }
 
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         _ = self.rid_infos.swapRemove(rid);
     }
 
@@ -858,6 +867,10 @@ pub const VulkanRenderer = struct {
             .buffer = buffer,
             .memory = memory,
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
@@ -968,7 +981,7 @@ pub const VulkanRenderer = struct {
         }, null) catch return error.OutOfDeviceMemory;
         errdefer self.device.destroyImageView(image_view, null);
 
-        return .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
+        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanImage, self.allocator, .{
             .width = options.width,
             .height = options.height,
             .layers = options.layers,
@@ -979,6 +992,12 @@ pub const VulkanRenderer = struct {
             .layout = .undefined,
             .aspect_mask = options.aspect_mask.asVk(),
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
+        try self.addRIDInfo(rid, @returnAddress());
+        return rid;
     }
 
     fn imageCreateFromVkHandle(self: *VulkanRenderer, image: vk.Image, format: vk.Format) Renderer.ImageCreateError!RID {
@@ -1009,6 +1028,10 @@ pub const VulkanRenderer = struct {
             .layout = .undefined,
             .aspect_mask = .{ .color_bit = true },
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
@@ -1149,6 +1172,10 @@ pub const VulkanRenderer = struct {
             .params = params,
             .shader_model = options.shader_model,
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
@@ -1251,6 +1278,10 @@ pub const VulkanRenderer = struct {
             .indices_count = options.indices.len / options.index_type.bytes(),
             .index_type = options.index_type.asVk(),
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
@@ -1362,6 +1393,10 @@ pub const VulkanRenderer = struct {
             .render_pass = render_pass,
             .attachments = try self.allocator.dupe(Renderer.Attachment, options.attachments),
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
@@ -1394,6 +1429,10 @@ pub const VulkanRenderer = struct {
         const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanFramebuffer, self.allocator, .{
             .framebuffer = framebuffer,
         })) };
+
+        self.rid_infos_mutex.lock();
+        defer self.rid_infos_mutex.unlock();
+
         try self.addRIDInfo(rid, @returnAddress());
         return rid;
     }
