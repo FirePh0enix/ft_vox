@@ -69,7 +69,11 @@ fn generateBindings(webgpu: WebGPU, file: *DynamicWriter) !void {
         \\
     );
 
-    for (webgpu.enums) |@"enum"| try generateEnum(@"enum", file);
+    const with_null: []const []const u8 = &.{
+        "callback_mode",
+    };
+
+    for (webgpu.enums) |@"enum"| try generateEnum(@"enum", with_null, file);
 
     try file.writeAll(
         \\
@@ -82,6 +86,8 @@ fn generateBindings(webgpu: WebGPU, file: *DynamicWriter) !void {
     );
 
     for (webgpu.structs) |@"struct"| try generateStruct(@"struct", file);
+
+    try file.writeAll(toplevel_structs);
 
     try file.writeAll(
         \\
@@ -134,12 +140,18 @@ fn generateBindings(webgpu: WebGPU, file: *DynamicWriter) !void {
                 index += 1;
             }
 
+            if (method.callback) |callback| {
+                try file.writeAll(bufPrint(&buf, ", callback: {s}CallbackInfo", .{convertToCamelCase(&buf2, callback[9..], true)}) catch unreachable);
+            }
+
             try file.writeAll(") callconv(.c) ");
 
             if (method.returns) |ret| {
                 const arg_type = typeToString(&buf2, ret.type);
 
                 try file.writeAll(arg_type);
+            } else if (method.callback) |_| {
+                try file.writeAll("Future");
             } else {
                 try file.writeAll("void");
             }
@@ -148,38 +160,51 @@ fn generateBindings(webgpu: WebGPU, file: *DynamicWriter) !void {
         }
     }
 
-    for (webgpu.functions) |function| {
-        try file.writeAll(bufPrint(&buf, "    pub extern fn wgpu{s}(", .{convertToCamelCase(&buf2, function.name, true)}) catch unreachable);
-
-        var index: usize = 0;
-
-        for (function.args) |arg| {
-            try file.writeAll(argToString(&buf2, arg));
-
-            if (index < function.args.len - 1)
-                try file.writeAll(", ");
-
-            index += 1;
-        }
-
-        try file.writeAll(") callconv(.c) ");
-
-        if (function.returns) |ret| {
-            const arg_type = typeToString(&buf2, ret.type);
-
-            try file.writeAll(arg_type);
-        } else {
-            try file.writeAll("void");
-        }
-
-        try file.writeAll(";\n");
-    }
+    for (webgpu.functions) |function| try generateExternFunction(function, file);
 
     try file.writeAll(
         \\};
         \\
     );
 }
+
+// TODO: Probably should generate things like `WGPUError!Adapter` for some functions.
+// TODO: Check errors
+
+const instance_methods: []const u8 =
+    \\    pub fn requestAdapterSync(self: Instance, options: ?*const RequestAdapterOptions) Adapter {
+    \\        const CallbackResult = struct {
+    \\            status: RequestAdapterStatus = .success,
+    \\            adapter: ?Adapter = null,
+    \\        };
+    \\
+    \\        const callback = struct {
+    \\            fn callback(status: RequestAdapterStatus, adapter: Adapter, message: [*:0]const u8, user_data: *CallbackResult) callconv(.c) void {
+    \\                _ = message;
+    \\                user_data.status = status;
+    \\                user_data.adapter = adapter;
+    \\            }
+    \\        }.callback;
+    \\
+    \\        var user_data: CallbackResult = .{};
+    \\
+    \\        const future = self.requestAdapter(options, .{
+    \\            .callback = @ptrCast(&callback),
+    \\            .user_data1 = @ptrCast(&user_data),
+    \\        });
+    \\
+    \\        _ = self.waitAny(1, @ptrCast(&FutureWaitInfo{ .future = future, .completed = TRUE }), std.math.maxInt(u64));
+    \\        return user_data.adapter orelse unreachable;
+    \\    }
+;
+
+const toplevel_structs: []const u8 =
+    \\pub const SurfaceSourceCanvasHTMLSelector = extern struct {
+    \\    next: ?*anyopaque = null,
+    \\    selector: [*:0]const u8,
+    \\};
+    \\
+;
 
 fn generateConstant(constant: Constant, file: *DynamicWriter) !void {
     var buf: [128]u8 = undefined;
@@ -188,12 +213,16 @@ fn generateConstant(constant: Constant, file: *DynamicWriter) !void {
     try file.writeAll(bufPrint(&buf, "pub const {s} = {s};\n", .{ constant.name, valueToString(constant.value) }) catch unreachable);
 }
 
-fn generateEnum(@"enum": Enum, file: *DynamicWriter) !void {
+fn generateEnum(@"enum": Enum, with_null: []const []const u8, file: *DynamicWriter) !void {
     var buf: [128]u8 = undefined;
     var name_buf: [128]u8 = undefined;
 
     try writeDocs(@"enum".doc, file);
     try file.writeAll(bufPrint(&buf, "pub const {s} = enum(u32) {{\n", .{convertToCamelCase(&name_buf, @"enum".name, true)}) catch unreachable);
+
+    for (with_null) |s| {
+        if (std.mem.eql(u8, s, @"enum".name)) try file.writeAll("    null = 0,\n");
+    }
 
     for (@"enum".entries) |entry| {
         try file.writeAll(bufPrint(&buf, "    {s},\n", .{convertToSnakeCase(&name_buf, entry.name)}) catch unreachable);
@@ -229,6 +258,8 @@ fn generateStruct(@"struct": Struct, file: *DynamicWriter) !void {
 
     try writeDocs(@"struct".doc, file);
     try file.writeAll(bufPrint(&buf, "pub const {s} = extern struct {{\n", .{convertToCamelCase(&name_buf, @"struct".name, true)}) catch unreachable);
+
+    if (std.mem.eql(u8, @"struct".type, "extensible")) try file.writeAll("    next: ?*anyopaque = null,\n");
 
     for (@"struct".members) |member| {
         const member_name = convertToSnakeCase(&name_buf, member.name);
@@ -268,7 +299,17 @@ fn generateStruct(@"struct": Struct, file: *DynamicWriter) !void {
 
                 try file.writeAll(bufPrint(&buf, "    {s}: {s} = {s},\n", .{ member_name, member_type, default_value }) catch unreachable);
             } else {
-                try file.writeAll(bufPrint(&buf, "    {s}: {s},\n", .{ member_name, member_type }) catch unreachable);
+                if (member.optional) |_| {
+                    if (std.mem.startsWith(u8, member.type, "object.")) {
+                        try file.writeAll(bufPrint(&buf, "    {s}: ?{s} = null,\n", .{ member_name, member_type }) catch unreachable);
+                    } else if (std.mem.startsWith(u8, member.type, "struct.")) {
+                        try file.writeAll(bufPrint(&buf, "    {s}: {s} = .{{}},\n", .{ member_name, member_type }) catch unreachable);
+                    } else {
+                        unreachable;
+                    }
+                } else {
+                    try file.writeAll(bufPrint(&buf, "    {s}: {s},\n", .{ member_name, member_type }) catch unreachable);
+                }
             }
         }
     }
@@ -308,12 +349,18 @@ fn generateObject(object: Object, file: *DynamicWriter) !void {
             index += 1;
         }
 
+        if (method.callback) |callback| {
+            try file.writeAll(bufPrint(&buf, ", callback: {s}CallbackInfo", .{convertToCamelCase(&name_buf, callback[9..], true)}) catch unreachable);
+        }
+
         try file.writeAll(") ");
 
         if (method.returns) |ret| {
             const arg_type = typeToString(&arg_buf, ret.type);
 
             try file.writeAll(arg_type);
+        } else if (method.callback) |_| {
+            try file.writeAll("Future");
         } else {
             try file.writeAll("void");
         }
@@ -342,30 +389,51 @@ fn generateObject(object: Object, file: *DynamicWriter) !void {
             index += 1;
         }
 
+        if (method.callback) |_| {
+            try file.writeAll(", callback");
+        }
+
         try file.writeAll(");\n    }\n");
     }
+
+    if (std.mem.eql(u8, object.name, "instance")) try file.writeAll(instance_methods);
 
     try file.writeAll("};\n\n");
 }
 
 fn generateCallback(callback: Callback, file: *DynamicWriter) !void {
-    var buf: [128]u8 = undefined;
+    var buf: [512]u8 = undefined;
     var name_buf: [128]u8 = undefined;
     var arg_buf: [128]u8 = undefined;
 
+    const name = convertToCamelCase(&name_buf, callback.name, true);
+
+    try file.writeAll(bufPrint(&buf,
+        \\pub const {s}CallbackInfo = extern struct {{
+        \\  next: ?*anyopaque = null,
+        \\  mode: CallbackMode = .null,
+        \\  callback: {s}Callback,
+        \\  user_data1: ?*anyopaque = null,
+        \\  user_data2: ?*anyopaque = null,
+        \\}};
+        \\
+    , .{ name, name }) catch unreachable);
+
     try writeDocs(callback.doc, file);
-    try file.writeAll(bufPrint(&buf, "pub const {s}Callback = *const fn (", .{convertToCamelCase(&name_buf, callback.name, true)}) catch unreachable);
+    try file.writeAll(bufPrint(&buf, "pub const {s}Callback = *const fn (", .{name}) catch unreachable);
 
     var index: usize = 0;
 
     for (callback.args) |arg| {
         try file.writeAll(argToString(&arg_buf, arg));
 
-        if (index < callback.args.len - 1)
+        if (index < callback.args.len)
             try file.writeAll(", ");
 
         index += 1;
     }
+
+    try file.writeAll("user_data: ?*anyopaque");
 
     try file.writeAll(bufPrint(&buf, ") callconv(.c) void;\n", .{}) catch unreachable);
 }
@@ -421,6 +489,36 @@ fn generateFunction(function: Function, file: *DynamicWriter) !void {
     }
 
     try file.writeAll(");\n}\n");
+}
+
+fn generateExternFunction(function: Function, file: *DynamicWriter) !void {
+    var buf: [128]u8 = undefined;
+    var buf2: [128]u8 = undefined;
+
+    try file.writeAll(bufPrint(&buf, "    pub extern fn wgpu{s}(", .{convertToCamelCase(&buf2, function.name, true)}) catch unreachable);
+
+    var index: usize = 0;
+
+    for (function.args) |arg| {
+        try file.writeAll(argToString(&buf2, arg));
+
+        if (index < function.args.len - 1)
+            try file.writeAll(", ");
+
+        index += 1;
+    }
+
+    try file.writeAll(") callconv(.c) ");
+
+    if (function.returns) |ret| {
+        const arg_type = typeToString(&buf2, ret.type);
+
+        try file.writeAll(arg_type);
+    } else {
+        try file.writeAll("void");
+    }
+
+    try file.writeAll(";\n");
 }
 
 fn writeDocs(doc: []const u8, file: *DynamicWriter) !void {

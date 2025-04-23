@@ -158,13 +158,16 @@ pub fn build(b: *Build) !void {
     exe.step.dependOn(embedded_assets.step);
     exe.root_module.addImport("embeded_assets", embedded_assets.module);
 
+    const zemscripten_dep = b.dependency("zemscripten", .{});
+    exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
+
     if (!target_is_emscripten) {
         b.installArtifact(exe);
     } else {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
 
-        const zemscripten_dep = b.dependency("zemscripten", .{});
-        exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
+        const emsdk = b.dependency("emsdk", .{});
+        exe.addSystemIncludePath(emsdk.path("upstream/include"));
 
         const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
         exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
@@ -226,7 +229,7 @@ pub fn build(b: *Build) !void {
         //     args
         // else
         //     &.{};
-        const args: []const []const u8 = &.{ "--browser", "chromium" };
+        const args: []const []const u8 = &.{ "--browser", "brave-browser" }; // "chromium" };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
         emrun_step.dependOn(b.getInstallStep());

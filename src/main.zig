@@ -7,6 +7,7 @@ const input = @import("input.zig");
 const world_gen = @import("world_gen.zig");
 const dcimgui = @import("dcimgui");
 const argzon = @import("argzon");
+const zemscripten = @import("zemscripten");
 
 const Renderer = @import("render/Renderer.zig");
 const ShaderModel = @import("render/ShaderModel.zig");
@@ -425,8 +426,18 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
 
 const wgpu = @import("webgpu");
 
+// https://developer.chrome.com/docs/web-platform/webgpu/build-app
+
 pub fn mainEmscripten() !void {
     std.debug.print("Hello world!\n", .{});
+
+    const instance = wgpu.createInstance(null);
+    std.debug.print("{*}\n", .{instance});
+
+    // instance.requestAdapterSync(&wgpu.RequestAdapterOptions{
+    //     .backend_type = .web_gpu,
+    //     .feature_level = .compatibility,
+    // });
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())

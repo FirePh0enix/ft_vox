@@ -50,16 +50,18 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
             }
 
             // Fill the rest with water
-            if (height < sea_level) {
-                for (height..sea_level) |ly| {
-                    chunk.setBlockState(lx, ly, lz, .{ .id = water });
-                }
-            }
+            // if (height < sea_level) {
+            //     for (height..sea_level) |ly| {
+            //         chunk.setBlockState(lx, ly, lz, .{ .id = water });
+            //     }
+            // }
         }
     }
 
     return chunk;
 }
+
+// fn getSurfaceBlock(biome: Biome) u16 {}
 
 fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
     _ = x;
