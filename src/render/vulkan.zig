@@ -1152,7 +1152,7 @@ pub const VulkanRenderer = struct {
         for (options.params, 0..options.params.len) |param, index| {
             params[index] = .{
                 .name = try self.allocator.dupe(u8, param.name),
-                .binding = index, // TODO: some params can be more than one binding slot
+                .binding = index,
                 .type = param.type,
             };
         }
@@ -1165,9 +1165,10 @@ pub const VulkanRenderer = struct {
                 .shaders = options.shaders, // TODO: Duplicate this ?
                 .params = params,
                 .instance_layout = options.instance_layout,
-                .topology = options.topology,
-                .polygon_mode = options.polygon_mode,
-                .cull_mode = options.cull_mode,
+                .topology = options.topology.asVk(),
+                .polygon_mode = options.polygon_mode.asVk(),
+                .cull_mode = options.cull_mode.asVk(),
+                .transparency = options.transparency,
             })),
         };
 
@@ -1443,8 +1444,6 @@ pub const VulkanRenderer = struct {
     }
 
     pub fn createGraphicsPipeline(self: *VulkanRenderer, options: GraphicsPipelineOptions) error{ OutOfMemory, Failed, ShaderCompilationFailed }!Pipeline {
-        // TODO: `options.transparency`.
-
         var shader_stages: [4]vk.PipelineShaderStageCreateInfo = undefined;
 
         for (options.material.shaders, 0..options.material.shaders.len) |shader, index| {
@@ -1526,16 +1525,28 @@ pub const VulkanRenderer = struct {
             .alpha_to_one_enable = vk.FALSE,
         };
 
-        const blend_state: vk.PipelineColorBlendAttachmentState = .{
-            .blend_enable = vk.FALSE, // TODO: Support transparency
-            .src_color_blend_factor = .one,
-            .dst_color_blend_factor = .zero,
-            .color_blend_op = .add,
-            .src_alpha_blend_factor = .one,
-            .dst_alpha_blend_factor = .zero,
-            .alpha_blend_op = .add,
-            .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-        };
+        const blend_state: vk.PipelineColorBlendAttachmentState = if (!options.material.transparency)
+            .{
+                .blend_enable = vk.FALSE,
+                .src_color_blend_factor = .one,
+                .dst_color_blend_factor = .zero,
+                .color_blend_op = .add,
+                .src_alpha_blend_factor = .one,
+                .dst_alpha_blend_factor = .zero,
+                .alpha_blend_op = .add,
+                .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+            }
+        else
+            .{
+                .blend_enable = vk.TRUE,
+                .src_color_blend_factor = .src_alpha,
+                .dst_color_blend_factor = .one_minus_src_alpha,
+                .color_blend_op = .add,
+                .src_alpha_blend_factor = .one,
+                .dst_alpha_blend_factor = .zero,
+                .alpha_blend_op = .add,
+                .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
+            };
 
         const blend_info: vk.PipelineColorBlendStateCreateInfo = .{
             .logic_op_enable = vk.FALSE,
@@ -1558,7 +1569,7 @@ pub const VulkanRenderer = struct {
         };
 
         // TODO: Probably should not hardcode push constant ranges. For now it can only store one mat4.
-        // TODO: Reuse the pipeline layout for the same material ?
+        // TODO: Move the pipeline layout in the material
 
         const push_constant_rages: []const vk.PushConstantRange = &.{
             .{ .offset = 0, .size = @sizeOf([16]f32), .stage_flags = .{ .vertex_bit = true } },
@@ -1964,9 +1975,11 @@ pub const VulkanMaterial = struct {
     instance_layout: ?Renderer.MaterialInstanceLayout,
     params: []Param,
 
-    topology: vk.PrimitiveTopology = .triangle_list,
-    polygon_mode: vk.PolygonMode = .fill,
-    cull_mode: vk.CullModeFlags = .{ .back_bit = true },
+    topology: vk.PrimitiveTopology,
+    polygon_mode: vk.PolygonMode,
+    cull_mode: vk.CullModeFlags,
+
+    transparency: bool,
 
     pub fn deinit(self: *const VulkanMaterial, r: *VulkanRenderer) void {
         self.descriptor_pool.deinit(r);

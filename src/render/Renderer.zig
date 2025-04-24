@@ -259,6 +259,42 @@ pub const ShaderType = enum {
     }
 };
 
+pub const Topology = enum {
+    triangle_list,
+
+    pub fn asVk(self: Topology) vk.PrimitiveTopology {
+        return switch (self) {
+            .triangle_list => .triangle_list,
+        };
+    }
+};
+
+pub const PolygonMode = enum {
+    fill,
+    line,
+    point,
+
+    pub fn asVk(self: PolygonMode) vk.PolygonMode {
+        return switch (self) {
+            .fill => .fill,
+            .line => .line,
+            .point => .point,
+        };
+    }
+};
+
+pub const CullMode = enum {
+    back,
+    front,
+
+    pub fn asVk(self: CullMode) vk.CullModeFlags {
+        return switch (self) {
+            .back => .{ .back_bit = true },
+            .front => .{ .front_bit = true },
+        };
+    }
+};
+
 pub const Size = struct {
     width: usize,
     height: usize,
@@ -667,9 +703,9 @@ pub const MaterialOptions = struct {
     /// Desribe the layout of the instance buffer for this material.
     instance_layout: ?MaterialInstanceLayout = null,
 
-    topology: vk.PrimitiveTopology = .triangle_list,
-    polygon_mode: vk.PolygonMode = .fill,
-    cull_mode: vk.CullModeFlags = .{ .back_bit = true },
+    topology: Topology = .triangle_list,
+    polygon_mode: PolygonMode = .fill,
+    cull_mode: CullMode = .back,
 };
 
 pub const MaterialCreateError = error{

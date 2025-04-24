@@ -74,6 +74,7 @@ pub fn registerBlock(self: *Self, block_config: BlockZon, vtable: Block.VTable) 
     };
 
     const block: Block = .{
+        .name = Block.getNameHash(block_config.name),
         .visual = visual,
         .vtable = vtable,
     };
@@ -89,10 +90,10 @@ pub fn registerBlockFromFile(self: *Self, name: []const u8, vtable: Block.VTable
     try self.registerBlock(assets.getBlockData(name) orelse return error.Failed, vtable);
 }
 
-pub fn getBlock(self: *const Self, id: u16) ?Block {
+pub fn getBlock(self: *const Self, id: u16) ?*Block {
     if (id == 0 or id - 1 >= self.blocks.items.len)
         return null;
-    return self.blocks.items[id - 1];
+    return &self.blocks.items[id - 1];
 }
 
 pub fn getBlockId(self: *const Self, name: []const u8) ?u16 {

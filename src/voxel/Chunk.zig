@@ -34,6 +34,11 @@ pub fn getBlockState(self: *const Self, x: usize, y: usize, z: usize) ?BlockStat
     return block;
 }
 
+fn noBlockOrTransparent(self: *const Self, x: usize, y: usize, z: usize, current_id: u16) bool {
+    const block: BlockState = self.blocks[z * length * height + y * length + x];
+    return block.id == 0 or (block.transparent and block.id != current_id);
+}
+
 pub fn setBlockState(self: *Self, x: usize, y: usize, z: usize, state: BlockState) void {
     self.blocks[z * length * height + y * length + x] = state;
 }
@@ -52,48 +57,50 @@ pub fn computeVisibilityNoLock(
             for (0..length) |z| {
                 var visibility: u6 = 0;
 
+                const current_id = (self.getBlockState(x, y, z) orelse continue).id;
+
                 if (z == 0) {
                     if (north) |chunk| {
-                        if (chunk.getBlockState(x, y, 15) == null) visibility |= 1 << 0;
+                        if (chunk.noBlockOrTransparent(x, y, 15, current_id)) visibility |= 1 << 0;
                     } else {
                         visibility |= 1 << 0;
                     }
-                } else if (self.getBlockState(x, y, z - 1) == null) {
+                } else if (self.noBlockOrTransparent(x, y, z - 1, current_id)) {
                     visibility |= 1 << 0;
                 }
 
                 if (z == 15) {
                     if (south) |chunk| {
-                        if (chunk.getBlockState(x, y, 0) == null) visibility |= 1 << 1;
+                        if (chunk.noBlockOrTransparent(x, y, 0, current_id)) visibility |= 1 << 1;
                     } else {
                         visibility |= 1 << 1;
                     }
-                } else if (self.getBlockState(x, y, z + 1) == null) {
+                } else if (self.noBlockOrTransparent(x, y, z + 1, current_id)) {
                     visibility |= 1 << 1;
                 }
 
                 if (x == 0) {
                     if (west) |chunk| {
-                        if (chunk.getBlockState(15, y, z) == null) visibility |= 1 << 2;
+                        if (chunk.noBlockOrTransparent(15, y, z, current_id)) visibility |= 1 << 2;
                     } else {
                         visibility |= 1 << 2;
                     }
-                } else if (self.getBlockState(x - 1, y, z) == null) {
+                } else if (self.noBlockOrTransparent(x - 1, y, z, current_id)) {
                     visibility |= 1 << 2;
                 }
 
                 if (x == 15) {
                     if (east) |chunk| {
-                        if (chunk.getBlockState(0, y, z) == null) visibility |= 1 << 3;
+                        if (chunk.noBlockOrTransparent(0, y, z, current_id)) visibility |= 1 << 3;
                     } else {
                         visibility |= 1 << 3;
                     }
-                } else if (self.getBlockState(x + 1, y, z) == null) {
+                } else if (self.noBlockOrTransparent(x + 1, y, z, current_id)) {
                     visibility |= 1 << 3;
                 }
 
-                if (y == 255 or self.getBlockState(x, y + 1, z) == null) visibility |= 1 << 4;
-                if (y == 0 or self.getBlockState(x, y - 1, z) == null) visibility |= 1 << 5;
+                if (y == 255 or self.noBlockOrTransparent(x, y + 1, z, current_id)) visibility |= 1 << 4;
+                if (y == 0 or self.noBlockOrTransparent(x, y - 1, z, current_id)) visibility |= 1 << 5;
 
                 self.blocks[z * length * height + y * length + x].visibility = visibility;
             }

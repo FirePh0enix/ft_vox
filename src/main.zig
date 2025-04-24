@@ -30,14 +30,19 @@ pub const BlockZon = Registry.BlockZon;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-pub var tracking_allocator = if (builtin.cpu.arch.isWasm())
-    TrackingAllocator{ .backing_allocator = std.heap.wasm_allocator }
-else if (builtin.mode == .Debug)
-    TrackingAllocator{ .backing_allocator = debug_allocator.allocator() }
-else
-    TrackingAllocator{ .backing_allocator = std.heap.smp_allocator };
+// pub var tracking_allocator = if (builtin.cpu.arch.isWasm())
+//     TrackingAllocator{ .backing_allocator = std.heap.wasm_allocator }
+// else if (builtin.mode == .Debug)
+//     TrackingAllocator{ .backing_allocator = debug_allocator.allocator() }
+// else
+//     TrackingAllocator{ .backing_allocator = std.heap.smp_allocator };
 
-pub const allocator: std.mem.Allocator = tracking_allocator.allocator();
+pub const allocator: std.mem.Allocator = if (builtin.cpu.arch.isWasm())
+    std.heap.wasm_allocator
+else if (builtin.mode == .Debug)
+    debug_allocator.allocator()
+else
+    std.heap.smp_allocator;
 
 // export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
 
@@ -67,7 +72,7 @@ const Args = argzon.Args(cli, .{});
 
 pub var camera = Camera{
     .position = .{ 0.0, 100.0, 0.0, 0.0 },
-    .rotation = .{ 0.0, std.math.pi, 0.0, 0.0 },
+    .rotation = .{ 0.0, 0.0, 0.0, 0.0 },
     .speed = 0.5,
 };
 
@@ -79,6 +84,7 @@ var cube_mesh: RID = undefined;
 var material: RID = undefined;
 
 pub var the_world: World = undefined;
+pub var registry: Registry = undefined;
 
 var graph: Graph = undefined;
 pub var render_graph_pass: Graph.RenderPass = undefined;
@@ -248,7 +254,7 @@ pub fn mainDesktop() !void {
     cube_mesh = try createCube();
     defer rdr().freeRid(cube_mesh);
 
-    var registry = Registry.init(allocator);
+    registry = Registry.init(allocator);
     defer registry.deinit();
 
     try registry.registerBlockFromFile("water.zon", .{});
@@ -284,6 +290,7 @@ pub fn mainDesktop() !void {
             .{ .name = "shadowMap", .type = .image, .stage = .{ .fragment = true } },
             .{ .name = "light", .type = .buffer, .stage = .{ .vertex = true } },
         },
+        .transparency = true,
     });
     defer rdr().freeRid(material);
 

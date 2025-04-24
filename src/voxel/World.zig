@@ -7,6 +7,7 @@ const Self = @This();
 const Allocator = std.mem.Allocator;
 const Registry = @import("Registry.zig");
 const Chunk = @import("Chunk.zig");
+const Block = @import("Block.zig");
 const Ray = @import("../math.zig").Ray;
 const SimplexNoise = @import("../math.zig").SimplexNoiseWithOptions(f32);
 const Renderer = @import("../render/Renderer.zig");
@@ -17,11 +18,19 @@ const rdr = Renderer.rdr;
 
 const world_directory: []const u8 = "user_data/worlds";
 
+pub const GradientType = enum(u8) {
+    none = 0,
+    grass = 1,
+};
+
 pub const BlockInstanceData = extern struct {
     position: [3]f32 = .{ 0.0, 0.0, 0.0 },
     textures0: [3]f32 = .{ 0.0, 0.0, 0.0 },
     textures1: [3]f32 = .{ 0.0, 0.0, 0.0 },
-    visibility: u32 = 0,
+    visibility: u8 = 0,
+    gradient: u8 = 0,
+    gradient_type: GradientType = .none,
+    _padding: u8 = 0,
 };
 
 pub const Direction = enum(u3) {
@@ -39,7 +48,9 @@ pub const BlockState = packed struct(u32) {
     visibility: u6 = ~@as(u6, 0),
     direction: Direction = .north,
 
-    _padding: u7 = 0,
+    transparent: bool = false,
+
+    _padding: u6 = 0,
 };
 
 pub const BlockPos = struct {
@@ -241,6 +252,7 @@ const ChunkLoadWorker = struct {
 
                 // TODO: How should chunk generation/load errors should be threated ?
                 var chunk = wg2.generateChunk(world, pos.x, pos.z);
+                chunk.instance_buffer_index = buffer_index;
 
                 world.chunks_lock.lock();
                 defer world.chunks_lock.unlock();
@@ -248,38 +260,23 @@ const ChunkLoadWorker = struct {
                 chunk.computeVisibilityNoLock(world);
                 rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
 
-                // Recompute visibility for neighbours
-                // TODO: Not perfect...
+                world.chunks.put(world.allocator, pos, chunk) catch unreachable;
+
                 {
-                    const north = world.getChunk(pos.x, pos.z - 1);
-                    const south = world.getChunk(pos.x, pos.z + 1);
-                    const west = world.getChunk(pos.x - 1, pos.z);
-                    const east = world.getChunk(pos.x + 1, pos.z);
+                    const chunks: []const ?*Chunk = &.{
+                        world.getChunk(pos.x, pos.z - 1),
+                        world.getChunk(pos.x, pos.z + 1),
+                        world.getChunk(pos.x - 1, pos.z),
+                        world.getChunk(pos.x + 1, pos.z),
+                    };
 
-                    if (north) |c| {
-                        c.computeVisibilityNoLock(world);
-                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
-                    }
-
-                    if (south) |c| {
-                        c.computeVisibilityNoLock(world);
-                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
-                    }
-
-                    if (west) |c| {
-                        c.computeVisibilityNoLock(world);
-                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
-                    }
-
-                    if (east) |c| {
-                        c.computeVisibilityNoLock(world);
-                        rebuildInstanceBuffer(c, registry, &world.buffers[c.instance_buffer_index]) catch unreachable;
+                    for (chunks) |c| {
+                        if (c) |c2| {
+                            c2.computeVisibilityNoLock(world);
+                            rebuildInstanceBuffer(c2, registry, &world.buffers[c2.instance_buffer_index]) catch unreachable;
+                        }
                     }
                 }
-
-                chunk.instance_buffer_index = buffer_index;
-
-                world.chunks.put(world.allocator, pos, chunk) catch unreachable;
             }
         }
     }
@@ -389,14 +386,17 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
     var index: usize = 0;
     var instances: [Chunk.block_count]BlockInstanceData = @splat(BlockInstanceData{});
 
+    const grass_name_hash = Block.getNameHash("grass");
+
     for (0..Chunk.length) |x| {
         for (0..Chunk.height) |y| {
             for (0..Chunk.length) |z| {
-                const block: BlockState = chunk.blocks[z * Chunk.length * Chunk.height + y * Chunk.length + x];
+                const block_state: BlockState = chunk.blocks[z * Chunk.length * Chunk.height + y * Chunk.length + x];
 
-                if (block.id == 0 or block.visibility == 0) continue;
+                if (block_state.id == 0 or block_state.visibility == 0) continue;
 
-                const textures = (registry.getBlock(block.id) orelse unreachable).visual.cube.textures;
+                const block = registry.getBlock(block_state.id) orelse unreachable;
+                const textures = block.visual.cube.textures;
 
                 instances[index] = .{
                     .position = .{
@@ -406,7 +406,8 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
                     },
                     .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
                     .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
-                    .visibility = @intCast(block.visibility),
+                    .visibility = @intCast(block_state.visibility),
+                    .gradient_type = if (block.name == grass_name_hash) .grass else .none,
                 };
                 index += 1;
             }

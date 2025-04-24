@@ -46,11 +46,11 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
             }
 
             // Fill the rest with water
-            // if (height < sea_level) {
-            //     for (height..sea_level) |ly| {
-            //         chunk.setBlockState(lx, ly, lz, .{ .id = water });
-            //     }
-            // }
+            if (height < sea_level) {
+                for (height..sea_level) |ly| {
+                    chunk.setBlockState(lx, ly, lz, .{ .id = water, .transparent = true });
+                }
+            }
         }
     }
 

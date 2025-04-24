@@ -9,7 +9,7 @@ layout(location = 2) in vec2 uv;
 layout(location = 3) in vec3 instancePosition;
 layout(location = 4) in vec3 texture0;
 layout(location = 5) in vec3 texture1;
-layout(location = 6) in uint visibility;
+layout(location = 6) in uint visibility_gradient;
 
 layout(location = 0) out vec4 fragPos;
 layout(location = 1) out vec2 fragUV;
@@ -17,6 +17,8 @@ layout(location = 2) out vec3 fragNormal;
 layout(location = 3) out vec3 fragLightVec;
 layout(location = 4) out vec4 fragShadowCoords;
 layout(location = 5) out uint textureIndex;
+layout(location = 6) out uint fragGradient;
+layout(location = 7) out uint fragGradientType;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewMatrix;
@@ -35,6 +37,10 @@ const mat4 biasMat = mat4(
 );
 
 void main() {
+    uint visibility = visibility_gradient & 255;
+    uint gradient = (visibility_gradient >> 8) & 255;
+    uint gradientType = (visibility_gradient >> 16) & 255;
+
     // Discard vertices by setting the position to nan, the GPU will ignore them.
     if (
         ((visibility & (1 << 1)) == 0 && gl_VertexIndex >= 0 && gl_VertexIndex < 4) ||
@@ -48,6 +54,9 @@ void main() {
         gl_Position = vec4(nan, nan, nan, nan);
         return;
     }
+
+    fragGradient = gradient;
+    fragGradientType = gradientType;
 
     mat4 modelMatrix = mat4(
         1.0, 0.0, 0.0, 0.0,

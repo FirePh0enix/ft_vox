@@ -5,6 +5,7 @@ const zm = @import("zmath");
 const Vec = zm.Vec;
 const Camera = @import("Camera.zig");
 const Window = @import("render/Window.zig");
+const World = @import("voxel/World.zig");
 
 const rdr = @import("render/Renderer.zig").rdr;
 
@@ -98,6 +99,7 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
 
                     try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
                 },
+
                 sdl.SDLK_ESCAPE => setMouseGrab(false),
 
                 sdl.SDLK_W => setAction(.forward, 1.0),

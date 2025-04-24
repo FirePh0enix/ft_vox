@@ -8,5 +8,14 @@ pub const Visual = union(enum) {
     },
 };
 
+name: u64,
+transparent: bool = false,
+
 vtable: VTable,
 visual: Visual,
+
+pub fn getNameHash(name: []const u8) u64 {
+    var hasher: std.hash.Wyhash = .init(0);
+    hasher.update(name);
+    return hasher.final();
+}
