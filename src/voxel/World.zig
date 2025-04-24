@@ -103,7 +103,9 @@ render_distance: usize = 0,
 
 const BufferData = struct {
     rid: RID,
-    instance_count: usize,
+
+    opaque_instance_count: usize = 0,
+    transparent_instance_count: usize = 0,
 };
 
 pub fn initEmpty(
@@ -132,7 +134,7 @@ pub fn createBuffers(self: *Self, render_distance: usize) !void {
     self.buffers_states = try .initFull(self.allocator, (render_distance * 2 + 1) * (render_distance * 2 + 1));
 
     self.buffers = try self.allocator.alloc(BufferData, (render_distance * 2 + 1) * (render_distance * 2 + 1));
-    for (0..self.buffers.len) |index| self.buffers[index] = .{ .rid = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }), .instance_count = 0 };
+    for (0..self.buffers.len) |index| self.buffers[index] = .{ .rid = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }) };
 }
 
 pub fn deinit(self: *Self) void {
@@ -377,8 +379,16 @@ pub fn encodeDrawCalls(self: *Self, cube_mesh: RID, shadow_pass: *Graph.RenderPa
     while (chunk_iter.next()) |chunk| {
         const buffer_data = &self.buffers[chunk.instance_buffer_index];
 
-        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.instance_count);
-        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.instance_count);
+        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count);
+    }
+
+    var chunk_iter2 = self.chunks.valueIterator();
+    while (chunk_iter2.next()) |chunk| {
+        const buffer_data = &self.buffers[chunk.instance_buffer_index];
+
+        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count);
     }
 }
 
@@ -393,7 +403,7 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
             for (0..Chunk.length) |z| {
                 const block_state: BlockState = chunk.blocks[z * Chunk.length * Chunk.height + y * Chunk.length + x];
 
-                if (block_state.id == 0 or block_state.visibility == 0) continue;
+                if (block_state.id == 0 or block_state.visibility == 0 or block_state.transparent) continue;
 
                 const block = registry.getBlock(block_state.id) orelse unreachable;
                 const textures = block.visual.cube.textures;
@@ -414,7 +424,36 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
         }
     }
 
-    buffer.instance_count = index;
+    buffer.opaque_instance_count = index;
+
+    for (0..Chunk.length) |x| {
+        for (0..Chunk.height) |y| {
+            for (0..Chunk.length) |z| {
+                const block_state: BlockState = chunk.blocks[z * Chunk.length * Chunk.height + y * Chunk.length + x];
+
+                if (block_state.id == 0 or block_state.visibility == 0 or !block_state.transparent) continue;
+
+                const block = registry.getBlock(block_state.id) orelse unreachable;
+                const textures = block.visual.cube.textures;
+
+                instances[index] = .{
+                    .position = .{
+                        @floatFromInt(chunk.position.x * 16 + @as(isize, @intCast(x))),
+                        @floatFromInt(y),
+                        @floatFromInt(chunk.position.z * 16 + @as(isize, @intCast(z))),
+                    },
+                    .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
+                    .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
+                    .visibility = @intCast(block_state.visibility),
+                    .gradient_type = if (block.name == grass_name_hash) .grass else .none,
+                };
+                index += 1;
+            }
+        }
+    }
+
+    buffer.transparent_instance_count = index - buffer.opaque_instance_count;
+
     try rdr().bufferUpdate(buffer.rid, std.mem.sliceAsBytes(instances[0..index]), 0);
 }
 

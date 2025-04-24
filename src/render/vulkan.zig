@@ -531,7 +531,7 @@ pub const VulkanRenderer = struct {
 
             cb.pushConstants(pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));
 
-            cb.drawIndexed(@intCast(call.vertex_count), @intCast(call.instance_count), 0, 0, 0);
+            cb.drawIndexed(@intCast(call.vertex_count), @intCast(call.instance_count), 0, 0, @intCast(call.first_instance));
         }
 
         for (pass.hooks.items) |hook| {
