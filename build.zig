@@ -128,6 +128,20 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("argzon", argzon.module("argzon"));
 
+    const freetype = b.dependency("freetype", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.linkLibrary(freetype.artifact("freetype"));
+    exe.root_module.addIncludePath(freetype.path("include"));
+
+    const freetype_headers = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/freetype.h"),
+    });
+    exe.root_module.addImport("freetype", freetype_headers.createModule());
+
     // Compile shaders to SPIR-V
     var spirv_files: std.ArrayList(CompileShader) = .init(b.allocator);
 
