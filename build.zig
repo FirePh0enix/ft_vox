@@ -133,13 +133,13 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
     });
     exe.root_module.linkLibrary(freetype.artifact("freetype"));
-    exe.root_module.addIncludePath(freetype.path("include"));
 
     const freetype_headers = b.addTranslateC(.{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/freetype.h"),
     });
+    freetype_headers.addIncludePath(freetype.path("include"));
     exe.root_module.addImport("freetype", freetype_headers.createModule());
 
     // Compile shaders to SPIR-V
