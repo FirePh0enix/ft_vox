@@ -140,7 +140,7 @@ pub fn build(b: *Build) !void {
     const freetype_headers = b.addTranslateC(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("src/freetype.h"),
+        .root_source_file = freetype.path("include/freetype/freetype.h")
     });
     freetype_headers.addIncludePath(freetype.path("include"));
     exe.root_module.addImport("freetype", freetype_headers.createModule());
