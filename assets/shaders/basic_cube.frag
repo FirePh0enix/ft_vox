@@ -65,7 +65,7 @@ void main() {
     vec4 color = texture(images, vec3(uv2, float(textureIndex)));
 
     if (isGrayscale(color) && gradientType > 0) {
-        color *= vec4(9.0 / 255.0, 128.0 / 255.0, 43.0 / 255.0, 1.0);
+        color *= vec4(13.0 / 255.0, 94.0 / 255.0, 21.0 / 255.0, 1.0);
     }
 
     float shadow = textureProj(shadowCoords / shadowCoords.w, vec2(0.0)); // filterPCF(shadowCoords / shadowCoords.w);

@@ -201,8 +201,6 @@ pub const VulkanRenderer = struct {
             vk.extensions.khr_deferred_host_operations.name.ptr,
             vk.extensions.khr_acceleration_structure.name.ptr,
             vk.extensions.khr_ray_tracing_pipeline.name.ptr,
-
-            vk.extensions.ext_memory_budget.name.ptr,
         };
 
         // According to gpuinfo support for hostQueryReset this is 99.5%.
@@ -229,7 +227,6 @@ pub const VulkanRenderer = struct {
 
         const features: Features = .{
             .ray_tracing = containsExtension(physical_device_with_info.extensions, vk.extensions.khr_ray_tracing_pipeline.name),
-            .vk_memory_budget = containsExtension(physical_device_with_info.extensions, vk.extensions.ext_memory_budget.name),
         };
 
         std.log.info("GPU selected: {s}", .{self.physical_device_properties.device_name});
@@ -1817,7 +1814,6 @@ pub const VulkanRenderer = struct {
 
 pub const Features = struct {
     ray_tracing: bool = false,
-    vk_memory_budget: bool = false,
 };
 
 pub const VulkanBuffer = struct {

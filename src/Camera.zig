@@ -9,6 +9,7 @@ const Mat = zm.Mat;
 const World = @import("voxel/World.zig");
 
 speed: f32 = 0.15,
+speed_mul: f32 = 1.0,
 position: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
 rotation: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
 
@@ -36,9 +37,9 @@ pub fn updateCamera(self: *Self, world: *World) void {
     const up_vec = zm.f32x4(0.0, 1.0, 0.0, 0.0);
 
     const dir = input.getMovementVector();
-    self.position += forward_vec * @as(zm.Vec, @splat(dir[2] * self.speed));
-    self.position += up_vec * @as(zm.Vec, @splat(dir[1] * self.speed));
-    self.position += right_vec * @as(zm.Vec, @splat(dir[0] * self.speed));
+    self.position += forward_vec * @as(zm.Vec, @splat(dir[2] * self.speed * self.speed_mul));
+    self.position += up_vec * @as(zm.Vec, @splat(dir[1] * self.speed * self.speed_mul));
+    self.position += right_vec * @as(zm.Vec, @splat(dir[0] * self.speed * self.speed_mul));
 
     const attack_range: f32 = 5.0;
 
@@ -46,6 +47,12 @@ pub fn updateCamera(self: *Self, world: *World) void {
         if (world.raycastBlock(.{ .from = self.position, .to = self.position + self.forward() * zm.f32x4s(attack_range) }, 0.1)) |result| {
             world.setBlockState(result.block.pos.x, result.block.pos.y, result.block.pos.z, .{ .id = 0 });
         }
+    }
+
+    if (input.isActionPressed(.sprint)) {
+        self.speed_mul = 20.0;
+    } else {
+        self.speed_mul = 1.0;
     }
 
     @import("root").the_world.updateWorldAround(self.position[0], self.position[2]) catch unreachable;

@@ -273,5 +273,28 @@ pub fn SimplexNoiseWithOptions(comptime FloatType: type) type {
 
             return 32.0 * (n0 + n1 + n2 + n3);
         }
+
+        pub fn fractal3D(self: *const Self, octaves: usize, x: FloatType, y: FloatType, z: FloatType) FloatType {
+            const frequency: FloatType = 1.0;
+            const amplitude: FloatType = 1.0;
+            const lacunarity: FloatType = 2.0;
+            const persistence: FloatType = 0.5;
+
+            var output: FloatType = 0.0;
+            var denom: FloatType = 0.0;
+            var f: FloatType = frequency;
+            var a: FloatType = amplitude;
+
+            for (0..octaves) |i| {
+                _ = i;
+                output += a * self.sample3D(x * f, y * f, z * f);
+                denom += a;
+
+                f *= lacunarity;
+                a *= persistence;
+            }
+
+            return output / denom;
+        }
     };
 }

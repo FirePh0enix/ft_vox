@@ -30,19 +30,24 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
 
             const height = getHeight(sea_level, noises, fx, fz);
 
-            const block: u16 = if (height >= sea_level)
-                switch (biome) {
-                    .ocean => sand,
-                    .river => sand,
-                    .beach => sand,
-                    .plains => grass,
-                    .desert => sand,
-                }
-            else
-                stone;
+            const surface_block = getSurfaceBlock(biome);
+            const fill_block = getFillBlock(biome);
 
-            for (0..height) |ly| {
-                chunk.setBlockState(lx, ly, lz, .{ .id = block });
+            const fill_depth = 3;
+
+            for (0..height - fill_depth - 1) |ly| {
+                chunk.setBlockState(lx, ly, lz, .{ .id = stone });
+            }
+
+            for (height - fill_depth - 1..height - 1) |ly| {
+                chunk.setBlockState(lx, ly, lz, .{ .id = fill_block });
+            }
+
+            chunk.setBlockState(lx, height - 1, lz, .{ .id = surface_block });
+
+            for (0..height) |y| {
+                const cave_density = getDensity(&world.noise, fx, @floatFromInt(y), fz, @floatFromInt(height));
+                if (cave_density > 0.3) chunk.setBlockState(lx, y, lz, .{ .id = air });
             }
 
             // Fill the rest with water
@@ -57,7 +62,23 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     return chunk;
 }
 
-// fn getSurfaceBlock(biome: Biome) u16 {}
+fn getSurfaceBlock(biome: Biome) u16 {
+    return switch (biome) {
+        .ocean, .river => sand,
+        .beach => sand,
+        .desert => sand,
+        .plains => grass,
+    };
+}
+
+fn getFillBlock(biome: Biome) u16 {
+    return switch (biome) {
+        .ocean, .river => sand,
+        .beach => sand,
+        .desert => sand,
+        .plains => dirt,
+    };
+}
 
 fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
     _ = x;
@@ -84,6 +105,12 @@ fn getHeight(sea_level: usize, noises: Noises, x: f32, z: f32) usize {
     const value = sea_levelf + (cont + 0.19) * 40.0 + peaks_and_valleys + ridge_value;
 
     return @intFromFloat(value);
+}
+
+fn getDensity(noise: *const SimplexNoise, x: f32, y: f32, z: f32, height: f32) f32 {
+    const y_damp = (1.0 - y / height) * 2.0;
+    const scale = 1.0 / 100.0;
+    return noise.fractal3D(4, x * scale, y * scale, z * scale) * y_damp;
 }
 
 const Biome = enum {

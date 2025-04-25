@@ -18,6 +18,8 @@ pub const Action = enum {
     up,
     down,
 
+    sprint,
+
     // Interactions
     attack,
 };
@@ -108,6 +110,7 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
                 sdl.SDLK_D => setAction(.right, 1.0),
                 sdl.SDLK_SPACE => setAction(.up, 1.0),
                 sdl.SDLK_LCTRL => setAction(.down, 1.0),
+                sdl.SDLK_LSHIFT => setAction(.sprint, 1.0),
 
                 else => {},
             }
@@ -120,6 +123,7 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
                 sdl.SDLK_D => setAction(.right, 0.0),
                 sdl.SDLK_SPACE => setAction(.up, 0.0),
                 sdl.SDLK_LCTRL => setAction(.down, 0.0),
+                sdl.SDLK_LSHIFT => setAction(.sprint, 0.0),
 
                 else => {},
             }
