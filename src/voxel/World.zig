@@ -1,7 +1,6 @@
 const std = @import("std");
 const zm = @import("zmath");
-const world_gen = @import("../world_gen.zig");
-const wg2 = @import("wg2.zig");
+const gen = @import("gen.zig");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -12,6 +11,7 @@ const Ray = @import("../math.zig").Ray;
 const SimplexNoise = @import("../math.zig").SimplexNoiseWithOptions(f32);
 const Renderer = @import("../render/Renderer.zig");
 const Graph = @import("../render/Graph.zig");
+const Camera = @import("../Camera.zig");
 const RID = Renderer.RID;
 
 const rdr = Renderer.rdr;
@@ -88,7 +88,7 @@ chunks: std.AutoHashMapUnmanaged(ChunkPos, Chunk) = .empty,
 chunks_lock: std.Thread.Mutex = .{},
 
 chunk_worker_state: std.atomic.Value(bool) = .init(false),
-chunk_load_worker: ChunkLoadWorker = .{},
+chunk_load_worker: ChunkLoadWorker,
 chunk_unload_worker: ChunkUnloadWorker = .{},
 
 // TODO: Instance buffers used by chunks to display blocks.
@@ -119,6 +119,7 @@ pub fn initEmpty(
         .generation_settings = settings,
         .seed = seed,
         .noise = SimplexNoise.initWithSeed(seed),
+        .chunk_load_worker = .{ .orders = .init(allocator, &@import("root").camera) },
     };
 }
 
@@ -143,7 +144,13 @@ pub fn deinit(self: *Self) void {
     if (self.chunk_load_worker.thread) |thread| {
         self.chunk_load_worker.sleep_semaphore.post();
         thread.join();
-        self.chunk_load_worker.orders.deinit(self.allocator);
+        self.chunk_load_worker.orders.deinit();
+    }
+
+    if (self.chunk_unload_worker.thread) |thread| {
+        self.chunk_unload_worker.sleep_semaphore.post();
+        thread.join();
+        self.chunk_unload_worker.orders.deinit(self.allocator);
     }
 
     rdr().waitIdle();
@@ -218,7 +225,8 @@ pub fn loadChunk(self: *Self, pos: ChunkPos) !void {
     self.chunk_load_worker.orders_mutex.lock();
     defer self.chunk_load_worker.orders_mutex.unlock();
 
-    try self.chunk_load_worker.orders.append(self.allocator, pos);
+    // try self.chunk_load_worker.orders.append(self.allocator, pos);
+    try self.chunk_load_worker.orders.add(pos);
     self.chunk_load_worker.sleep_semaphore.post();
 }
 
@@ -226,7 +234,13 @@ const ChunkLoadWorker = struct {
     thread: ?std.Thread = null,
     sleep_semaphore: std.Thread.Semaphore = .{},
     orders_mutex: std.Thread.Mutex = .{},
-    orders: std.ArrayListUnmanaged(ChunkPos) = .empty,
+    orders: std.PriorityQueue(ChunkPos, *const Camera, compareDistance),
+
+    fn compareDistance(c: *const Camera, a: ChunkPos, b: ChunkPos) std.math.Order {
+        const distance_a = (c.position[0] - @as(f32, @floatFromInt(a.x * 16))) * (c.position[0] - @as(f32, @floatFromInt(a.x * 16))) + (c.position[2] - @as(f32, @floatFromInt(a.z * 16))) * (c.position[2] - @as(f32, @floatFromInt(a.z * 16)));
+        const distance_b = (c.position[0] - @as(f32, @floatFromInt(b.x * 16))) * (c.position[0] - @as(f32, @floatFromInt(b.x * 16))) + (c.position[2] - @as(f32, @floatFromInt(b.z * 16))) * (c.position[2] - @as(f32, @floatFromInt(b.z * 16)));
+        return std.math.order(distance_a, distance_b);
+    }
 
     fn worker(self: *ChunkLoadWorker, world: *Self, registry: *const Registry) void {
         var remaining: usize = 0;
@@ -237,7 +251,7 @@ const ChunkLoadWorker = struct {
             const buffer_index = world.acquireBuffer() orelse continue;
 
             self.orders_mutex.lock();
-            const chunk_pos = self.orders.pop();
+            const chunk_pos = self.orders.removeOrNull();
             remaining = self.orders.items.len;
             self.orders_mutex.unlock();
 
@@ -253,7 +267,7 @@ const ChunkLoadWorker = struct {
                 }
 
                 // TODO: How should chunk generation/load errors should be threated ?
-                var chunk = wg2.generateChunk(world, pos.x, pos.z);
+                var chunk = gen.generateChunk(world, pos.x, pos.z);
                 chunk.instance_buffer_index = buffer_index;
 
                 world.chunks_lock.lock();
