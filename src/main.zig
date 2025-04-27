@@ -404,7 +404,7 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
     dcimgui.ImGui_End();
 }
 
-const wgpu = @import("webgpu");
+const em = @import("em");
 
 // https://developer.chrome.com/docs/web-platform/webgpu/build-app
 
@@ -421,6 +421,8 @@ pub fn mainEmscripten() !void {
 
     try Renderer.create(allocator, .webgpu);
     try rdr().createDevice(&window, null);
+
+    // em.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())

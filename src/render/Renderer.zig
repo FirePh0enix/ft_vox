@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const dcimgui = @import("dcimgui");
 const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
-const wgpu = if (builtin.os.tag == .emscripten) @import("webgpu") else void;
+const em = if (builtin.os.tag == .emscripten) @import("em") else void;
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -204,6 +204,16 @@ pub const BufferUsageFlags = packed struct {
             .index_buffer_bit = self.index_buffer,
             .vertex_buffer_bit = self.vertex_buffer,
         };
+    }
+
+    pub fn asWGPU(self: BufferUsageFlags) em.WGPUBufferUsage {
+        var flags: em.WGPUBufferUsage = 0;
+
+        if (self.index_buffer) flags |= em.WGPUBufferUsage_Index;
+        if (self.vertex_buffer) flags |= em.WGPUBufferUsage_Vertex;
+        if (self.uniform_buffer) flags |= em.WGPUBufferUsage_Uniform;
+        if (self.transfer_src) flags |= em.WGPUBufferUsage_CopySrc;
+        if (self.transfer_dst) flags |= em.WGPUBufferUsage_CopyDst;
     }
 };
 

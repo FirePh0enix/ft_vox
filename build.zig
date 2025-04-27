@@ -108,14 +108,6 @@ pub fn build(b: *Build) !void {
         }
     }
 
-    // For now WebGPU is imported unconditionally or else zls does not provide completions. In the future webgpu
-    // could replace vulkan.
-    const webgpu = b.dependency("webgpu", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("webgpu", webgpu.module("webgpu"));
-
     // Non platform specific dependencies.
     const zm = b.dependency("zmath", .{
         .target = target,
@@ -186,17 +178,26 @@ pub fn build(b: *Build) !void {
     const zemscripten_dep = b.dependency("zemscripten", .{});
     exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
 
+    const emsdk = b.dependency("emsdk", .{});
+    const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+
+    const emsdk_headers = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/emscripten.h"),
+    });
+    emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+    exe.root_module.addImport("em", emsdk_headers.createModule());
+
     if (!target_is_emscripten) {
         b.installArtifact(exe);
     } else {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
 
-        const emsdk = b.dependency("emsdk", .{});
         exe.addSystemIncludePath(emsdk.path("upstream/include"));
 
-        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-        exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
-        freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+        exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+        freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
 
         const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
         // try emcc_flags.put("--pre-js", {}); // FIXME: does not work
@@ -210,6 +211,7 @@ pub fn build(b: *Build) !void {
         try emcc_settings.put("LEGACY_RUNTIME", "1");
         try emcc_settings.put("USE_WEBGPU", "1");
         try emcc_settings.put("USE_FREETYPE", "1");
+        try emcc_settings.put("ASYNCIFY", "1");
         try emcc_settings.put("WASM_WORKERS", "1");
 
         const emcc_step = zemscripten.emccStep(
