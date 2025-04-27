@@ -146,8 +146,8 @@ pub const VulkanRenderer = struct {
     }
 
     fn createDeviceVk(self: *VulkanRenderer, window: *Window) !void {
-        const get_instance_proc_addr: *const GetInstanceProcAddrFn = @ptrCast(window.getVkGetInstanceProcAddr());
-        const instance_extensions = window.getVkInstanceExtensions();
+        const get_instance_proc_addr: *const GetInstanceProcAddrFn = @ptrCast(window.impl.getVkGetInstanceProcAddr());
+        const instance_extensions = window.impl.getVkInstanceExtensions();
 
         self.get_instance_proc_addr = get_instance_proc_addr;
 
@@ -181,7 +181,7 @@ pub const VulkanRenderer = struct {
         errdefer self.instance.destroyInstance(null);
 
         // Create the surface
-        self.surface = window.createVkSurface(self.instance.handle, null);
+        self.surface = window.impl.createVkSurface(self.instance.handle, null);
         errdefer self.instance.destroySurfaceKHR(self.surface, null);
 
         // Select the best physical device.
@@ -725,7 +725,7 @@ pub const VulkanRenderer = struct {
 
         var io: *dcimgui.ImGuiIO = dcimgui.ImGui_GetIO() orelse unreachable;
         io.ConfigFlags |= dcimgui.ImGuiConfigFlags_NavEnableKeyboard;
-        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.handle));
+        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.impl.handle));
 
         self.imgui_descriptor_pool = self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
             .flags = .{ .free_descriptor_set_bit = true },

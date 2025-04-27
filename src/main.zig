@@ -28,15 +28,8 @@ pub const BlockZon = Registry.BlockZon;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
-// pub var tracking_allocator = if (builtin.cpu.arch.isWasm())
-//     TrackingAllocator{ .backing_allocator = std.heap.wasm_allocator }
-// else if (builtin.mode == .Debug)
-//     TrackingAllocator{ .backing_allocator = debug_allocator.allocator() }
-// else
-//     TrackingAllocator{ .backing_allocator = std.heap.smp_allocator };
-
 pub const allocator: std.mem.Allocator = if (builtin.cpu.arch.isWasm())
-    std.heap.wasm_allocator
+    std.heap.c_allocator
 else if (builtin.mode == .Debug)
     debug_allocator.allocator()
 else
@@ -202,6 +195,8 @@ pub fn createCube() !RID {
     });
 }
 
+// TODO: Redo instance/batch rendering
+
 const LightData = struct {
     matrix: [16]f32,
     position: [3]f32,
@@ -221,6 +216,7 @@ pub fn mainDesktop() !void {
         .height = 720,
         .driver = .vulkan,
         .resizable = true,
+        .allocator = allocator,
     });
     defer window.deinit();
 
@@ -413,9 +409,18 @@ const wgpu = @import("webgpu");
 // https://developer.chrome.com/docs/web-platform/webgpu/build-app
 
 pub fn mainEmscripten() !void {
-    std.debug.print("Hello world!\n", .{});
+    var window = try Window.create(.{
+        .title = "ft_vox",
+        .width = 1280,
+        .height = 720,
+        .driver = .webgpu,
+        .resizable = true,
+        .allocator = allocator,
+    });
+    defer window.deinit();
 
     try Renderer.create(allocator, .webgpu);
+    try rdr().createDevice(&window, null);
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())

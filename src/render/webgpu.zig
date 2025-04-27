@@ -63,19 +63,18 @@ pub const WebGPURenderer = struct {
 
         self.instance = wgpu.createInstance(null);
 
-        if (builtin.os.tag == .emscripten) {
-            const surface_canvas: wgpu.SurfaceSourceCanvasHTMLSelector = .{
-                .selector = "#canvas",
-            };
+        const surface_canvas: wgpu.SurfaceSourceCanvasHTMLSelector = .{
+            .chain = .{ .type = @enumFromInt(4) },
+            .selector = "#canvas",
+        };
 
-            self.surface = self.instance.createSurface(&wgpu.SurfaceDescriptor{
-                .next = @ptrCast(&surface_canvas),
-                .label = "",
-            });
-        } else {
-            unreachable;
-        }
+        self.surface = self.instance.createSurface(&wgpu.SurfaceDescriptor{
+            .next = @ptrCast(&surface_canvas.chain),
+            .label = "",
+        });
 
-        self.adapter = self.instance.requestAdapterSync(&wgpu.RequestAdapterOptions{});
+        self.adapter = self.instance.requestAdapterSync(&wgpu.RequestAdapterOptions{
+            .compatible_surface = self.surface,
+        });
     }
 };

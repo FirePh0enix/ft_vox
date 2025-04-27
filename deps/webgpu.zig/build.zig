@@ -71,6 +71,7 @@ fn generateBindings(webgpu: WebGPU, file: *DynamicWriter) !void {
 
     const with_null: []const []const u8 = &.{
         "callback_mode",
+        "s_type",
     };
 
     for (webgpu.enums) |@"enum"| try generateEnum(@"enum", with_null, file);
@@ -201,6 +202,7 @@ const instance_methods: []const u8 =
     \\
     \\        return user_data.adapter orelse unreachable;
     \\    }
+    \\
 ;
 
 const adapter_methods: []const u8 =
@@ -237,8 +239,13 @@ const adapter_methods: []const u8 =
 ;
 
 const toplevel_structs: []const u8 =
+    \\pub const ChainedStruct = extern struct {
+    \\    next: ?*ChainedStruct = null,
+    \\    type: SType = .null,
+    \\};
+    \\
     \\pub const SurfaceSourceCanvasHTMLSelector = extern struct {
-    \\    next: ?*anyopaque = null,
+    \\    chain: ChainedStruct = .{},
     \\    selector: [*:0]const u8,
     \\};
     \\
@@ -297,7 +304,10 @@ fn generateStruct(@"struct": Struct, file: *DynamicWriter) !void {
     try writeDocs(@"struct".doc, file);
     try file.writeAll(bufPrint(&buf, "pub const {s} = extern struct {{\n", .{convertToCamelCase(&name_buf, @"struct".name, true)}) catch unreachable);
 
-    if (std.mem.eql(u8, @"struct".type, "extensible")) try file.writeAll("    next: ?*const anyopaque = null,\n");
+    if (std.mem.eql(u8, @"struct".type, "extensible"))
+        try file.writeAll("    next: ?*const ChainedStruct = null,\n")
+    else if (std.mem.eql(u8, @"struct".type, "extension"))
+        try file.writeAll("    chain: ChainedStruct = .{},\n");
 
     for (@"struct".members) |member| {
         const member_name = convertToSnakeCase(&name_buf, member.name);

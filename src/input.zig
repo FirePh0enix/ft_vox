@@ -82,7 +82,7 @@ pub fn getMovementVector() Vec {
 
 pub fn setMouseGrab(value: bool) void {
     mouse_grabbed = value;
-    _ = sdl.SDL_SetWindowRelativeMouseMode(window.handle, value);
+    _ = sdl.SDL_SetWindowRelativeMouseMode(window.impl.handle, value);
 }
 
 pub fn isMouseGrabbed() bool {
@@ -94,7 +94,7 @@ pub fn handleSDLEvent(event: sdl.SDL_Event, camera: *Camera) !void {
         sdl.SDL_EVENT_KEY_DOWN => {
             switch (event.key.key) {
                 sdl.SDLK_F => {
-                    _ = sdl.SDL_SetWindowFullscreen(window.handle, !fullscreen);
+                    _ = sdl.SDL_SetWindowFullscreen(window.impl.handle, !fullscreen);
                     fullscreen = !fullscreen;
 
                     const size = window.size();

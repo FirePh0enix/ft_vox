@@ -55,6 +55,10 @@
             .url = "git+https://github.com/hexops/freetype#972cd37bccecae2cc9f54cf0b562263a13209d02",
             .hash = "freetype-0.0.0-AAAAAA5JcwBMujojfNLEq5g_WijZtU56mRLYx8bjjiMU",
         },
+        .zglfw = .{
+            .url = "git+https://github.com/IridescenceTech/zglfw#5d25d66b3d4912c9cb66e4db9dfb80a6eecc84ad",
+            .hash = "zglfw-0.1.0-BghZXfnRAACSrPga22je1XilEj1QNXrtv6w4HIUFqdks",
+        },
     },
     .paths = .{
         "build.zig",

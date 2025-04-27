@@ -9,11 +9,14 @@ const LazyPath = Build.LazyPath;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const Optimize = std.builtin.OptimizeMode;
 
+// Compile for the web: zig build run `-Dtarget=wasm32-emscripten -Dcpu=baseline+atomics`
+
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const sanitize_thread = b.option(bool, "sanitize-thread", "Enable the thread sanitizer");
+    const emrun_browser = b.option([]const u8, "emrun-browser", "") orelse "chromium";
 
     const target_is_emscripten = target.result.os.tag == .emscripten;
 
@@ -23,6 +26,7 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
         .link_libc = target_is_emscripten,
         .sanitize_thread = sanitize_thread,
+        .single_threaded = false, // force multithreading on web
     });
 
     const exe = if (target_is_emscripten) a: {
@@ -38,31 +42,34 @@ pub fn build(b: *Build) !void {
         });
     };
 
-    // Link the SDL
-    const sdl = b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-        .preferred_link_mode = .static,
-    });
-
-    if (!target_is_emscripten) {
-        const sdl_lib = sdl.artifact("SDL3");
-        exe_mod.linkLibrary(sdl_lib);
-    }
-
-    const sdl_header = b.addTranslateC(.{
-        .root_source_file = b.path("src/sdl.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-    sdl_header.addIncludePath(sdl.path("include"));
-
-    exe.root_module.addImport("sdl", sdl_header.createModule());
-    exe.step.dependOn(&sdl_header.step);
-
     // Vulkan is only supported on desktop.
     // TODO: pull cimgui.zig and add WebGPU support.
     if (!target_is_emscripten) {
+        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+
+        // Link the SDL
+        const sdl = b.dependency("sdl", .{
+            .target = target,
+            .optimize = optimize,
+            .preferred_link_mode = .static,
+        });
+
+        if (!target_is_emscripten) {
+            const sdl_lib = sdl.artifact("SDL3");
+            exe_mod.linkLibrary(sdl_lib);
+        }
+
+        const sdl_header = b.addTranslateC(.{
+            .root_source_file = b.path("src/sdl.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        sdl_header.addIncludePath(sdl.path("include"));
+        sdl_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+
+        exe.root_module.addImport("sdl", sdl_header.createModule());
+        exe.step.dependOn(&sdl_header.step);
+
         const cimgui_dep = b.dependency("cimgui_zig", .{
             .target = target,
             .optimize = optimize,
@@ -132,7 +139,11 @@ pub fn build(b: *Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.linkLibrary(freetype.artifact("freetype"));
+
+    if (!target_is_emscripten) {
+        // Use the emscripten port instead
+        exe.root_module.linkLibrary(freetype.artifact("freetype"));
+    }
 
     const freetype_headers = b.addTranslateC(.{
         .target = target,
@@ -185,7 +196,7 @@ pub fn build(b: *Build) !void {
 
         const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
         exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
-        sdl_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+        freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
 
         const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
         // try emcc_flags.put("--pre-js", {}); // FIXME: does not work
@@ -196,8 +207,10 @@ pub fn build(b: *Build) !void {
         });
 
         try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
-        try emcc_settings.put("USE_WEBGPU", "1");
         try emcc_settings.put("LEGACY_RUNTIME", "1");
+        try emcc_settings.put("USE_WEBGPU", "1");
+        try emcc_settings.put("USE_FREETYPE", "1");
+        try emcc_settings.put("WASM_WORKERS", "1");
 
         const emcc_step = zemscripten.emccStep(
             b,
@@ -239,11 +252,7 @@ pub fn build(b: *Build) !void {
 
         run_step.dependOn(&run_cmd.step);
     } else {
-        // const args = if (b.args) |args|
-        //     args
-        // else
-        //     &.{};
-        const args: []const []const u8 = &.{ "--browser", "chromium" };
+        const args: []const []const u8 = &.{ "--browser", emrun_browser, "--browser_args=\"--enable-unsafe-webgpu --enable-features=Vulcan,UseSkiaRenderer\"" };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
         emrun_step.dependOn(b.getInstallStep());
