@@ -137,11 +137,7 @@ pub fn build(b: *Build) !void {
         exe.root_module.linkLibrary(freetype.artifact("freetype"));
     }
 
-    const freetype_headers = b.addTranslateC(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = freetype.path("include/freetype/freetype.h")
-    });
+    const freetype_headers = b.addTranslateC(.{ .target = target, .optimize = optimize, .root_source_file = freetype.path("include/freetype/freetype.h") });
     freetype_headers.addIncludePath(freetype.path("include"));
     exe.root_module.addImport("freetype", freetype_headers.createModule());
 
@@ -161,6 +157,9 @@ pub fn build(b: *Build) !void {
 
         "assets/shaders/cube_shadow.vert",
         "assets/shaders/cube_shadow.frag",
+
+        "assets/shaders/font.vert",
+        "assets/shaders/font.frag",
     };
 
     for (files) |file| {
@@ -181,13 +180,15 @@ pub fn build(b: *Build) !void {
     const emsdk = b.dependency("emsdk", .{});
     const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
 
-    const emsdk_headers = b.addTranslateC(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("src/emscripten.h"),
-    });
-    emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-    exe.root_module.addImport("em", emsdk_headers.createModule());
+    if (target_is_emscripten) {
+        const emsdk_headers = b.addTranslateC(.{
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = b.path("src/emscripten.h"),
+        });
+        emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+        exe.root_module.addImport("em", emsdk_headers.createModule());
+    }
 
     if (!target_is_emscripten) {
         b.installArtifact(exe);

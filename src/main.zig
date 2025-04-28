@@ -18,11 +18,9 @@ const Chunk = @import("voxel/Chunk.zig");
 const Block = @import("voxel/Block.zig");
 const Registry = @import("voxel/Registry.zig");
 const RID = Renderer.RID;
+const Font = @import("Font.zig");
 
 const rdr = Renderer.rdr;
-
-// pub const std_options: std.Options = .{};
-// pub const panic = zemscripten.panic;
 
 pub const BlockZon = Registry.BlockZon;
 
@@ -55,7 +53,7 @@ const cli = .{
     .flags = .{
         .{
             .long = "disable-save",
-            .descripton = "Disable world save",
+            .description = "Disable world save",
         },
     },
 };
@@ -205,6 +203,8 @@ const LightData = struct {
 var light_matrix: zm.Mat = undefined;
 var light_buffer_rid: RID = undefined;
 
+var font: Font = undefined;
+
 pub fn mainDesktop() !void {
     // defer _ = debug_allocator.detectLeaks();
 
@@ -247,6 +247,10 @@ pub fn mainDesktop() !void {
 
     cube_mesh = try createCube();
     defer rdr().freeRid(cube_mesh);
+
+    try Font.initLib();
+    font = try Font.init("assets/fonts/Minecraft.ttf", 10, allocator);
+    defer font.deinit();
 
     registry = Registry.init(allocator);
     defer registry.deinit();
@@ -360,27 +364,32 @@ fn update(window: *Window, world: *World) !void {
     render_graph_pass.reset();
     render_graph_pass.view_matrix = view_matrix;
 
-    const light_proj_bound: f32 = 100.0;
+    // const light_proj_bound: f32 = 100.0;
 
-    const light_proj = zm.orthographicOffCenterRh(-light_proj_bound, light_proj_bound, -light_proj_bound, light_proj_bound, 0.01, 1000.0);
-    const light_pos = -(camera.position + zm.Vec{ 0.0, 0.0, -100.0, 0.0 });
-    const light_translation = zm.translationV(light_pos);
+    // const light_proj = zm.orthographicOffCenterRh(-light_proj_bound, light_proj_bound, -light_proj_bound, light_proj_bound, 0.01, 1000.0);
+    // const light_pos = -(camera.position + zm.Vec{ 0.0, 0.0, -100.0, 0.0 });
+    // const light_translation = zm.translationV(light_pos);
 
-    const light_rotation: zm.Vec = .{ std.math.pi / 2.0, 0.0, 0.0, 0.0 };
-    const light_rot_matrix = zm.mul(zm.rotationY(light_rotation[1]), zm.rotationX(light_rotation[0]));
+    // const light_rotation: zm.Vec = .{ std.math.pi / 2.0, 0.0, 0.0, 0.0 };
+    // const light_rot_matrix = zm.mul(zm.rotationY(light_rotation[1]), zm.rotationX(light_rotation[0]));
 
-    light_matrix = zm.mul(zm.mul(light_translation, light_rot_matrix), light_proj);
+    // light_matrix = zm.mul(zm.mul(light_translation, light_rot_matrix), light_proj);
 
-    const light_data: LightData = .{
-        .matrix = zm.matToArr(light_matrix),
-        .position = zm.vecToArr3(light_pos),
-    };
-    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
+    // const light_data: LightData = .{
+    //     .matrix = zm.matToArr(light_matrix),
+    //     .position = zm.vecToArr3(light_pos),
+    // };
+    // try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
 
-    shadow_pass.pass.reset();
-    shadow_pass.pass.view_matrix = light_matrix;
+    // shadow_pass.pass.reset();
+    // shadow_pass.pass.view_matrix = light_matrix;
 
-    try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material);
+    // try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material);
+
+    render_graph_pass.view_matrix = Font.ortho_matrix;
+
+    try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
+
     try rdr().processGraph(&graph);
 
     // const time_after = std.time.microTimestamp();

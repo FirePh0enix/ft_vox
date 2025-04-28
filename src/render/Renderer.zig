@@ -69,6 +69,7 @@ pub const ImageTiling = enum {
 
 pub const Format = enum {
     r8_srgb,
+    r8_unorm,
     r8g8b8a8_srgb,
     b8g8r8a8_srgb,
     d32_sfloat,
@@ -76,6 +77,7 @@ pub const Format = enum {
     pub fn asVk(self: Format) vk.Format {
         return switch (self) {
             .r8_srgb => .r8_srgb,
+            .r8_unorm => .r8_unorm,
             .r8g8b8a8_srgb => .r8g8b8a8_srgb,
             .b8g8r8a8_srgb => .b8g8r8a8_srgb,
             .d32_sfloat => .d32_sfloat,
@@ -85,6 +87,7 @@ pub const Format = enum {
     pub fn fromVk(self: vk.Format) Format {
         return switch (self) {
             .r8_srgb => .r8_srgb,
+            .r8_unorm => .r8_unorm,
             .r8g8b8a8_srgb => .r8g8b8a8_srgb,
             .b8g8r8a8_srgb => .b8g8r8a8_srgb,
             .d32_sfloat => .d32_sfloat,
@@ -94,7 +97,7 @@ pub const Format = enum {
 
     pub fn sizeBytes(self: Format) usize {
         return switch (self) {
-            .r8_srgb => 1,
+            .r8_srgb, .r8_unorm => 1,
             .r8g8b8a8_srgb, .b8g8r8a8_srgb, .d32_sfloat => 4,
         };
     }
@@ -667,7 +670,7 @@ pub const SamplerOptions = struct {
 pub const MaterialParameterValue = union(MaterialParameterValueType) {
     image: struct {
         rid: RID,
-        sampler: SamplerOptions,
+        sampler: SamplerOptions = .{},
         layout: ImageLayout = .shader_read_only_optimal,
     },
     buffer: RID,
@@ -688,7 +691,7 @@ pub const ShaderRef = struct {
     stage: ShaderStage,
 };
 
-/// Mimimum input for vertex shaders are:
+/// Minimum input for vertex shaders are:
 ///
 ///```glsl
 ///layout(location = 0) in vec3 position;

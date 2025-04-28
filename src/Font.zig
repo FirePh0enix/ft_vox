@@ -1,167 +1,271 @@
 const std = @import("std");
 const ft = @import("freetype");
 const zm = @import("zmath");
-const ArrayList = std.ArrayList;
-const AutoHashMap = std.AutoHashMap;
 
 const Self = @This();
+const Renderer = @import("render/Renderer.zig");
+const RID = Renderer.RID;
+const Graph = @import("render/Graph.zig");
+
+const rdr = Renderer.rdr;
 
 // https://www.reddit.com/r/vulkan/comments/16ros2o/rendering_text_in_vulkan/
 // https://github.com/baeng72/Programming-an-RTS/blob/main/common/Platform/Vulkan/VulkanFont.h
 // https://github.com/baeng72/Programming-an-RTS/blob/main/common/Platform/Vulkan/VulkanFont.cpp
 
-pub var iVec2 = struct {
+pub const Vec2i = struct {
     x: i32,
     y: i32,
 };
 
-pub var Vec2 = struct {
+pub const Vec2 = struct {
     x: f32,
     y: f32,
 };
 
-pub var Vec3 = struct {
+pub const Vec3 = struct {
     x: f32,
     y: f32,
     z: f32,
 };
 
 const Character = struct {
-    size: iVec2,
-    bearing: iVec2,
+    size: Vec2i,
+    bearing: Vec2i,
     offset: u32,
     advance: u32,
 };
 
-const FontVertex = struct {
-    pos: Vec3,
-    color: zm.Vec,
-    uv: Vec2,
+const FontUniform = extern struct {
+    color: [4]f32,
 };
 
-const PushConst = struct {
-    zm.Mat,
+const FontInstance = extern struct {
+    bounds: [2]f32,
+    char_pos: [3]f32,
+    scale: [2]f32,
 };
 
-vertices: ArrayList(FontVertex),
-indices: ArrayList(u32),
-characters: AutoHashMap(u8, Character),
+bitmap: RID,
+material: RID,
+uniform_buffer: RID,
 
-width: i32,
-height: i32,
+characters: std.AutoHashMap(u8, Character),
+
+width: usize,
+height: usize,
 inv_bmp_width: f32,
-bmp_height: u32,
-curr_hash: u32,
-curr_frame: u32,
-ortho_proj: zm.Mat,
 
-pub fn init(self: *Self, font_name: []const u8, font_size: u32, allocator: std.mem.Allocator) !Self {
-    self.width = 0;
-    self.height = 0;
-    self.inv_bmp_width = 0.0;
-    self.bmp_height = 0;
-    self.curr_hash = 0;
-    self.curr_frame = 0;
+var library: ft.FT_Library = undefined;
+pub var ortho_matrix: zm.Mat = undefined;
+pub var mesh: RID = undefined;
 
-    var characters = std.AutoHashMap(u8, Character).init(allocator);
-    var data = std.AutoHashMap(u8, std.ArrayList(u8)).init(allocator);
+var instance_buffer: RID = undefined;
 
-    if (font_size < 1 or font_size > 12) font_size = 18;
+pub fn initLib() !void {
+    const res: ft.FT_Error = ft.FT_Init_FreeType(&library);
 
-    var library: ft.FT_Library = undefined;
-    var res: ft.FT_Error = ft.FT_Init_FreeType(&library);
-
-    if (res) {
-        std.log.err("Could'nt initialize FreeType", .{});
-        return error.CouldNotInitFreeType;
+    if (res != 0) {
+        std.log.err("Cannot initialize FreeType", .{});
+        return error.CannotInitFreeType;
     }
 
-    var face: ft.FT_Face = undefined;
-    res = ft.FT_New_Face(library, font_name, 0, &face);
+    mesh = try rdr().meshCreate(.{
+        .indices = std.mem.sliceAsBytes(@as([]const u16, &.{
+            0, 1, 2,
+            0, 2, 3,
+        })),
+        .vertices = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
+            .{ -0.5, 0.5, -1.0 },
+            .{ 0.5, 0.5, -1.0 },
+            .{ 0.5, -0.5, -1.0 },
+            .{ -0.5, -0.5, -1.0 },
+        })),
+        .normals = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
+            .{ 0.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 0.0 },
+            .{ 0.0, 0.0, 0.0 },
+        })),
+        .texture_coords = std.mem.sliceAsBytes(@as([]const [2]f32, &.{
+            .{ 0.0, 0.0 },
+            .{ 1.0, 0.0 },
+            .{ 1.0, 1.0 },
+            .{ 0.0, 1.0 },
+        })),
+    });
 
-    if (res) {
-        std.log.err("Could'nt load font {s}: ", .{font_name});
+    instance_buffer = try rdr().bufferCreate(.{
+        .size = @sizeOf(FontInstance) * 16,
+        .usage = .{ .vertex_buffer = true, .transfer_dst = true },
+    });
+
+    ortho_matrix = zm.orthographicRh(2.0, 2.0, 0.01, 10.0);
+}
+
+pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocator) !Self {
+    var bmp_height: usize = 0;
+
+    var characters = std.AutoHashMap(u8, Character).init(allocator);
+    var data = std.AutoHashMap(u8, []const u8).init(allocator);
+    defer data.deinit();
+
+    const font_size = if (font_size_ < 1 or font_size_ > 12) 18 else font_size_;
+
+    var face: ft.FT_Face = undefined;
+
+    if (ft.FT_New_Face(library, font_name.ptr, 0, &face) != 0) {
         return error.CouldNotLoadFont;
     }
 
-    ft.FT_Set_Pixel_Sizes(face, 0, font_size);
+    _ = ft.FT_Set_Pixel_Sizes(face, 0, font_size);
     var bmp_width: u32 = 0;
 
     var c: u8 = 0;
 
-    while (c < 128) {
-        res = ft.FT_Load_Char(face, c, ft.FT_LOAD_RENDER);
-        if (res) {
-            std.log.err("Could'nt load char {c}: ", .{c});
+    while (c < 128) : (c += 1) {
+        if (ft.FT_Load_Char(face, c, ft.FT_LOAD_RENDER) != 0) {
             return error.CouldNotLoadChar;
         }
 
-        self.bmp_height = @max(self.bmp_height, face.*.glyph.*.bitmap.rows);
-
-        const pitch: u32 = face.*.glyph.*.bitmap.pitch;
+        bmp_height = @max(bmp_height, face.*.glyph.*.bitmap.rows);
 
         const character: Character = .{
-            .size = Vec2{ .x = face.*.glyph.*.bitmap.width, .y = face.*.glyph.*.bitmap.height },
-            .bearing = Vec2{ .x = face.*.glyph.*.bitmap_left, .y = face.*.glyph.*.bitmap_top },
+            .size = .{ .x = @intCast(face.*.glyph.*.bitmap.width), .y = @intCast(face.*.glyph.*.bitmap.rows) },
+            .bearing = .{ .x = @intCast(face.*.glyph.*.bitmap_left), .y = @intCast(face.*.glyph.*.bitmap_top) },
             .offset = bmp_width,
-            .advance = face.*.glyph.*.advance.x,
+            .advance = @intCast(face.*.glyph.*.advance.x),
         };
 
         try characters.put(c, character);
 
         if (face.*.glyph.*.bitmap.width > 0) {
-            var charData = std.ArrayList(u8).init(allocator);
-            try charData.ensureCapacity(face.glyph.bitmap.width * face.glyph.bitmap.rows);
+            const char_data = try allocator.alloc(u8, face.*.glyph.*.bitmap.width * face.*.glyph.*.bitmap.rows);
+            const glyph_buffer = face.*.glyph.*.bitmap.buffer;
 
-            const rows: u32 = face.*.glyph.*.bitmap.rows;
-            const width: u32 = face.*.glyph.*.bitmap.width;
-
-            for (0 < rows) |i| {
-                for (0 < width) |j| {
-                    const byte: u8 = face.*.glyph.*.bitmap.buffer[i * pitch + j];
-                    charData[i * pitch + j] = byte;
-                }
-            }
-            try data.put(c, characters);
+            @memcpy(char_data, glyph_buffer[0 .. face.*.glyph.*.bitmap.width * face.*.glyph.*.bitmap.rows]);
+            try data.put(c, char_data);
         }
         bmp_width += face.*.glyph.*.bitmap.width;
-        c += 1;
     }
 
-    res = ft.FT_Done_Face(face);
+    _ = ft.FT_Done_Face(face);
 
-    if (res) {
-        std.log.err("Could'nt release a face. ", .{});
-        return error.CouldNotReleaseFace;
-    }
+    const inv_bmp_width = 1 / @as(f32, @floatFromInt(bmp_width));
 
-    self.inv_bmp_width = 1 / @as(f32, @floatFromInt(bmp_width));
+    const buffer = try allocator.alloc(u8, bmp_height * bmp_width);
+    defer allocator.free(buffer);
 
-    const buffer = try allocator.alloc(u8, self.bmp_height * bmp_width);
     @memset(buffer, 0);
 
-    var xpos: u32 = 0;
+    var xpos: usize = 0;
 
-    for (0 < 128) |char| {
-        const character = characters.get(char);
-        const char_data = data.get(char);
+    for (0..128) |char| {
+        const character = characters.get(@intCast(char)) orelse continue;
+        const char_data = data.get(@intCast(char)) orelse continue;
 
-        const width = character.?.size.x;
-        const height = character.?.size.y;
+        const width: usize = @intCast(character.size.x);
+        const height: usize = @intCast(character.size.y);
 
-        for (0 < width) |i| {
-            for (0 < height) |j| {
-                const byte: u8 = &char_data.?.items[i * width + j];
-                buffer[i * bmp_width + xpos + j] = byte;
+        for (0..width) |i| {
+            for (0..height) |j| {
+                const byte: u8 = char_data[i + j * width];
+                buffer[(i + xpos) + j * bmp_width] = byte;
             }
         }
         xpos += width;
     }
 
-    return Self{};
+    const texture_rid = try rdr().imageCreate(.{
+        .width = @intCast(bmp_width),
+        .height = @intCast(bmp_height),
+        .format = .r8_unorm,
+    });
+    try rdr().imageSetLayout(texture_rid, .transfer_dst_optimal);
+    try rdr().imageUpdate(texture_rid, buffer, 0, 0);
+    try rdr().imageSetLayout(texture_rid, .shader_read_only_optimal);
+
+    const font_uniform: FontUniform = .{
+        .color = .{ 1.0, 1.0, 1.0, 1.0 },
+    };
+
+    const uniform_buffer_rid = try rdr().bufferCreate(.{
+        .size = @sizeOf(FontUniform),
+        .usage = .{ .uniform_buffer = true, .transfer_dst = true },
+    });
+    try rdr().bufferUpdate(uniform_buffer_rid, std.mem.asBytes(&font_uniform), 0);
+
+    const material_rid = try rdr().materialCreate(.{
+        .shaders = &.{
+            .{ .path = "font.vert.spv", .stage = .{ .vertex = true } },
+            .{ .path = "font.frag.spv", .stage = .{ .fragment = true } },
+        },
+        .transparency = true,
+        .params = &.{
+            .{ .name = "text", .type = .image, .stage = .{ .fragment = true } },
+            .{ .name = "font", .type = .buffer, .stage = .{ .fragment = true } },
+        },
+        .instance_layout = .{
+            .inputs = &.{
+                .{ .type = .vec2, .offset = 0 },
+                .{ .type = .vec3, .offset = 2 * @sizeOf(f32) },
+                .{ .type = .vec2, .offset = 5 * @sizeOf(f32) },
+            },
+            .stride = @sizeOf(FontInstance),
+        },
+    });
+    try rdr().materialSetParam(material_rid, "text", .{ .image = .{
+        .rid = texture_rid,
+        .sampler = .{ .mag_filter = .nearest, .min_filter = .nearest },
+    } });
+    try rdr().materialSetParam(material_rid, "font", .{ .buffer = uniform_buffer_rid });
+
+    return Self{
+        .bitmap = texture_rid,
+        .material = material_rid,
+        .uniform_buffer = uniform_buffer_rid,
+        .width = @intCast(bmp_width),
+        .height = @intCast(bmp_height),
+        .characters = characters,
+        .inv_bmp_width = inv_bmp_width,
+    };
 }
 
-pub fn deinit() void {
+pub fn deinit(self: *const Self) void {
+    _ = self;
+
     // container -> self.data.deinit()
     // char_data -> allocator.free(char_data)
+}
+
+pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, pos: [3]f32, scale: f32) !void {
+    var instances: [16]FontInstance = undefined;
+
+    var offset_x: f32 = 0;
+
+    for (s, 0..s.len) |char, index| {
+        const char_data = self.characters.get(char) orelse unreachable;
+
+        const offset = @as(f32, @floatFromInt(char_data.offset)) / @as(f32, @floatFromInt(self.width));
+        const char_width = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.width));
+
+        const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width));
+        const by = @as(f32, @floatFromInt(char_data.bearing.y)) / @as(f32, @floatFromInt(self.width));
+
+        const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.height));
+
+        instances[index] = .{
+            .bounds = .{ offset, offset + char_width },
+            .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
+            .scale = .{ scale_x * scale, scale },
+        };
+
+        offset_x += char_width * 12.0;
+    }
+
+    std.debug.print("{s}\n", .{s});
+
+    try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);
+
+    render_pass.drawInstanced(mesh, self.material, instance_buffer, 0, 6, 0, s.len);
 }
