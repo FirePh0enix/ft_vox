@@ -523,7 +523,7 @@ pub const VulkanRenderer = struct {
             }));
 
             const constants: Graph.PushConstants = .{
-                .view_matrix = pass.view_matrix,
+                .view_matrix = call.view_matrix,
             };
 
             cb.pushConstants(pipeline.layout, .{ .vertex_bit = true }, 0, @sizeOf(Graph.PushConstants), @ptrCast(&constants));

@@ -362,31 +362,26 @@ fn update(window: *Window, world: *World) !void {
 
     // Record draw calls into the render pass
     render_graph_pass.reset();
-    render_graph_pass.view_matrix = view_matrix;
+    shadow_pass.pass.reset();
 
-    // const light_proj_bound: f32 = 100.0;
+    const light_proj_bound: f32 = 100.0;
 
-    // const light_proj = zm.orthographicOffCenterRh(-light_proj_bound, light_proj_bound, -light_proj_bound, light_proj_bound, 0.01, 1000.0);
-    // const light_pos = -(camera.position + zm.Vec{ 0.0, 0.0, -100.0, 0.0 });
-    // const light_translation = zm.translationV(light_pos);
+    const light_proj = zm.orthographicOffCenterRh(-light_proj_bound, light_proj_bound, -light_proj_bound, light_proj_bound, 0.01, 1000.0);
+    const light_pos = -(camera.position + zm.Vec{ 0.0, 0.0, -100.0, 0.0 });
+    const light_translation = zm.translationV(light_pos);
 
-    // const light_rotation: zm.Vec = .{ std.math.pi / 2.0, 0.0, 0.0, 0.0 };
-    // const light_rot_matrix = zm.mul(zm.rotationY(light_rotation[1]), zm.rotationX(light_rotation[0]));
+    const light_rotation: zm.Vec = .{ std.math.pi / 2.0, 0.0, 0.0, 0.0 };
+    const light_rot_matrix = zm.mul(zm.rotationY(light_rotation[1]), zm.rotationX(light_rotation[0]));
 
-    // light_matrix = zm.mul(zm.mul(light_translation, light_rot_matrix), light_proj);
+    light_matrix = zm.mul(zm.mul(light_translation, light_rot_matrix), light_proj);
 
-    // const light_data: LightData = .{
-    //     .matrix = zm.matToArr(light_matrix),
-    //     .position = zm.vecToArr3(light_pos),
-    // };
-    // try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
+    const light_data: LightData = .{
+        .matrix = zm.matToArr(light_matrix),
+        .position = zm.vecToArr3(light_pos),
+    };
+    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
 
-    // shadow_pass.pass.reset();
-    // shadow_pass.pass.view_matrix = light_matrix;
-
-    // try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material);
-
-    render_graph_pass.view_matrix = Font.ortho_matrix;
+    try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, view_matrix, light_matrix);
 
     try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
 

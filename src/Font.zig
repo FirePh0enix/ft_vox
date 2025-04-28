@@ -263,9 +263,7 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
         offset_x += char_width * 12.0;
     }
 
-    std.debug.print("{s}\n", .{s});
-
     try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);
 
-    render_pass.drawInstanced(mesh, self.material, instance_buffer, 0, 6, 0, s.len);
+    render_pass.drawInstanced(mesh, self.material, instance_buffer, 0, 6, 0, s.len, ortho_matrix);
 }

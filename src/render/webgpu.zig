@@ -292,6 +292,12 @@ pub const WebGPURenderer = struct {
             .arrayLayerCount = @intCast(options.layers),
             .aspect = options.aspect_mask.asWebGPU(),
         });
+
+        return .{ .inner = @intFromPtr(createWithInit(WebGPUImage, self.allocator, .{
+            .size = options.size,
+            .texture = texture,
+            .view = view,
+        })) };
     }
 };
 
@@ -311,10 +317,12 @@ pub const WebGPUImage = struct {
     pub const resource_signature: usize = @truncate(0x2f2bbd2528a30e17);
 
     signature: usize = resource_signature,
-    size: usize,
-    buffer: em.WGPUBuffer,
+    width: usize,
+    height: usize,
+    texture: em.WGPUTexture,
+    view: em.WGPUTextureView,
 
     pub fn deinit(self: *const WebGPUBuffer) void {
-        em.wgpuTextureDestroy(self.buffer);
+        em.wgpuTextureDestroy(self.texture);
     }
 };

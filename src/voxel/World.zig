@@ -384,7 +384,7 @@ pub fn freeBuffer(self: *Self, index: usize) void {
     self.buffers_states.set(index);
 }
 
-pub fn encodeDrawCalls(self: *Self, cube_mesh: RID, shadow_pass: *Graph.RenderPass, shadow_material: RID, render_pass: *Graph.RenderPass, render_material: RID) !void {
+pub fn encodeDrawCalls(self: *Self, cube_mesh: RID, shadow_pass: *Graph.RenderPass, shadow_material: RID, render_pass: *Graph.RenderPass, render_material: RID, camera_matrix: zm.Mat, shadow_matrix: zm.Mat) !void {
     self.chunks_lock.lock();
     defer self.chunks_lock.unlock();
 
@@ -393,16 +393,16 @@ pub fn encodeDrawCalls(self: *Self, cube_mesh: RID, shadow_pass: *Graph.RenderPa
     while (chunk_iter.next()) |chunk| {
         const buffer_data = &self.buffers[chunk.instance_buffer_index];
 
-        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count);
-        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count);
+        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, shadow_matrix); // inversing the two matrices is interesting !
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, camera_matrix);
     }
 
     var chunk_iter2 = self.chunks.valueIterator();
     while (chunk_iter2.next()) |chunk| {
         const buffer_data = &self.buffers[chunk.instance_buffer_index];
 
-        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count);
-        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count);
+        shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, shadow_matrix);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, camera_matrix);
     }
 }
 

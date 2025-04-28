@@ -61,8 +61,6 @@ pub const RenderPass = struct {
 
     target: RenderTarget,
 
-    view_matrix: zm.Mat = zm.identity(),
-
     // TODO: Use a tree here to manage multiple meshes and materials to minimize pipeline, descriptor and buffer bindings.
     draw_calls: std.ArrayListUnmanaged(DrawCall),
 
@@ -111,12 +109,14 @@ pub const RenderPass = struct {
         material: RID,
         first_vertex: usize,
         vertex_count: usize,
+        view_matrix: zm.Mat,
     ) void {
         const draw_call: DrawCall = .{
             .mesh = mesh,
             .material = material,
             .first_vertex = first_vertex,
             .vertex_count = vertex_count,
+            .view_matrix = view_matrix,
         };
 
         self.draw_calls.append(self.allocator, draw_call) catch unreachable;
@@ -131,6 +131,7 @@ pub const RenderPass = struct {
         vertex_count: usize,
         first_instance: usize,
         instance_count: usize,
+        view_matrix: zm.Mat,
     ) void {
         const draw_call: DrawCall = .{
             .mesh = mesh,
@@ -140,6 +141,7 @@ pub const RenderPass = struct {
             .vertex_count = vertex_count,
             .first_instance = first_instance,
             .instance_count = instance_count,
+            .view_matrix = view_matrix,
         };
 
         self.draw_calls.append(self.allocator, draw_call) catch unreachable;
@@ -156,4 +158,6 @@ pub const DrawCall = struct {
 
     first_instance: usize = 0,
     instance_count: usize = 1,
+
+    view_matrix: zm.Mat,
 };
