@@ -1,8 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const dcimgui = @import("dcimgui");
+const gl = @import("zgl");
 const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
-const em = if (builtin.os.tag == .emscripten) @import("em") else void;
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -10,7 +10,7 @@ const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
 const Window = @import("Window.zig");
 const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("vulkan.zig").VulkanRenderer else void;
-const WebGPURenderer = if (builtin.os.tag == .emscripten) @import("webgpu.zig").WebGPURenderer else void;
+const OpenGLRenderer = if (builtin.os.tag == .emscripten) @import("opengl.zig").OpenGLRenderer else void;
 
 ptr: *anyopaque,
 vtable: *const VTable,
@@ -25,7 +25,7 @@ pub const DriverDesktop = enum {
 };
 
 pub const DriverWeb = enum {
-    webgpu,
+    opengl,
 };
 
 pub const VSync = enum {
@@ -84,12 +84,28 @@ pub const Format = enum {
         };
     }
 
-    pub fn asWebGPU(self: Format) em.WGPUTextureFormat {
+    pub fn asGLInternal(self: Format) gl.TextureInternalFormat {
         return switch (self) {
-            .r8_srgb => em.WGPUTextureFormat_R8Unorm,
-            .r8g8b8a8_srgb => em.WGPUTextureFormat_RGBA8UnormSrgb,
-            .b8g8r8a8_srgb => em.WGPUTextureFormat_BGRA8UnormSrgb,
-            .d32_sfloat => em.WGPUTextureFormat_Depth32Float,
+            .r8_srgb, .r8_unorm => gl.TextureInternalFormat.r8,
+            .r8g8b8a8_srgb => gl.TextureInternalFormat.rgba,
+            .b8g8r8a8_srgb => gl.TextureInternalFormat.bgr,
+            .d32_sfloat => gl.TextureInternalFormat.depth_component,
+        };
+    }
+
+    pub fn asGL(self: Format) gl.PixelFormat {
+        return switch (self) {
+            .r8_srgb, .r8_unorm => gl.PixelFormat.red,
+            .r8g8b8a8_srgb => gl.PixelFormat.rgba,
+            .b8g8r8a8_srgb => gl.PixelFormat.bgr,
+            .d32_sfloat => gl.PixelFormat.depth_component,
+        };
+    }
+
+    pub fn asGLPixelType(self: Format) gl.PixelType {
+        return switch (self) {
+            .r8_srgb, .r8_unorm, .r8g8b8a8_srgb, .b8g8r8a8_srgb => gl.PixelType.unsigned_byte,
+            .d32_sfloat => gl.PixelType.float,
         };
     }
 
@@ -187,18 +203,6 @@ pub const ImageUsageFlags = packed struct {
             .depth_stencil_attachment_bit = self.depth_stencil_attachment,
         };
     }
-
-    pub fn asWebGPU(self: ImageUsageFlags) em.WGPUTextureUsage {
-        var flags: em.WGPUTextureUsage = 0;
-
-        if (self.transfer_src) flags |= em.WGPUTextureUsage_CopySrc;
-        if (self.transfer_dst) flags |= em.WGPUTextureUsage_CopyDst;
-        if (self.sampled) flags |= em.WGPUTextureUsage_TextureBinding; // ?
-        if (self.color_attachment) flags |= em.WGPUTextureUsage_RenderAttachment;
-        if (self.depth_stencil_attachment) unreachable;
-
-        return flags;
-    }
 };
 
 pub const ImageAspectFlags = packed struct {
@@ -210,15 +214,6 @@ pub const ImageAspectFlags = packed struct {
             .color_bit = self.color,
             .depth_bit = self.depth,
         };
-    }
-
-    pub fn asWebGPU(self: ImageAspectFlags) em.WGPUTextureAspect {
-        var flags: em.WGPUTextureAspect = 0;
-
-        if (self.color) flags |= em.WGPUTextureAspect_All; // ?
-        if (self.depth) flags |= em.WGPUTextureAspect_DepthOnly;
-
-        return flags;
     }
 };
 
@@ -237,16 +232,6 @@ pub const BufferUsageFlags = packed struct {
             .index_buffer_bit = self.index_buffer,
             .vertex_buffer_bit = self.vertex_buffer,
         };
-    }
-
-    pub fn asWGPU(self: BufferUsageFlags) em.WGPUBufferUsage {
-        var flags: em.WGPUBufferUsage = 0;
-
-        if (self.index_buffer) flags |= em.WGPUBufferUsage_Index;
-        if (self.vertex_buffer) flags |= em.WGPUBufferUsage_Vertex;
-        if (self.uniform_buffer) flags |= em.WGPUBufferUsage_Uniform;
-        if (self.transfer_src) flags |= em.WGPUBufferUsage_CopySrc;
-        if (self.transfer_dst) flags |= em.WGPUBufferUsage_CopyDst;
     }
 };
 
@@ -280,6 +265,14 @@ pub const ShaderStage = packed struct {
             .fragment_bit = self.fragment,
             .compute_bit = self.compute,
         };
+    }
+
+    pub fn asGL(self: ShaderStage) gl.ShaderType {
+        if (self.vertex) return .vertex;
+        if (self.fragment) return .fragment;
+        if (self.compute) return .compute;
+
+        unreachable;
     }
 };
 
@@ -479,13 +472,13 @@ pub fn rdr() *Self {
 pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
     if (builtin.os.tag == .emscripten) {
         switch (driver) {
-            .webgpu => {
-                const renderer = try createWithDefault(WebGPURenderer, allocator);
+            .opengl => {
+                const renderer = try createWithDefault(OpenGLRenderer, allocator);
                 renderer.allocator = allocator;
 
                 singleton = .{
                     .ptr = renderer,
-                    .vtable = &WebGPURenderer.vtable,
+                    .vtable = &OpenGLRenderer.vtable,
                 };
             },
         }
@@ -508,7 +501,7 @@ pub inline fn asVk(self: *const Self) *VulkanRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
-pub inline fn asWGPU(self: *const Self) *WebGPURenderer {
+pub inline fn asGL(self: *const Self) *OpenGLRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 

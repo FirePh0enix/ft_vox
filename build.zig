@@ -29,18 +29,17 @@ pub fn build(b: *Build) !void {
         .single_threaded = false, // force multithreading on web
     });
 
-    const exe = if (target_is_emscripten) a: {
-        break :a b.addLibrary(.{
+    const exe = if (target_is_emscripten)
+        b.addLibrary(.{
             .linkage = .static,
             .name = "ft_vox",
             .root_module = exe_mod,
-        });
-    } else a: {
-        break :a b.addExecutable(.{
+        })
+    else
+        b.addExecutable(.{
             .name = "ft_vox",
             .root_module = exe_mod,
         });
-    };
 
     // Vulkan is only supported on desktop.
     // TODO: pull cimgui.zig and add WebGPU support.
@@ -127,6 +126,12 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("argzon", argzon.module("argzon"));
 
+    const zgl = b.dependency("zgl", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("zgl", zgl.module("zgl"));
+
     const freetype = b.dependency("freetype", .{
         .target = target,
         .optimize = optimize,
@@ -151,25 +156,53 @@ pub fn build(b: *Build) !void {
     const flags: []const []const u8 = &.{
         "--target", "Vulkan-1.2",
     };
-    const files: []const []const u8 = &.{
-        "assets/shaders/basic_cube.vert",
-        "assets/shaders/basic_cube.frag",
+    const files: []const []const u8 = if (!target_is_emscripten)
+        &.{
+            "assets/shaders/vk/basic_cube.vert",
+            "assets/shaders/vk/basic_cube.frag",
 
-        "assets/shaders/cube_shadow.vert",
-        "assets/shaders/cube_shadow.frag",
+            "assets/shaders/vk/cube_shadow.vert",
+            "assets/shaders/vk/cube_shadow.frag",
 
-        "assets/shaders/font.vert",
-        "assets/shaders/font.frag",
-    };
+            "assets/shaders/vk/font.vert",
+            "assets/shaders/vk/font.frag",
+        }
+    else
+        &.{
+            "assets/shaders/gl/basic_cube.vert",
+            "assets/shaders/gl/basic_cube.frag",
+
+            "assets/shaders/gl/cube_shadow.vert",
+            "assets/shaders/gl/cube_shadow.frag",
+
+            "assets/shaders/gl/font.vert",
+            "assets/shaders/gl/font.frag",
+        };
 
     for (files) |file| {
-        const compile_shader = addCompileShader(b, glslc, file, flags, optimize);
-        spirv_files.append(compile_shader) catch unreachable;
+        if (!target_is_emscripten) {
+            const compile_shader = addCompileShader(b, glslc, file, flags, optimize);
+            spirv_files.append(compile_shader) catch unreachable;
+        } else {
+            const output_filename = std.mem.join(b.allocator, "", &.{ file, ".spv" }) catch @panic("OOM");
+            const file_ident = b.dupe(std.fs.path.basename(output_filename));
+            std.mem.replaceScalar(u8, file_ident, '.', '_');
+
+            spirv_files.append(.{
+                .path = b.path(file),
+                .filename = output_filename,
+                .file_ident = file_ident,
+                .step = undefined,
+            }) catch unreachable;
+        }
     }
 
     // Embed all assets, with some of them transformed, into the executable.
     var embedded_assets = addEmbeddedAssets(b, exe_mod, spirv_files.items);
-    for (spirv_files.items) |spirv_file| embedded_assets.step.dependOn(spirv_file.step);
+
+    if (!target_is_emscripten) {
+        for (spirv_files.items) |spirv_file| embedded_assets.step.dependOn(spirv_file.step);
+    }
 
     exe.step.dependOn(embedded_assets.step);
     exe.root_module.addImport("embeded_assets", embedded_assets.module);
@@ -213,8 +246,8 @@ pub fn build(b: *Build) !void {
         try emcc_settings.put("LEGACY_RUNTIME", "1");
         try emcc_settings.put("USE_WEBGPU", "1");
         try emcc_settings.put("USE_FREETYPE", "1");
-        try emcc_settings.put("ASYNCIFY", "1");
         try emcc_settings.put("WASM_WORKERS", "1");
+        try emcc_settings.put("MAX_WEBGL_VERSION", "2");
 
         const emcc_step = zemscripten.emccStep(
             b,

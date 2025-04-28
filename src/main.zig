@@ -417,13 +417,13 @@ pub fn mainEmscripten() !void {
         .title = "ft_vox",
         .width = 1280,
         .height = 720,
-        .driver = .webgpu,
+        .driver = .opengl,
         .resizable = true,
         .allocator = allocator,
     });
     defer window.deinit();
 
-    try Renderer.create(allocator, .webgpu);
+    try Renderer.create(allocator, .opengl);
     try rdr().createDevice(&window, null);
 
     // em.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
