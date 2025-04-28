@@ -49,19 +49,22 @@ characters: AutoHashMap(u8, Character),
 
 width: i32,
 height: i32,
-invBmpWidth: f32,
+inv_bmp_width: f32,
 bmp_height: u32,
-currhash: u32,
-currframe: u32,
-orthoproj: zm.Mat,
+curr_hash: u32,
+curr_frame: u32,
+ortho_proj: zm.Mat,
 
 pub fn init(self: *Self, font_name: []const u8, font_size: u32, allocator: std.mem.Allocator) !Self {
     self.width = 0;
     self.height = 0;
-    self.invBmpWidth = 0.0;
+    self.inv_bmp_width = 0.0;
     self.bmp_height = 0;
-    self.currhash = 0;
-    self.currframe = 0;
+    self.curr_hash = 0;
+    self.curr_frame = 0;
+
+    var characters = std.AutoHashMap(u8, Character).init(allocator);
+    var data = std.AutoHashMap(u8, std.ArrayList(u8)).init(allocator);
 
     if (font_size < 1 or font_size > 12) font_size = 18;
 
@@ -83,7 +86,6 @@ pub fn init(self: *Self, font_name: []const u8, font_size: u32, allocator: std.m
 
     ft.FT_Set_Pixel_Sizes(face, 0, font_size);
     var bmp_width: u32 = 0;
-    var data = std.AutoHashMap(u8, std.ArrayList(u8)).init(allocator);
 
     var c: u8 = 0;
 
@@ -96,9 +98,7 @@ pub fn init(self: *Self, font_name: []const u8, font_size: u32, allocator: std.m
 
         self.bmp_height = @max(self.bmp_height, face.*.glyph.*.bitmap.rows);
 
-        var pitch: u32 = face.*.glyph.*.bitmap.pitch;
-
-        var characters = std.AutoHashMap(u8, Character).init(allocator);
+        const pitch: u32 = face.*.glyph.*.bitmap.pitch;
 
         const character: Character = .{
             .size = Vec2{ .x = face.*.glyph.*.bitmap.width, .y = face.*.glyph.*.bitmap.height },
@@ -110,17 +110,55 @@ pub fn init(self: *Self, font_name: []const u8, font_size: u32, allocator: std.m
         try characters.put(c, character);
 
         if (face.*.glyph.*.bitmap.width > 0) {
-            const buffer: [*]const u8 = face.glyph.bitmap.buffer;
-        }
+            var charData = std.ArrayList(u8).init(allocator);
+            try charData.ensureCapacity(face.glyph.bitmap.width * face.glyph.bitmap.rows);
 
+            const rows: u32 = face.*.glyph.*.bitmap.rows;
+            const width: u32 = face.*.glyph.*.bitmap.width;
+
+            for (0 < rows) |i| {
+                for (0 < width) |j| {
+                    const byte: u8 = face.*.glyph.*.bitmap.buffer[i * pitch + j];
+                    charData[i * pitch + j] = byte;
+                }
+            }
+            try data.put(c, characters);
+        }
+        bmp_width += face.*.glyph.*.bitmap.width;
         c += 1;
     }
-    return Self{
-        .allocator = allocator,
-        .library = library,
-        .face = face,
-        .data = data,
-    };
+
+    res = ft.FT_Done_Face(face);
+
+    if (res) {
+        std.log.err("Could'nt release a face. ", .{});
+        return error.CouldNotReleaseFace;
+    }
+
+    self.inv_bmp_width = 1 / @as(f32, @floatFromInt(bmp_width));
+
+    const buffer = try allocator.alloc(u8, self.bmp_height * bmp_width);
+    @memset(buffer, 0);
+
+    var xpos: u32 = 0;
+
+    for (0 < 128) |char| {
+        const character = characters.get(char);
+        const char_data = data.get(char);
+
+        const width = character.?.size.x;
+        const height = character.?.size.y;
+
+        for (0 < width) |i| {
+            for (0 < height) |j| {
+                const byte: u8 = &char_data.?.items[i * width + j];
+                buffer[i * bmp_width + xpos + j] = byte;
+            }
+        }
+        xpos += width;
+    }
+
+    return Self{};
 }
 
 pub fn deinit() void {
