@@ -84,6 +84,15 @@ pub const Format = enum {
         };
     }
 
+    pub fn asWebGPU(self: Format) em.WGPUTextureFormat {
+        return switch (self) {
+            .r8_srgb => em.WGPUTextureFormat_R8Unorm,
+            .r8g8b8a8_srgb => em.WGPUTextureFormat_RGBA8UnormSrgb,
+            .b8g8r8a8_srgb => em.WGPUTextureFormat_BGRA8UnormSrgb,
+            .d32_sfloat => em.WGPUTextureFormat_Depth32Float,
+        };
+    }
+
     pub fn fromVk(self: vk.Format) Format {
         return switch (self) {
             .r8_srgb => .r8_srgb,
@@ -178,6 +187,18 @@ pub const ImageUsageFlags = packed struct {
             .depth_stencil_attachment_bit = self.depth_stencil_attachment,
         };
     }
+
+    pub fn asWebGPU(self: ImageUsageFlags) em.WGPUTextureUsage {
+        var flags: em.WGPUTextureUsage = 0;
+
+        if (self.transfer_src) flags |= em.WGPUTextureUsage_CopySrc;
+        if (self.transfer_dst) flags |= em.WGPUTextureUsage_CopyDst;
+        if (self.sampled) flags |= em.WGPUTextureUsage_TextureBinding; // ?
+        if (self.color_attachment) flags |= em.WGPUTextureUsage_RenderAttachment;
+        if (self.depth_stencil_attachment) unreachable;
+
+        return flags;
+    }
 };
 
 pub const ImageAspectFlags = packed struct {
@@ -189,6 +210,15 @@ pub const ImageAspectFlags = packed struct {
             .color_bit = self.color,
             .depth_bit = self.depth,
         };
+    }
+
+    pub fn asWebGPU(self: ImageAspectFlags) em.WGPUTextureAspect {
+        var flags: em.WGPUTextureAspect = 0;
+
+        if (self.color) flags |= em.WGPUTextureAspect_All; // ?
+        if (self.depth) flags |= em.WGPUTextureAspect_DepthOnly;
+
+        return flags;
     }
 };
 
@@ -398,7 +428,7 @@ pub const VTable = struct {
     // Buffer
     //
 
-    buffer_create: *const fn (*anyopaque, options: BufferOptions) BufferUpdateError!RID,
+    buffer_create: *const fn (*anyopaque, options: BufferOptions) BufferCreateError!RID,
     buffer_update: *const fn (*anyopaque, buffer_rid: RID, s: []const u8, offset: usize) BufferUpdateError!void,
     buffer_map: *const fn (*anyopaque, buffer_rid: RID) BufferMapError![]u8,
     buffer_unmap: *const fn (*anyopaque, buffer_rid: RID) void,

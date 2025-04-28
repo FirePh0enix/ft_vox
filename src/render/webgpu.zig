@@ -65,10 +65,10 @@ pub const WebGPURenderer = struct {
 
         .free_rid = @ptrCast(&freeRid),
 
-        .buffer_create = undefined,
-        .buffer_update = undefined,
-        .buffer_map = undefined,
-        .buffer_unmap = undefined,
+        .buffer_create = @ptrCast(&bufferCreate),
+        .buffer_update = @ptrCast(&bufferUpdate),
+        .buffer_map = @ptrCast(&bufferMap),
+        .buffer_unmap = @ptrCast(&bufferUnmap),
 
         .image_create = undefined,
         .image_update = undefined,
@@ -212,9 +212,7 @@ pub const WebGPURenderer = struct {
     // Buffer
     //
 
-    pub fn bufferCreate(self: *WebGPURenderer, options: Renderer.BufferOptions) Renderer.BufferUpdateError!RID {
-        em.WGPUBufferUsage_CopyDst;
-
+    pub fn bufferCreate(self: *WebGPURenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
         const buffer = em.wgpuDeviceCreateBuffer(self.device, &wgpu.BufferDescriptor{
             .mappedAtCreation = 0,
             .size = @intCast(options.size),
@@ -225,6 +223,75 @@ pub const WebGPURenderer = struct {
             .size = options.size,
             .buffer = buffer,
         })) };
+    }
+
+    pub fn bufferUpdate(self: *WebGPURenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
+        const data = try self.bufferMap(buffer_rid);
+        defer self.bufferUnmap(buffer_rid);
+
+        @memset(data[offset..], s);
+    }
+
+    pub fn bufferMap(self: *WebGPURenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
+        _ = self;
+
+        const buffer = buffer_rid.as(WebGPUBuffer);
+
+        const MapUserData = struct {
+            found: std.atomic.Value(u8),
+        };
+
+        const map_callback = struct {
+            fn callback(status: wgpu.RequestAdapterStatus, user_data: *MapUserData) callconv(.c) void {
+                user_data.found.store(if (status == em.WGPURequestAdapterStatus_Success) 1 else 2, .release);
+            }
+        }.callback;
+
+        var map_callback_data: MapUserData = .{
+            .found = .init(0),
+            .ptr = undefined,
+        };
+
+        em.wgpuBufferMapAsync(buffer.buffer, em.WGPUMapMode_Read | em.WGPUMapMode_Write, 0, buffer.size, &map_callback, &map_callback_data);
+
+        while (map_callback_data.found.load(.acquire) == 0) {
+            em.emscripten_sleep(10);
+        }
+
+        const ptr = em.wgpuBufferGetMappedRange(buffer.buffer, 0, buffer.size) orelse return error.Failed;
+        return @as([*]u8, @ptrCast(ptr))[0..buffer.size];
+    }
+
+    pub fn bufferUnmap(self: *const WebGPURenderer, buffer_rid: RID) void {
+        _ = self;
+
+        const buffer = buffer_rid.as(WebGPUBuffer);
+        em.wgpuBufferUnmap(buffer);
+    }
+
+    //
+    // Image
+    //
+
+    pub fn imageCreate(self: *WebGPURenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
+        const texture = em.wgpuDeviceCreateTexture(self.device, &em.WGPUTextureDescriptor{
+            .usage = options.usage.asWebGPU(),
+            .dimension = 2, // 1d, 2d or 3d ?
+            .size = .{ .width = @intCast(options.width), .height = @intCast(options.height), .depthOrArrayLayers = @intCast(options.layers) },
+            .format = options.format.asWebGPU(),
+            .mipLevelCount = 1,
+            .sampleCount = 1,
+        }) orelse return error.Failed;
+
+        const view = em.wgpuTextureCreateView(texture, &em.WGPUTextureViewDescriptor{
+            .format = options.format.asWebGPU(),
+            .dimension = 2,
+            .baseMipLevel = 0,
+            .mipLevelCount = 1,
+            .baseArrayLayer = 0,
+            .arrayLayerCount = @intCast(options.layers),
+            .aspect = options.aspect_mask.asWebGPU(),
+        });
     }
 };
 
@@ -237,5 +304,17 @@ pub const WebGPUBuffer = struct {
 
     pub fn deinit(self: *const WebGPUBuffer) void {
         em.wgpuBufferDestroy(self.buffer);
+    }
+};
+
+pub const WebGPUImage = struct {
+    pub const resource_signature: usize = @truncate(0x2f2bbd2528a30e17);
+
+    signature: usize = resource_signature,
+    size: usize,
+    buffer: em.WGPUBuffer,
+
+    pub fn deinit(self: *const WebGPUBuffer) void {
+        em.wgpuTextureDestroy(self.buffer);
     }
 };

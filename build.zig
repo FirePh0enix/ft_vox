@@ -196,6 +196,7 @@ pub fn build(b: *Build) !void {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
 
         exe.addSystemIncludePath(emsdk.path("upstream/include"));
+        freetype_headers.addSystemIncludePath(emsdk.path("upstream/include"));
 
         exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
         freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
@@ -255,7 +256,7 @@ pub fn build(b: *Build) !void {
 
         run_step.dependOn(&run_cmd.step);
     } else {
-        const args: []const []const u8 = &.{ "--browser", emrun_browser, "--browser_args=\"--enable-unsafe-webgpu --enable-features=Vulcan,UseSkiaRenderer\"" };
+        const args: []const []const u8 = &.{ "--browser", emrun_browser, "--browser_args=\"--enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer\"" };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
         emrun_step.dependOn(b.getInstallStep());
