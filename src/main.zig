@@ -426,6 +426,27 @@ pub fn mainEmscripten() !void {
     try Renderer.create(allocator, .opengl);
     try rdr().createDevice(&window, null);
 
+    cube_mesh = try createCube();
+
+    material = try rdr().materialCreate(.{
+        .shaders = &.{
+            .{ .path = "basic_cube.vert.spv", .stage = .{ .vertex = true } },
+            .{ .path = "basic_cube.frag.spv", .stage = .{ .fragment = true } },
+        },
+    });
+
+    render_graph_pass = try .create(allocator, rdr().getOutputRenderPass(), .{
+        .max_draw_calls = 10,
+    });
+    graph = .init(allocator);
+    graph.main_render_pass = &render_graph_pass;
+
+    const mat = zm.identity();
+
+    render_graph_pass.draw(cube_mesh, material, 0, rdr().meshGetIndicesCount(cube_mesh), mat);
+
+    try rdr().processGraph(&graph);
+
     // em.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
 }
 

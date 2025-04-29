@@ -252,12 +252,13 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
         const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width));
         const by = @as(f32, @floatFromInt(char_data.bearing.y)) / @as(f32, @floatFromInt(self.width));
 
-        const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.height));
+        const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(char_data.size.x));
+        const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(char_data.size.y));
 
         instances[index] = .{
             .bounds = .{ offset, offset + char_width },
             .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
-            .scale = .{ scale_x * scale, scale },
+            .scale = .{ scale * scale_x * 0.5, scale * scale_y },
         };
 
         offset_x += char_width * 12.0;

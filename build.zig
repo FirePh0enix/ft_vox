@@ -142,7 +142,11 @@ pub fn build(b: *Build) !void {
         exe.root_module.linkLibrary(freetype.artifact("freetype"));
     }
 
-    const freetype_headers = b.addTranslateC(.{ .target = target, .optimize = optimize, .root_source_file = freetype.path("include/freetype/freetype.h") });
+    const freetype_headers = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = freetype.path("include/freetype/freetype.h"),
+    });
     freetype_headers.addIncludePath(freetype.path("include"));
     exe.root_module.addImport("freetype", freetype_headers.createModule());
 
@@ -172,11 +176,11 @@ pub fn build(b: *Build) !void {
             "assets/shaders/gl/basic_cube.vert",
             "assets/shaders/gl/basic_cube.frag",
 
-            "assets/shaders/gl/cube_shadow.vert",
-            "assets/shaders/gl/cube_shadow.frag",
+            // "assets/shaders/gl/cube_shadow.vert",
+            // "assets/shaders/gl/cube_shadow.frag",
 
-            "assets/shaders/gl/font.vert",
-            "assets/shaders/gl/font.frag",
+            // "assets/shaders/gl/font.vert",
+            // "assets/shaders/gl/font.frag",
         };
 
     for (files) |file| {
@@ -213,15 +217,15 @@ pub fn build(b: *Build) !void {
     const emsdk = b.dependency("emsdk", .{});
     const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
 
-    if (target_is_emscripten) {
-        const emsdk_headers = b.addTranslateC(.{
-            .target = target,
-            .optimize = optimize,
-            .root_source_file = b.path("src/emscripten.h"),
-        });
-        emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-        exe.root_module.addImport("em", emsdk_headers.createModule());
-    }
+    // if (target_is_emscripten) {
+    const emsdk_headers = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/emscripten.h"),
+    });
+    emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+    exe.root_module.addImport("em", emsdk_headers.createModule());
+    // }
 
     if (!target_is_emscripten) {
         b.installArtifact(exe);
@@ -235,8 +239,6 @@ pub fn build(b: *Build) !void {
         freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
 
         const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
-        // try emcc_flags.put("--pre-js", {}); // FIXME: does not work
-        // try emcc_flags.put(std.fs.realpathAlloc(b.allocator, "web/pre.js") catch unreachable, {});
 
         var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
             .optimize = optimize,
@@ -244,10 +246,10 @@ pub fn build(b: *Build) !void {
 
         try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
         try emcc_settings.put("LEGACY_RUNTIME", "1");
-        try emcc_settings.put("USE_WEBGPU", "1");
         try emcc_settings.put("USE_FREETYPE", "1");
         try emcc_settings.put("WASM_WORKERS", "1");
         try emcc_settings.put("MAX_WEBGL_VERSION", "2");
+        try emcc_settings.put("FULL_ES3", "1");
 
         const emcc_step = zemscripten.emccStep(
             b,
@@ -260,7 +262,7 @@ pub fn build(b: *Build) !void {
                 .embed_paths = &.{},
                 .preload_paths = &.{},
                 .install_dir = .{ .custom = "www" },
-                // .shell_file_path = "path/to/html/file"
+                .shell_file_path = "shell.html",
             },
         );
         emcc_step.dependOn(activate_emsdk_step);
@@ -289,7 +291,7 @@ pub fn build(b: *Build) !void {
 
         run_step.dependOn(&run_cmd.step);
     } else {
-        const args: []const []const u8 = &.{ "--browser", emrun_browser, "--browser_args=\"--enable-unsafe-webgpu --enable-features=Vulkan,UseSkiaRenderer\"" };
+        const args: []const []const u8 = &.{ "--browser", emrun_browser };
 
         const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
         emrun_step.dependOn(b.getInstallStep());

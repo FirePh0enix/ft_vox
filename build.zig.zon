@@ -53,8 +53,7 @@
             .hash = "freetype-0.0.0-AAAAAA5JcwBMujojfNLEq5g_WijZtU56mRLYx8bjjiMU",
         },
         .zgl = .{
-            .url = "https://github.com/ziglibs/zgl/archive/bba18181488d527c603407a0f38a346aeb9829e4.tar.gz",
-            .hash = "zgl-1.1.0-p_NpAH2rCQCau2UOYRdNu2eC-_T4CMWcgpqpv8REofLl",
+            .path = "deps/zgl_es3",
         },
     },
     .paths = .{

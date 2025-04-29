@@ -12,6 +12,8 @@ const Window = @import("Window.zig");
 const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("vulkan.zig").VulkanRenderer else void;
 const OpenGLRenderer = if (builtin.os.tag == .emscripten) @import("opengl.zig").OpenGLRenderer else void;
 
+const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+
 ptr: *anyopaque,
 vtable: *const VTable,
 
@@ -43,7 +45,7 @@ pub const SwapchainOptions = struct {
     vsync: VSync,
 };
 
-pub const ProcessGraphError = error{} || Allocator.Error;
+pub const ProcessGraphError = error{Failed} || Allocator.Error;
 
 pub const AllocUsage = enum {
     gpu_only,
@@ -86,26 +88,27 @@ pub const Format = enum {
 
     pub fn asGLInternal(self: Format) gl.TextureInternalFormat {
         return switch (self) {
-            .r8_srgb, .r8_unorm => gl.TextureInternalFormat.r8,
-            .r8g8b8a8_srgb => gl.TextureInternalFormat.rgba,
-            .b8g8r8a8_srgb => gl.TextureInternalFormat.bgr,
-            .d32_sfloat => gl.TextureInternalFormat.depth_component,
+            .r8_srgb, .r8_unorm => .r8,
+            .r8g8b8a8_srgb => .rgba,
+            .b8g8r8a8_srgb => unreachable,
+            .d32_sfloat => .depth_component,
         };
     }
 
-    pub fn asGL(self: Format) gl.PixelFormat {
+    pub fn asGLPixelFormat(self: Format) gl.PixelFormat {
         return switch (self) {
-            .r8_srgb, .r8_unorm => gl.PixelFormat.red,
-            .r8g8b8a8_srgb => gl.PixelFormat.rgba,
-            .b8g8r8a8_srgb => gl.PixelFormat.bgr,
-            .d32_sfloat => gl.PixelFormat.depth_component,
+            .r8_srgb, .r8_unorm => .red,
+            .r8g8b8a8_srgb => .rgba,
+            .b8g8r8a8_srgb => unreachable,
+            .d32_sfloat => .depth_component,
         };
     }
 
     pub fn asGLPixelType(self: Format) gl.PixelType {
         return switch (self) {
-            .r8_srgb, .r8_unorm, .r8g8b8a8_srgb, .b8g8r8a8_srgb => gl.PixelType.unsigned_byte,
-            .d32_sfloat => gl.PixelType.float,
+            .r8_srgb, .r8_unorm, .r8g8b8a8_srgb => .unsigned_byte,
+            .d32_sfloat => .float,
+            .b8g8r8a8_srgb => unreachable,
         };
     }
 
@@ -233,6 +236,14 @@ pub const BufferUsageFlags = packed struct {
             .vertex_buffer_bit = self.vertex_buffer,
         };
     }
+
+    pub fn asGL(self: BufferUsageFlags) gl.BufferTarget {
+        if (self.uniform_buffer) return .uniform_buffer;
+        if (self.index_buffer) return .element_array_buffer;
+        if (self.vertex_buffer) return .array_buffer;
+
+        unreachable;
+    }
 };
 
 pub const IndexType = enum {
@@ -243,6 +254,13 @@ pub const IndexType = enum {
         return switch (self) {
             .uint16 => .uint16,
             .uint32 => .uint32,
+        };
+    }
+
+    pub fn asGL(self: IndexType) gl.ElementType {
+        return switch (self) {
+            .uint16 => .unsigned_short,
+            .uint32 => .unsigned_int,
         };
     }
 
@@ -270,7 +288,7 @@ pub const ShaderStage = packed struct {
     pub fn asGL(self: ShaderStage) gl.ShaderType {
         if (self.vertex) return .vertex;
         if (self.fragment) return .fragment;
-        if (self.compute) return .compute;
+        if (self.compute) unreachable;
 
         unreachable;
     }
@@ -349,21 +367,15 @@ pub const Statistics = struct {
     vram_used: usize = 0,
 };
 
-pub const BufferOptions = struct {
-    size: usize,
-    usage: BufferUsageFlags,
-    alloc_usage: AllocUsage = .gpu_only,
-};
-
 /// An opaque value used to interact with GPU resources.
 pub const RID = extern struct {
     inner: usize,
 
-    pub fn as(self: RID, comptime T: type) *T {
+    pub inline fn as(self: RID, comptime T: type) *T {
         if (!@hasDecl(T, "resource_signature") or !@hasField(T, "signature"))
             @compileError(std.fmt.comptimePrint("{s} is not a valid conversion from a RID", .{@typeName(T)}));
 
-        if (builtin.mode == .Debug) {
+        if (runtime_safety) {
             const ptr: *T = @ptrFromInt(self.inner);
             if (ptr.signature != T.resource_signature) std.debug.panic("Mismatch signature, expected {x} but got {x}", .{ T.resource_signature, ptr.signature });
             return ptr;
@@ -590,6 +602,12 @@ pub inline fn freeRid(self: *const Self, rid: RID) void {
 //
 // Buffer
 //
+
+pub const BufferOptions = struct {
+    size: usize,
+    usage: BufferUsageFlags,
+    alloc_usage: AllocUsage = .gpu_only,
+};
 
 pub const BufferCreateError = error{
     Failed,
