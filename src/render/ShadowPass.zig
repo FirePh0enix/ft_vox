@@ -1,5 +1,5 @@
 const std = @import("std");
-const dcimgui = @import("dcimgui");
+const c = @import("c");
 
 const Self = @This();
 const World = @import("../voxel/World.zig");
@@ -104,10 +104,10 @@ pub fn init(options: Options) !Self {
 pub fn debugHook(render_pass: *Graph.RenderPass) void {
     _ = render_pass;
 
-    if (dcimgui.ImGui_Begin("Shadow", null, 0)) {
-        dcimgui.ImGui_Image(global_depth_imgui_id, .{ .x = 200, .y = 200 });
+    if (c.ImGui_Begin("Shadow", null, 0)) {
+        c.ImGui_Image(global_depth_imgui_id, .{ .x = 200, .y = 200 });
     }
-    dcimgui.ImGui_End();
+    c.ImGui_End();
 }
 
 pub fn deinit(self: *Self) void {

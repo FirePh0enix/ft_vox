@@ -4,7 +4,6 @@ const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
 const input = @import("input.zig");
-const dcimgui = @import("dcimgui");
 const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
 
@@ -339,7 +338,7 @@ fn update(window: *Window, world: *World) !void {
     var event: c.SDL_Event = undefined;
 
     while (c.SDL_PollEvent(&event)) {
-        _ = dcimgui.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
+        _ = c.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
 
         switch (event.type) {
             c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
@@ -396,19 +395,17 @@ fn update(window: *Window, world: *World) !void {
 fn statsDebugHook(render_pass: *Graph.RenderPass) void {
     _ = render_pass;
 
-    if (dcimgui.ImGui_Begin("Statistics", null, 0)) {
+    if (c.ImGui_Begin("Statistics", null, 0)) {
         const stats = rdr().getStatistics();
 
         var buf: [128]u8 = undefined;
 
-        dcimgui.ImGui_Text("Primitves  : %zu", stats.primitives_drawn);
-        dcimgui.ImGui_Text("GPU Time   : %.2f", stats.gpu_time);
-        dcimgui.ImGui_Text("GPU Memory : %s", (std.fmt.bufPrintZ(&buf, "{:.2}", .{std.fmt.fmtIntSizeBin(@intCast(stats.vram_used))}) catch unreachable).ptr);
+        c.ImGui_Text("Primitves  : %zu", stats.primitives_drawn);
+        c.ImGui_Text("GPU Time   : %.2f", stats.gpu_time);
+        c.ImGui_Text("GPU Memory : %s", (std.fmt.bufPrintZ(&buf, "{:.2}", .{std.fmt.fmtIntSizeBin(@intCast(stats.vram_used))}) catch unreachable).ptr);
     }
-    dcimgui.ImGui_End();
+    c.ImGui_End();
 }
-
-const em = @import("em");
 
 // https://developer.chrome.com/docs/web-platform/webgpu/build-app
 

@@ -217,27 +217,27 @@ pub fn debugMessageCallback(context: anytype, comptime handler: DebugMessageCall
     checkError();
 }
 
-pub fn debugMessageInsert(source: DebugSource, msg_type: DebugMessageType, id: u32, severity: DebugSeverity, message: []const u8) void {
-    binding.debugMessageInsert(
-        @intFromEnum(source),
-        @intFromEnum(msg_type),
-        id,
-        @intFromEnum(severity),
-        @intCast(message.len),
-        message.ptr,
-    );
-    checkError();
-}
+// pub fn debugMessageInsert(source: DebugSource, msg_type: DebugMessageType, id: u32, severity: DebugSeverity, message: []const u8) void {
+//     binding.debugMessageInsert(
+//         @intFromEnum(source),
+//         @intFromEnum(msg_type),
+//         id,
+//         @intFromEnum(severity),
+//         @intCast(message.len),
+//         message.ptr,
+//     );
+//     checkError();
+// }
 
 pub fn clearColor(r: f32, g: f32, b: f32, a: f32) void {
     binding.clearColor(r, g, b, a);
     checkError();
 }
 
-pub fn clearDepth(depth: f32) void {
-    binding.clearDepth(depth);
-    checkError();
-}
+// pub fn clearDepth(depth: f32) void {
+//     binding.clearDepth(depth);
+//     checkError();
+// }
 
 pub fn clear(mask: struct { color: bool = false, depth: bool = false, stencil: bool = false }) void {
     binding.clear(@as(types.BitField, if (mask.color) binding.COLOR_BUFFER_BIT else 0) |
@@ -259,12 +259,12 @@ pub const ColorBuffer = enum(types.Enum) {
     none = binding.NONE,
     front = binding.FRONT,
     back = binding.BACK,
-    left = binding.LEFT,
-    right = binding.RIGHT,
-    front_left = binding.FRONT_LEFT,
-    front_right = binding.FRONT_RIGHT,
-    back_left = binding.BACK_LEFT,
-    back_right = binding.BACK_RIGHT,
+    // left = binding.LEFT,
+    // right = binding.RIGHT,
+    // front_left = binding.FRONT_LEFT,
+    // front_right = binding.FRONT_RIGHT,
+    // back_left = binding.BACK_LEFT,
+    // back_right = binding.BACK_RIGHT,
     color0 = binding.COLOR_ATTACHMENT0,
     color1 = binding.COLOR_ATTACHMENT1,
     color2 = binding.COLOR_ATTACHMENT2,
@@ -277,9 +277,9 @@ pub const ColorBuffer = enum(types.Enum) {
     color9 = binding.COLOR_ATTACHMENT9,
 };
 
-pub fn drawBuffer(buf: ColorBuffer) void {
-    binding.drawBuffer(@intFromEnum(buf));
-}
+// pub fn drawBuffer(buf: ColorBuffer) void {
+//     binding.drawBuffer(@intFromEnum(buf));
+// }
 
 pub fn readBuffer(buf: ColorBuffer) void {
     binding.readBuffer(@intFromEnum(buf));
@@ -384,26 +384,26 @@ pub const Type = enum(types.Enum) {
     unsigned_int_10_f_11_f_11_f_rev = binding.UNSIGNED_INT_10F_11F_11F_REV,
 };
 
-pub fn vertexAttribFormat(attribindex: u32, size: u32, attribute_type: Type, normalized: bool, relativeoffset: usize) void {
-    binding.vertexAttribFormat(
-        attribindex,
-        @as(types.Int, @intCast(size)),
-        @intFromEnum(attribute_type),
-        b2gl(normalized),
-        ui2gl(relativeoffset),
-    );
-    checkError();
-}
+// pub fn vertexAttribFormat(attribindex: u32, size: u32, attribute_type: Type, normalized: bool, relativeoffset: usize) void {
+//     binding.vertexAttribFormat(
+//         attribindex,
+//         @as(types.Int, @intCast(size)),
+//         @intFromEnum(attribute_type),
+//         b2gl(normalized),
+//         ui2gl(relativeoffset),
+//     );
+//     checkError();
+// }
 
-pub fn vertexAttribIFormat(attribindex: u32, size: u32, attribute_type: Type, relativeoffset: usize) void {
-    binding.vertexAttribIFormat(
-        attribindex,
-        @as(types.Int, @intCast(size)),
-        @intFromEnum(attribute_type),
-        ui2gl(relativeoffset),
-    );
-    checkError();
-}
+// pub fn vertexAttribIFormat(attribindex: u32, size: u32, attribute_type: Type, relativeoffset: usize) void {
+//     binding.vertexAttribIFormat(
+//         attribindex,
+//         @as(types.Int, @intCast(size)),
+//         @intFromEnum(attribute_type),
+//         ui2gl(relativeoffset),
+//     );
+//     checkError();
+// }
 
 // pub fn vertexAttribLFormat(attribindex: u32, size: u32, attribute_type: Type, relativeoffset: usize) void {
 //     binding.vertexAttribLFormat(
@@ -486,13 +486,13 @@ pub fn vertexAttribIPointer(attribindex: u32, size: u32, attribute_type: Type, s
 //     checkError();
 // }
 
-pub fn vertexAttribBinding(attribindex: u32, bindingindex: u32) void {
-    binding.vertexAttribBinding(
-        attribindex,
-        bindingindex,
-    );
-    checkError();
-}
+// pub fn vertexAttribBinding(attribindex: u32, bindingindex: u32) void {
+//     binding.vertexAttribBinding(
+//         attribindex,
+//         bindingindex,
+//     );
+//     checkError();
+// }
 // pub fn vertexArrayAttribBinding(vertexArray: types.VertexArray, attribindex: u32, bindingindex: u32) void {
 //     binding.vertexArrayAttribBinding(
 //         @intFromEnum(vertexArray),
@@ -1372,15 +1372,15 @@ pub fn drawElementsInstanced(primitiveType: PrimitiveType, count: usize, element
     checkError();
 }
 
-pub fn multiDrawArrays(primitiveType: PrimitiveType, first: []types.Int, count: []types.SizeI, drawcount: usize) void {
-    binding.multiDrawArrays(
-        @intFromEnum(primitiveType),
-        @as([*]const types.Int, @ptrCast(first.ptr)),
-        @as([*]const types.SizeI, @ptrCast(count.ptr)),
-        cs2gl(drawcount),
-    );
-    checkError();
-}
+// pub fn multiDrawArrays(primitiveType: PrimitiveType, first: []types.Int, count: []types.SizeI, drawcount: usize) void {
+//     binding.multiDrawArrays(
+//         @intFromEnum(primitiveType),
+//         @as([*]const types.Int, @ptrCast(first.ptr)),
+//         @as([*]const types.SizeI, @ptrCast(count.ptr)),
+//         cs2gl(drawcount),
+//     );
+//     checkError();
+// }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Status Control

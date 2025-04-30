@@ -32,6 +32,7 @@ pub const Event = union(enum) {
     },
     button: struct {
         button: u32,
+        state: State,
     },
     motion: struct {
         x_relative: f32,

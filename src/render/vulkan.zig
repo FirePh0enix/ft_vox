@@ -1,10 +1,9 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const sdl = @import("sdl");
+const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
 const zigimg = @import("zigimg");
-const dcimgui = @import("dcimgui");
 const assets = @import("../assets.zig");
 
 const Allocator = std.mem.Allocator;
@@ -78,7 +77,7 @@ pub const VulkanRenderer = struct {
     features: Features,
     statistics: Renderer.Statistics = .{},
 
-    imgui_context: *dcimgui.ImGuiContext,
+    imgui_context: *c.ImGuiContext,
     imgui_sampler: vk.Sampler,
     imgui_descriptor_pool: vk.DescriptorPool,
 
@@ -536,16 +535,16 @@ pub const VulkanRenderer = struct {
         }
 
         if (pass.imgui_hooks.items.len > 0) {
-            dcimgui.cImGui_ImplSDL3_NewFrame();
-            dcimgui.cImGui_ImplVulkan_NewFrame();
-            dcimgui.ImGui_NewFrame();
+            c.cImGui_ImplSDL3_NewFrame();
+            c.cImGui_ImplVulkan_NewFrame();
+            c.ImGui_NewFrame();
 
             for (pass.imgui_hooks.items) |hook| {
                 hook(pass);
             }
 
-            dcimgui.ImGui_Render();
-            dcimgui.cImGui_ImplVulkan_RenderDrawData(dcimgui.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
+            c.ImGui_Render();
+            c.cImGui_ImplVulkan_RenderDrawData(c.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
         }
 
         cb.endRenderPass();
@@ -721,11 +720,11 @@ pub const VulkanRenderer = struct {
     }
 
     pub fn imguiInit(self: *VulkanRenderer, window: *const Window, render_pass_rid: RID) Renderer.ImGuiInitError!void {
-        self.imgui_context = dcimgui.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
+        self.imgui_context = c.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
 
-        var io: *dcimgui.ImGuiIO = dcimgui.ImGui_GetIO() orelse unreachable;
-        io.ConfigFlags |= dcimgui.ImGuiConfigFlags_NavEnableKeyboard;
-        _ = dcimgui.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.impl.handle));
+        var io: *c.ImGuiIO = c.ImGui_GetIO() orelse unreachable;
+        io.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard;
+        _ = c.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.impl.handle));
 
         self.imgui_descriptor_pool = self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
             .flags = .{ .free_descriptor_set_bit = true },
@@ -734,7 +733,7 @@ pub const VulkanRenderer = struct {
             .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
         }, null) catch return error.Failed;
 
-        var init_info: dcimgui.ImGui_ImplVulkan_InitInfo = .{
+        var init_info: c.ImGui_ImplVulkan_InitInfo = .{
             .Instance = @ptrFromInt(@intFromEnum(self.instance.handle)),
             .PhysicalDevice = @ptrFromInt(@intFromEnum(self.physical_device)),
             .Device = @ptrFromInt(@intFromEnum(self.device.handle)),
@@ -743,18 +742,18 @@ pub const VulkanRenderer = struct {
             .RenderPass = @ptrFromInt(@intFromEnum(render_pass_rid.as(VulkanRenderPass).render_pass)),
             .MinImageCount = @intCast(max_frames_in_flight),
             .ImageCount = @intCast(max_frames_in_flight),
-            .MSAASamples = dcimgui.VK_SAMPLE_COUNT_1_BIT,
+            .MSAASamples = c.VK_SAMPLE_COUNT_1_BIT,
             .DescriptorPool = @ptrFromInt(@intFromEnum(self.imgui_descriptor_pool)),
         };
 
         const loader = struct {
-            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) dcimgui.PFN_vkVoidFunction {
+            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) c.PFN_vkVoidFunction {
                 return rdr().asVk().get_instance_proc_addr(rdr().asVk().instance.handle, name);
             }
         }.func;
 
-        _ = dcimgui.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
-        _ = dcimgui.cImGui_ImplVulkan_Init(&init_info);
+        _ = c.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
+        _ = c.cImGui_ImplVulkan_Init(&init_info);
 
         self.imgui_sampler = self.device.createSampler(&vk.SamplerCreateInfo{
             .mag_filter = .nearest,
@@ -776,20 +775,20 @@ pub const VulkanRenderer = struct {
     }
 
     pub fn imguiDestroy(self: *VulkanRenderer) void {
-        dcimgui.cImGui_ImplVulkan_Shutdown();
-        dcimgui.cImGui_ImplSDL3_Shutdown();
-        dcimgui.ImGui_DestroyContext(self.imgui_context);
+        c.cImGui_ImplVulkan_Shutdown();
+        c.cImGui_ImplSDL3_Shutdown();
+        c.ImGui_DestroyContext(self.imgui_context);
 
         self.device.destroyDescriptorPool(self.imgui_descriptor_pool, null);
     }
 
     pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID, layout: Renderer.ImageLayout) Renderer.ImGuiAddTextureError!c_ulonglong {
-        return @intFromPtr(dcimgui.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), @intCast(@intFromEnum(layout.asVk()))));
+        return @intFromPtr(c.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), @intCast(@intFromEnum(layout.asVk()))));
     }
 
     pub fn imguiRemoveTexture(self: *VulkanRenderer, id: c_ulonglong) void {
         _ = self;
-        dcimgui.cImGui_ImplVulkan_RemoveTexture(@ptrFromInt(id));
+        c.cImGui_ImplVulkan_RemoveTexture(@ptrFromInt(id));
     }
 
     //
