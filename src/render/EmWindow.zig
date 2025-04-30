@@ -1,5 +1,5 @@
 const std = @import("std");
-const em = @import("em");
+const c = @import("c");
 
 const Self = @This();
 const Window = @import("Window.zig");
@@ -17,13 +17,13 @@ var global_data: UserData = undefined;
 pub fn create(options: Options) !Self {
     global_data = .{ .allocator = options.allocator, .events = .empty };
 
-    _ = em.emscripten_set_keydown_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(em.em_key_callback_func, @ptrCast(&keydownCallback)));
-    _ = em.emscripten_set_keyup_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(em.em_key_callback_func, @ptrCast(&keyupCallback)));
+    _ = c.emscripten_set_keydown_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(c.em_key_callback_func, @ptrCast(&keydownCallback)));
+    _ = c.emscripten_set_keyup_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(c.em_key_callback_func, @ptrCast(&keyupCallback)));
 
     return .{};
 }
 
-fn keydownCallback(event_type: c_int, key_event: *em.EmscriptenKeyboardEvent, user_data: *UserData) callconv(.c) bool {
+fn keydownCallback(event_type: c_int, key_event: *c.EmscriptenKeyboardEvent, user_data: *UserData) callconv(.c) bool {
     _ = event_type;
 
     user_data.events.append(user_data.allocator, .{
@@ -33,7 +33,7 @@ fn keydownCallback(event_type: c_int, key_event: *em.EmscriptenKeyboardEvent, us
     return true;
 }
 
-fn keyupCallback(event_type: c_int, key_event: *em.EmscriptenKeyboardEvent, user_data: *UserData) callconv(.c) bool {
+fn keyupCallback(event_type: c_int, key_event: *c.EmscriptenKeyboardEvent, user_data: *UserData) callconv(.c) bool {
     _ = event_type;
 
     user_data.events.append(user_data.allocator, .{
@@ -55,7 +55,7 @@ pub fn size(self: *const Self) struct { width: usize, height: usize } {
     var height: c_int = undefined;
     var is_fullscreen: c_int = undefined;
 
-    em.emscripten_get_canvas_size(&width, &height, &is_fullscreen);
+    c.emscripten_get_canvas_size(&width, &height, &is_fullscreen);
 
     return .{
         .width = @intCast(width),

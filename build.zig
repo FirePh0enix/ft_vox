@@ -41,34 +41,35 @@ pub fn build(b: *Build) !void {
             .root_module = exe_mod,
         });
 
+    const c_headers = b.addTranslateC(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/c.h"),
+    });
+    exe.root_module.addImport("c", c_headers.createModule());
+
+    if (target_is_emscripten) {
+        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+        c_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
+    }
+
+    const sdl = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        .preferred_link_mode = .static,
+    });
+
+    c_headers.addIncludePath(sdl.path("include"));
+
+    // On web on use the emscripten port of SDL.
+    if (!target_is_emscripten) {
+        const sdl_lib = sdl.artifact("SDL3");
+        exe_mod.linkLibrary(sdl_lib);
+    }
+
     // Vulkan is only supported on desktop.
     // TODO: pull cimgui.zig and add WebGPU support.
     if (!target_is_emscripten) {
-        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-
-        // Link the SDL
-        const sdl = b.dependency("sdl", .{
-            .target = target,
-            .optimize = optimize,
-            .preferred_link_mode = .static,
-        });
-
-        if (!target_is_emscripten) {
-            const sdl_lib = sdl.artifact("SDL3");
-            exe_mod.linkLibrary(sdl_lib);
-        }
-
-        const sdl_header = b.addTranslateC(.{
-            .root_source_file = b.path("src/sdl.h"),
-            .target = target,
-            .optimize = optimize,
-        });
-        sdl_header.addIncludePath(sdl.path("include"));
-        sdl_header.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
-
-        exe.root_module.addImport("sdl", sdl_header.createModule());
-        exe.step.dependOn(&sdl_header.step);
-
         const cimgui_dep = b.dependency("cimgui_zig", .{
             .target = target,
             .optimize = optimize,
@@ -107,7 +108,6 @@ pub fn build(b: *Build) !void {
         }
     }
 
-    // Non platform specific dependencies.
     const zm = b.dependency("zmath", .{
         .target = target,
         .optimize = optimize,
@@ -136,19 +136,12 @@ pub fn build(b: *Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    c_headers.addIncludePath(freetype.path("include"));
 
+    // On web the emscripten port of FreeType is used.
     if (!target_is_emscripten) {
-        // Use the emscripten port instead
         exe.root_module.linkLibrary(freetype.artifact("freetype"));
     }
-
-    const freetype_headers = b.addTranslateC(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = freetype.path("include/freetype/freetype.h"),
-    });
-    freetype_headers.addIncludePath(freetype.path("include"));
-    exe.root_module.addImport("freetype", freetype_headers.createModule());
 
     // Compile shaders to SPIR-V
     var spirv_files: std.ArrayList(CompileShader) = .init(b.allocator);
@@ -214,29 +207,22 @@ pub fn build(b: *Build) !void {
     const zemscripten_dep = b.dependency("zemscripten", .{});
     exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
 
-    const emsdk = b.dependency("emsdk", .{});
-    const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-
-    // if (target_is_emscripten) {
-    const emsdk_headers = b.addTranslateC(.{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = b.path("src/emscripten.h"),
-    });
-    emsdk_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-    exe.root_module.addImport("em", emsdk_headers.createModule());
-    // }
+    if (target_is_emscripten) {
+        const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+        c_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+        c_headers.defineCMacro("TARGET_IS_EMSCRIPTEN", null);
+    }
 
     if (!target_is_emscripten) {
         b.installArtifact(exe);
     } else {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
 
-        exe.addSystemIncludePath(emsdk.path("upstream/include"));
-        freetype_headers.addSystemIncludePath(emsdk.path("upstream/include"));
+        // exe.addSystemIncludePath(emsdk.path("upstream/include"));
+        // freetype_headers.addSystemIncludePath(emsdk.path("upstream/include"));
 
-        exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-        freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+        // exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
+        // freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
 
         const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
 

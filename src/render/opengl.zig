@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const em = @import("em");
+const c = @import("c");
 const gl = @import("zgl");
 const assets = @import("../assets.zig");
 
@@ -14,7 +14,7 @@ const createWithInit = Renderer.createWithInit;
 
 pub const OpenGLRenderer = struct {
     allocator: Allocator,
-    context: em.EMSCRIPTEN_WEBGL_CONTEXT_HANDLE,
+    context: c.EMSCRIPTEN_WEBGL_CONTEXT_HANDLE,
     size: Renderer.Size,
     statistics: Renderer.Statistics,
     output_renderpass: RID,
@@ -63,14 +63,14 @@ pub const OpenGLRenderer = struct {
         _ = window;
         _ = index;
 
-        self.context = em.emscripten_webgl_create_context("#canvas", &em.EmscriptenWebGLContextAttributes{
+        self.context = c.emscripten_webgl_create_context("#canvas", &c.EmscriptenWebGLContextAttributes{
             .majorVersion = 2,
             .minorVersion = 0,
             .alpha = true,
             .depth = true,
         });
 
-        _ = em.emscripten_webgl_make_context_current(self.context);
+        _ = c.emscripten_webgl_make_context_current(self.context);
 
         gl.binding.load({}, webgl_get_proc_address) catch return error.NoSuitableDevice;
 
@@ -109,7 +109,7 @@ pub const OpenGLRenderer = struct {
 
         std.debug.print("{}\n", .{rp.draw_calls.items.len});
 
-        _ = em.emscripten_webgl_commit_frame();
+        _ = c.emscripten_webgl_commit_frame();
     }
 
     pub fn getSize(self: *OpenGLRenderer) Renderer.Size {
@@ -471,5 +471,5 @@ const GLFramebuffer = struct {
 
 fn webgl_get_proc_address(ctx: void, name: [:0]const u8) ?gl.binding.FunctionPointer {
     _ = ctx;
-    return @ptrCast(em.emscripten_webgl_get_proc_address(name.ptr));
+    return @ptrCast(c.emscripten_webgl_get_proc_address(name.ptr));
 }

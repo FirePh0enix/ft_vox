@@ -1,5 +1,5 @@
 const std = @import("std");
-const ft = @import("freetype");
+const c = @import("c");
 const zm = @import("zmath");
 
 const Self = @This();
@@ -56,14 +56,14 @@ width: usize,
 height: usize,
 inv_bmp_width: f32,
 
-var library: ft.FT_Library = undefined;
+var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
 pub var mesh: RID = undefined;
 
 var instance_buffer: RID = undefined;
 
 pub fn initLib() !void {
-    const res: ft.FT_Error = ft.FT_Init_FreeType(&library);
+    const res: c.FT_Error = c.FT_Init_FreeType(&library);
 
     if (res != 0) {
         std.log.err("Cannot initialize FreeType", .{});
@@ -112,19 +112,16 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
 
     const font_size = if (font_size_ < 1 or font_size_ > 12) 18 else font_size_;
 
-    var face: ft.FT_Face = undefined;
+    var face: c.FT_Face = undefined;
 
-    if (ft.FT_New_Face(library, font_name.ptr, 0, &face) != 0) {
-        return error.CouldNotLoadFont;
-    }
+    if (c.FT_New_Face(library, font_name.ptr, 0, &face) != 0) return error.CouldNotLoadFont;
+    defer _ = c.FT_Done_Face(face);
 
-    _ = ft.FT_Set_Pixel_Sizes(face, 0, font_size);
+    _ = c.FT_Set_Pixel_Sizes(face, 0, font_size);
     var bmp_width: u32 = 0;
 
-    var c: u8 = 0;
-
-    while (c < 128) : (c += 1) {
-        if (ft.FT_Load_Char(face, c, ft.FT_LOAD_RENDER) != 0) {
+    for (0..128) |char| {
+        if (c.FT_Load_Char(face, @intCast(char), c.FT_LOAD_RENDER) != 0) {
             return error.CouldNotLoadChar;
         }
 
@@ -137,19 +134,17 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
             .advance = @intCast(face.*.glyph.*.advance.x),
         };
 
-        try characters.put(c, character);
+        try characters.put(@intCast(char), character);
 
         if (face.*.glyph.*.bitmap.width > 0) {
             const char_data = try allocator.alloc(u8, face.*.glyph.*.bitmap.width * face.*.glyph.*.bitmap.rows);
             const glyph_buffer = face.*.glyph.*.bitmap.buffer;
 
             @memcpy(char_data, glyph_buffer[0 .. face.*.glyph.*.bitmap.width * face.*.glyph.*.bitmap.rows]);
-            try data.put(c, char_data);
+            try data.put(@intCast(char), char_data);
         }
         bmp_width += face.*.glyph.*.bitmap.width;
     }
-
-    _ = ft.FT_Done_Face(face);
 
     const inv_bmp_width = 1 / @as(f32, @floatFromInt(bmp_width));
 

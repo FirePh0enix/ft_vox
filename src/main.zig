@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
-const sdl = @import("sdl");
+const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
 const input = @import("input.zig");
@@ -336,14 +336,14 @@ fn update(window: *Window, world: *World) !void {
 
     // const time_before = std.time.microTimestamp();
 
-    var event: sdl.SDL_Event = undefined;
+    var event: c.SDL_Event = undefined;
 
-    while (sdl.SDL_PollEvent(&event)) {
+    while (c.SDL_PollEvent(&event)) {
         _ = dcimgui.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
 
         switch (event.type) {
-            sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
-            sdl.SDL_EVENT_WINDOW_RESIZED => {
+            c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
+            c.SDL_EVENT_WINDOW_RESIZED => {
                 const size = window.size();
                 try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
             },
@@ -447,7 +447,7 @@ pub fn mainEmscripten() !void {
 
     try rdr().processGraph(&graph);
 
-    // em.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
+    // c.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())
