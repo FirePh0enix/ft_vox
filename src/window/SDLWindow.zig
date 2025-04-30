@@ -2,11 +2,12 @@ const std = @import("std");
 const c = @import("c");
 
 const Self = @This();
-const Window = @import("Window.zig");
+const Window = @import("../Window.zig");
 const Event = Window.Event;
 const Options = Window.Options;
 
 handle: *c.SDL_Window,
+is_running: bool,
 
 pub fn create(options: Options) !Self {
     const init_flags: c.SDL_InitFlags = c.SDL_INIT_EVENTS | c.SDL_INIT_VIDEO;
@@ -27,6 +28,7 @@ pub fn create(options: Options) !Self {
 
     return .{
         .handle = window orelse return error.NoWindow,
+        .is_running = true,
     };
 }
 
@@ -47,23 +49,48 @@ pub fn size(self: *const Self) struct { width: usize, height: usize } {
     };
 }
 
-fn convertEvent(event: c.SDL_Event) Event {
-    switch (event.type) {
+fn convertEvent(self: *const Self, event: c.SDL_Event) Event {
+    return switch (event.type) {
         c.SDL_EVENT_KEY_DOWN => .{ .key = .{ .state = .down, .key = event.key.key, .repeat = event.key.repeat } },
-        c.SDL_EVENT_KEY_UP => .{ .key = .{ .state = .down, .key = event.key.key, .repeat = event.key.repeat } },
-        else => .unknown,
-    }
+        c.SDL_EVENT_KEY_UP => .{ .key = .{ .state = .up, .key = event.key.key, .repeat = event.key.repeat } },
+
+        c.SDL_EVENT_MOUSE_BUTTON_DOWN => .{ .button = .{ .state = .down, .button = @intCast(event.button.button) } },
+        c.SDL_EVENT_MOUSE_BUTTON_UP => .{ .button = .{ .state = .up, .button = @intCast(event.button.button) } },
+
+        c.SDL_EVENT_MOUSE_MOTION => .{ .motion = .{ .x_relative = event.motion.xrel, .y_relative = event.motion.yrel } },
+
+        c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => .{ .close = {} },
+
+        c.SDL_EVENT_WINDOW_RESIZED => a: {
+            const s = self.size();
+            break :a .{ .resized = .{ .width = s.width, .height = s.height } };
+        },
+
+        else => .{ .unknown = {} },
+    };
 }
 
 pub fn pollEvent(self: *const Self) ?Event {
-    _ = self;
-
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
-        return convertEvent(event);
+        _ = c.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
+
+        return self.convertEvent(event);
     } else {
         return null;
     }
+}
+
+pub fn close(self: *Self) void {
+    self.is_running = false;
+}
+
+pub fn running(self: *const Self) bool {
+    return self.is_running;
+}
+
+pub fn setFullscreen(self: *Self, f: bool) void {
+    _ = c.SDL_SetWindowFullscreen(self.handle, f);
 }
 
 const vk = @import("vulkan");

@@ -4,7 +4,7 @@ const zm = @import("zmath");
 
 const Vec = zm.Vec;
 const Camera = @import("Camera.zig");
-const Window = @import("render/Window.zig");
+const Window = @import("Window.zig");
 const World = @import("voxel/World.zig");
 
 const rdr = @import("render/Renderer.zig").rdr;
@@ -37,11 +37,13 @@ pub var mouse_sensibility: f32 = 0.01;
 
 var actions: std.EnumArray(Action, Status) = .initFill(.{});
 var window: *Window = undefined;
+var camera: *Camera = undefined;
 var mouse_grabbed: bool = false;
 var fullscreen: bool = false;
 
-pub fn init(_window: *Window) void {
+pub fn init(_window: *Window, _camera: *Camera) void {
     window = _window;
+    camera = _camera;
 }
 
 pub fn isActionPressed(action: Action) bool {
@@ -89,63 +91,77 @@ pub fn isMouseGrabbed() bool {
     return mouse_grabbed;
 }
 
-pub fn handleSDLEvent(event: c.SDL_Event, camera: *Camera) !void {
-    switch (event.type) {
-        c.SDL_EVENT_KEY_DOWN => {
-            switch (event.key.key) {
-                c.SDLK_F => {
-                    _ = c.SDL_SetWindowFullscreen(window.impl.handle, !fullscreen);
-                    fullscreen = !fullscreen;
+pub fn pollEvents() void {
+    while (window.pollEvent()) |event| {
+        switch (event) {
+            .close => {
+                window.close();
+            },
+            .resized => |r| {
+                try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = .performance });
+            },
 
-                    const size = window.size();
+            .key => |k| {
+                switch (k.state) {
+                    .down => switch (k.key) {
+                        c.SDLK_F => {
+                            _ = c.SDL_SetWindowFullscreen(window.impl.handle, !fullscreen);
+                            fullscreen = !fullscreen;
 
-                    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
-                },
+                            const size = window.size();
 
-                c.SDLK_ESCAPE => setMouseGrab(false),
+                            try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
+                        },
 
-                c.SDLK_W => setAction(.forward, 1.0),
-                c.SDLK_S => setAction(.backward, 1.0),
-                c.SDLK_A => setAction(.left, 1.0),
-                c.SDLK_D => setAction(.right, 1.0),
-                c.SDLK_SPACE => setAction(.up, 1.0),
-                c.SDLK_LCTRL => setAction(.down, 1.0),
-                c.SDLK_LSHIFT => setAction(.sprint, 1.0),
+                        c.SDLK_ESCAPE => setMouseGrab(false),
 
-                else => {},
-            }
-        },
-        c.SDL_EVENT_KEY_UP => {
-            switch (event.key.key) {
-                c.SDLK_W => setAction(.forward, 0.0),
-                c.SDLK_S => setAction(.backward, 0.0),
-                c.SDLK_A => setAction(.left, 0.0),
-                c.SDLK_D => setAction(.right, 0.0),
-                c.SDLK_SPACE => setAction(.up, 0.0),
-                c.SDLK_LCTRL => setAction(.down, 0.0),
-                c.SDLK_LSHIFT => setAction(.sprint, 0.0),
+                        c.SDLK_W => setAction(.forward, 1.0),
+                        c.SDLK_S => setAction(.backward, 1.0),
+                        c.SDLK_A => setAction(.left, 1.0),
+                        c.SDLK_D => setAction(.right, 1.0),
+                        c.SDLK_SPACE => setAction(.up, 1.0),
+                        c.SDLK_LCTRL => setAction(.down, 1.0),
+                        c.SDLK_LSHIFT => setAction(.sprint, 1.0),
 
-                else => {},
-            }
-        },
+                        else => {},
+                    },
 
-        c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
-            if (isMouseGrabbed()) {
-                if (event.button.button == mouse_left_button) setAction(.attack, 1.0);
-            }
+                    .up => switch (event.key.key) {
+                        c.SDLK_W => setAction(.forward, 0.0),
+                        c.SDLK_S => setAction(.backward, 0.0),
+                        c.SDLK_A => setAction(.left, 0.0),
+                        c.SDLK_D => setAction(.right, 0.0),
+                        c.SDLK_SPACE => setAction(.up, 0.0),
+                        c.SDLK_LCTRL => setAction(.down, 0.0),
+                        c.SDLK_LSHIFT => setAction(.sprint, 0.0),
 
-            setMouseGrab(true);
-        },
-        c.SDL_EVENT_MOUSE_BUTTON_UP => {
-            if (isMouseGrabbed()) {
-                if (event.button.button == mouse_left_button) setAction(.attack, 0.0);
-            }
-        },
+                        else => {},
+                    },
+                }
+            },
 
-        c.SDL_EVENT_MOUSE_MOTION => {
-            if (isMouseGrabbed()) camera.rotate(event.motion.xrel, event.motion.yrel);
-        },
+            .button => |b| {
+                switch (b.state) {
+                    .down => {
+                        if (isMouseGrabbed()) {
+                            if (event.button.button == mouse_left_button) setAction(.attack, 1.0);
+                        }
 
-        else => {},
+                        setMouseGrab(true);
+                    },
+                    .up => {
+                        if (isMouseGrabbed()) {
+                            if (event.button.button == mouse_left_button) setAction(.attack, 0.0);
+                        }
+                    },
+                }
+            },
+
+            .motion => |m| {
+                if (isMouseGrabbed()) camera.rotate(m.x_relative, m.y_relative);
+            },
+
+            else => {},
+        }
     }
 }

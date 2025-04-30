@@ -1,12 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const sdl = if (builtin.os.tag != .emscripten) @import("sdl") else void;
 
 const Self = @This();
-const Driver = @import("Renderer.zig").Driver;
+const Driver = @import("render/Renderer.zig").Driver;
 const Allocator = std.mem.Allocator;
 
-const Impl = if (builtin.os.tag != .emscripten) @import("SDLWindow.zig") else @import("EmWindow.zig");
+const Impl = if (builtin.os.tag != .emscripten) @import("window/SDLWindow.zig") else @import("window/EmWindow.zig");
 
 impl: Impl,
 
@@ -38,6 +37,11 @@ pub const Event = union(enum) {
         x_relative: f32,
         y_relative: f32,
     },
+    resized: struct {
+        width: usize,
+        height: usize,
+    },
+    close: void,
     unknown: void,
 };
 
@@ -56,4 +60,16 @@ pub fn size(self: *const Self) struct { width: usize, height: usize } {
 
 pub fn pollEvent(self: *const Self) ?Event {
     return self.impl.pollEvent();
+}
+
+pub fn close(self: *Self) void {
+    self.impl.close();
+}
+
+pub fn running(self: *const Self) bool {
+    return self.impl.running();
+}
+
+pub fn setFullscreen(self: *Self, f: bool) void {
+    self.impl.setFullscreen(f);
 }

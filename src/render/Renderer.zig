@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const dcimgui = @import("dcimgui");
 const gl = @import("zgl");
 const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
 
@@ -8,9 +7,9 @@ const Self = @This();
 const Allocator = std.mem.Allocator;
 const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
-const Window = @import("Window.zig");
-const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("vulkan.zig").VulkanRenderer else void;
-const OpenGLRenderer = if (builtin.os.tag == .emscripten) @import("opengl.zig").OpenGLRenderer else void;
+const Window = @import("../Window.zig");
+const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("backend/vulkan.zig").VulkanRenderer else void;
+const GLESRenderer = if (builtin.os.tag == .emscripten) @import("backend/gles.zig").GLESRenderer else void;
 
 const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 
@@ -27,7 +26,7 @@ pub const DriverDesktop = enum {
 };
 
 pub const DriverWeb = enum {
-    opengl,
+    gles,
 };
 
 pub const VSync = enum {
@@ -247,27 +246,27 @@ pub const BufferUsageFlags = packed struct {
 };
 
 pub const IndexType = enum {
-    uint16,
-    uint32,
+    u16,
+    u32,
 
     pub fn asVk(self: IndexType) vk.IndexType {
         return switch (self) {
-            .uint16 => .uint16,
-            .uint32 => .uint32,
+            .u16 => .uint16,
+            .u32 => .uint32,
         };
     }
 
     pub fn asGL(self: IndexType) gl.ElementType {
         return switch (self) {
-            .uint16 => .unsigned_short,
-            .uint32 => .unsigned_int,
+            .u16 => .unsigned_short,
+            .u32 => .unsigned_int,
         };
     }
 
     pub fn bytes(self: IndexType) usize {
         return switch (self) {
-            .uint16 => 2,
-            .uint32 => 4,
+            .u16 => 2,
+            .u32 => 4,
         };
     }
 };
@@ -485,12 +484,12 @@ pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
     if (builtin.os.tag == .emscripten) {
         switch (driver) {
             .opengl => {
-                const renderer = try createWithDefault(OpenGLRenderer, allocator);
+                const renderer = try createWithDefault(GLESRenderer, allocator);
                 renderer.allocator = allocator;
 
                 singleton = .{
                     .ptr = renderer,
-                    .vtable = &OpenGLRenderer.vtable,
+                    .vtable = &GLESRenderer.vtable,
                 };
             },
         }
@@ -513,7 +512,7 @@ pub inline fn asVk(self: *const Self) *VulkanRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
-pub inline fn asGL(self: *const Self) *OpenGLRenderer {
+pub inline fn asGL(self: *const Self) *GLESRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
@@ -787,12 +786,12 @@ pub const MeshOptions = struct {
     normals: []const u8,
     texture_coords: []const u8,
 
-    /// Type of indices. If the type is `.uint16` then `indices` must stores `u16`, or `u32` if
-    /// the type is `.uint32`.
+    /// Type of indices. If the type is `.u16` then `indices` must stores `u16`, or `u32` if
+    /// the type is `.u32`.
     ///
-    /// Since `.uint32` use two times more memory than `.uint16`, it should only be used if
+    /// Since `.u32` use two times more memory than `.u16`, it should only be used if
     /// more than 65336 vertices are needed.
-    index_type: IndexType = .uint16,
+    index_type: IndexType = .u16,
 };
 
 pub const MeshCreateError = error{

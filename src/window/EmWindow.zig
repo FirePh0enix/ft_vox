@@ -2,7 +2,7 @@ const std = @import("std");
 const c = @import("c");
 
 const Self = @This();
-const Window = @import("Window.zig");
+const Window = @import("../Window.zig");
 const Event = Window.Event;
 const Options = Window.Options;
 const Allocator = std.mem.Allocator;
@@ -66,4 +66,19 @@ pub fn size(self: *const Self) struct { width: usize, height: usize } {
 pub fn pollEvent(self: *const Self) ?Event {
     _ = self;
     return global_data.events.pop();
+}
+
+pub fn close(self: *Self) void {
+    _ = self;
+}
+
+pub fn running(self: *const Self) bool {
+    _ = self;
+    return true;
+}
+
+pub fn setFullscreen(self: *Self, f: bool) void {
+    _ = self;
+    _ = f;
+    // TODO
 }

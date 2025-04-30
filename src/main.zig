@@ -8,7 +8,7 @@ const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
 
 const Renderer = @import("render/Renderer.zig");
-const Window = @import("render/Window.zig");
+const Window = @import("Window.zig");
 const Graph = @import("render/Graph.zig");
 const ShadowPass = @import("render/ShadowPass.zig");
 const Camera = @import("Camera.zig");
@@ -64,7 +64,6 @@ pub var camera = Camera{
     .speed = 0.5,
 };
 
-var running = true;
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
 
@@ -320,14 +319,14 @@ pub fn mainDesktop() !void {
 
     render_graph_pass.addImguiHook(&statsDebugHook);
 
-    input.init(&window);
+    input.init(&window, &camera);
 
-    while (running) {
-        try update(&window, &the_world);
+    while (window.running()) {
+        try update(&the_world);
     }
 }
 
-fn update(window: *Window, world: *World) !void {
+fn update(world: *World) !void {
     if (std.time.microTimestamp() - last_update_time < time_between_update) {
         return;
     }
@@ -335,20 +334,7 @@ fn update(window: *Window, world: *World) !void {
 
     // const time_before = std.time.microTimestamp();
 
-    var event: c.SDL_Event = undefined;
-
-    while (c.SDL_PollEvent(&event)) {
-        _ = c.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
-
-        switch (event.type) {
-            c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => running = false,
-            c.SDL_EVENT_WINDOW_RESIZED => {
-                const size = window.size();
-                try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
-            },
-            else => try input.handleSDLEvent(event, &camera),
-        }
-    }
+    input.pollEvents();
 
     camera.updateCamera(world);
 
@@ -406,8 +392,6 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
     }
     c.ImGui_End();
 }
-
-// https://developer.chrome.com/docs/web-platform/webgpu/build-app
 
 pub fn mainEmscripten() !void {
     var window = try Window.create(.{

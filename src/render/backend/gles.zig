@@ -2,17 +2,17 @@ const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("c");
 const gl = @import("zgl");
-const assets = @import("../assets.zig");
+const assets = @import("../../assets.zig");
 
 const Allocator = std.mem.Allocator;
-const Window = @import("Window.zig");
-const Renderer = @import("Renderer.zig");
+const Window = @import("../../Window.zig");
+const Renderer = @import("../Renderer.zig");
 const RID = Renderer.RID;
-const Graph = @import("Graph.zig");
+const Graph = @import("../Graph.zig");
 
 const createWithInit = Renderer.createWithInit;
 
-pub const OpenGLRenderer = struct {
+pub const GLESRenderer = struct {
     allocator: Allocator,
     context: c.EMSCRIPTEN_WEBGL_CONTEXT_HANDLE,
     size: Renderer.Size,
@@ -59,7 +59,7 @@ pub const OpenGLRenderer = struct {
         .framebuffer_create = @ptrCast(&framebufferCreate),
     };
 
-    pub fn createDevice(self: *OpenGLRenderer, window: *const Window, index: ?usize) Renderer.CreateDeviceError!void {
+    pub fn createDevice(self: *GLESRenderer, window: *const Window, index: ?usize) Renderer.CreateDeviceError!void {
         _ = window;
         _ = index;
 
@@ -81,11 +81,11 @@ pub const OpenGLRenderer = struct {
         }) catch return error.OutOfMemory;
     }
 
-    pub fn destroy(self: *OpenGLRenderer) void {
+    pub fn destroy(self: *GLESRenderer) void {
         _ = self;
     }
 
-    pub fn processGraph(self: *OpenGLRenderer, graph: *const Graph) Renderer.ProcessGraphError!void {
+    pub fn processGraph(self: *GLESRenderer, graph: *const Graph) Renderer.ProcessGraphError!void {
         _ = self;
 
         const rp = graph.main_render_pass orelse return error.Failed;
@@ -112,25 +112,25 @@ pub const OpenGLRenderer = struct {
         _ = c.emscripten_webgl_commit_frame();
     }
 
-    pub fn getSize(self: *OpenGLRenderer) Renderer.Size {
+    pub fn getSize(self: *GLESRenderer) Renderer.Size {
         return self.size;
     }
 
-    pub fn getStatistics(self: *OpenGLRenderer) Renderer.Statistics {
+    pub fn getStatistics(self: *GLESRenderer) Renderer.Statistics {
         return self.statistics;
     }
 
-    pub fn configure(self: *OpenGLRenderer, options: Renderer.ConfigureOptions) void {
+    pub fn configure(self: *GLESRenderer, options: Renderer.ConfigureOptions) void {
         _ = self;
 
         gl.viewport(0, 0, options.width, options.height);
     }
 
-    pub fn getOutputRenderPass(self: *OpenGLRenderer) RID {
+    pub fn getOutputRenderPass(self: *GLESRenderer) RID {
         return self.output_renderpass;
     }
 
-    pub fn waitIdle(self: *OpenGLRenderer) void {
+    pub fn waitIdle(self: *GLESRenderer) void {
         _ = self;
     }
 
@@ -141,7 +141,7 @@ pub const OpenGLRenderer = struct {
     // Common
     //
 
-    pub fn freeRid(self: *OpenGLRenderer, rid: RID) void {
+    pub fn freeRid(self: *GLESRenderer, rid: RID) void {
         _ = self;
         _ = rid;
         // TODO
@@ -151,7 +151,7 @@ pub const OpenGLRenderer = struct {
     // Buffer
     //
 
-    pub fn bufferCreate(self: *OpenGLRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
+    pub fn bufferCreate(self: *GLESRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
         const target = options.usage.asGL();
 
         const buffer = gl.genBuffer();
@@ -165,7 +165,7 @@ pub const OpenGLRenderer = struct {
         })) };
     }
 
-    pub fn bufferUpdate(self: *OpenGLRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
+    pub fn bufferUpdate(self: *GLESRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
         _ = self;
 
         std.debug.assert(offset == 0);
@@ -178,7 +178,7 @@ pub const OpenGLRenderer = struct {
         gl.bufferData(buffer.target, u8, s, .static_draw);
     }
 
-    pub fn bufferMap(self: *OpenGLRenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
+    pub fn bufferMap(self: *GLESRenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
         _ = self;
 
         const buffer = buffer_rid.as(GLBuffer);
@@ -189,7 +189,7 @@ pub const OpenGLRenderer = struct {
         return gl.mapBufferRange(.array_buffer, u8, 0, buffer.size, .{ .read = true, .write = true })[0..buffer.size];
     }
 
-    pub fn bufferUnmap(self: *OpenGLRenderer, buffer_rid: RID) void {
+    pub fn bufferUnmap(self: *GLESRenderer, buffer_rid: RID) void {
         _ = self;
 
         const buffer = buffer_rid.as(GLBuffer);
@@ -204,7 +204,7 @@ pub const OpenGLRenderer = struct {
     // Image
     //
 
-    pub fn imageCreate(self: *OpenGLRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
+    pub fn imageCreate(self: *GLESRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
         const target: gl.TextureTarget = if (options.layers > 1) .@"2d_array" else .@"2d";
 
         const texture = gl.genTexture();
@@ -220,7 +220,7 @@ pub const OpenGLRenderer = struct {
         })) };
     }
 
-    pub fn imageUpdate(self: *OpenGLRenderer, image_rid: RID, s: []const u8, offset: usize, layer: usize) Renderer.UpdateImageError!void {
+    pub fn imageUpdate(self: *GLESRenderer, image_rid: RID, s: []const u8, offset: usize, layer: usize) Renderer.UpdateImageError!void {
         _ = self;
 
         std.debug.assert(offset == 0);
@@ -232,7 +232,7 @@ pub const OpenGLRenderer = struct {
         gl.texSubImage2D(image.target, layer, 0, 0, image.width, image.height, image.format.asGLPixelFormat(), image.format.asGLPixelType(), s.ptr);
     }
 
-    pub fn imageSetLayout(self: *OpenGLRenderer, image_rid: RID, new_layout: Renderer.ImageLayout) Renderer.ImageSetLayoutError!void {
+    pub fn imageSetLayout(self: *GLESRenderer, image_rid: RID, new_layout: Renderer.ImageLayout) Renderer.ImageSetLayoutError!void {
         _ = self;
         _ = image_rid;
         _ = new_layout;
@@ -242,7 +242,7 @@ pub const OpenGLRenderer = struct {
     // Material
     //
 
-    pub fn materialCreate(self: *OpenGLRenderer, options: Renderer.MaterialOptions) Renderer.MaterialCreateError!RID {
+    pub fn materialCreate(self: *GLESRenderer, options: Renderer.MaterialOptions) Renderer.MaterialCreateError!RID {
         const program = gl.createProgram();
 
         for (options.shaders) |shader_ref| {
@@ -306,7 +306,7 @@ pub const OpenGLRenderer = struct {
         })) };
     }
 
-    pub fn materialSetParam(self: *OpenGLRenderer, material_rid: RID, name: []const u8, value: Renderer.MaterialParameterValue) Renderer.MaterialSetParamError!void {
+    pub fn materialSetParam(self: *GLESRenderer, material_rid: RID, name: []const u8, value: Renderer.MaterialParameterValue) Renderer.MaterialSetParamError!void {
         _ = self;
 
         const material = material_rid.as(GLMaterial);
@@ -336,7 +336,7 @@ pub const OpenGLRenderer = struct {
     // Mesh
     //
 
-    pub fn meshCreate(self: *OpenGLRenderer, options: Renderer.MeshOptions) Renderer.MeshCreateError!RID {
+    pub fn meshCreate(self: *GLESRenderer, options: Renderer.MeshOptions) Renderer.MeshCreateError!RID {
         const element_buffer = try self.bufferCreate(.{ .size = options.index_type.bytes() * options.indices.len, .usage = .{ .index_buffer = true } });
         try self.bufferUpdate(element_buffer, options.indices, 0);
 
@@ -359,7 +359,7 @@ pub const OpenGLRenderer = struct {
         })) };
     }
 
-    pub fn meshGetIndicesCount(self: *OpenGLRenderer, mesh_rid: RID) usize {
+    pub fn meshGetIndicesCount(self: *GLESRenderer, mesh_rid: RID) usize {
         _ = self;
 
         const mesh = mesh_rid.as(GLMesh);
@@ -370,7 +370,7 @@ pub const OpenGLRenderer = struct {
     // RenderPass
     //
 
-    pub fn renderPassCreate(self: *OpenGLRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
+    pub fn renderPassCreate(self: *GLESRenderer, options: Renderer.RenderPassOptions) Renderer.RenderPassCreateError!RID {
         _ = options;
 
         return .{ .inner = @intFromPtr(try createWithInit(GLRenderPass, self.allocator, .{})) };
@@ -380,7 +380,7 @@ pub const OpenGLRenderer = struct {
     // Framebuffer
     //
 
-    pub fn framebufferCreate(self: *OpenGLRenderer, options: Renderer.FramebufferOptions) Renderer.FramebufferCreateError!RID {
+    pub fn framebufferCreate(self: *GLESRenderer, options: Renderer.FramebufferOptions) Renderer.FramebufferCreateError!RID {
         _ = options;
 
         const fb = gl.genFramebuffer();
