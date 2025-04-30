@@ -53,11 +53,23 @@ pub fn build(b: *Build) !void {
         c_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
     }
 
-    const sdl = b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-        .preferred_link_mode = .static,
-    });
+    const sdl = if (!target_is_emscripten)
+        b.dependency("sdl", .{
+            .target = target,
+            .optimize = optimize,
+            .preferred_link_mode = .static,
+        })
+    else a: {
+        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+
+        b.sysroot = sysroot_path;
+
+        break :a b.dependency("sdl", .{
+            .target = target,
+            .optimize = optimize,
+            .preferred_link_mode = .static,
+        });
+    };
 
     c_headers.addIncludePath(sdl.path("include"));
 
@@ -67,31 +79,29 @@ pub fn build(b: *Build) !void {
         exe_mod.linkLibrary(sdl_lib);
     }
 
-    // Vulkan is only supported on desktop.
-    // TODO: pull cimgui.zig and add WebGPU support.
+    if (target_is_emscripten) {
+        // const sysroot_include_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot", "include" });
+        // sdl_lib.addSystemIncludePath(.{ .cwd_relative = sysroot_include_path });
+    }
+
+    const cimgui_dep = b.dependency("cimgui_zig", .{
+        .target = target,
+        .optimize = optimize,
+        .platform = cimgui.Platform.SDL3,
+        .renderer = if (!target_is_emscripten) cimgui.Renderer.Vulkan else cimgui.Renderer.OpenGL3,
+    });
+    const cimgui_artifact = cimgui_dep.artifact("cimgui");
+    exe.linkLibrary(cimgui_artifact);
+
+    if (target_is_emscripten) {
+        const sysroot_include_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot", "include" });
+        cimgui_artifact.addSystemIncludePath(.{ .cwd_relative = sysroot_include_path });
+    }
+
+    c_headers.addIncludePath(cimgui_dep.path("dcimgui"));
+
     if (!target_is_emscripten) {
-        const cimgui_dep = b.dependency("cimgui_zig", .{
-            .target = target,
-            .optimize = optimize,
-            .platform = cimgui.Platform.SDL3,
-            .renderer = cimgui.Renderer.Vulkan,
-        });
-        exe.linkLibrary(cimgui_dep.artifact("cimgui"));
-
         const vulkan_headers = b.dependency("vulkan_headers", .{});
-
-        c_headers.addIncludePath(cimgui_dep.path("dcimgui"));
-
-        // const cimgui_header = b.addTranslateC(.{
-        //     .target = target,
-        //     .optimize = optimize,
-        //     .root_source_file = b.path("src/dcimgui.h"),
-        // });
-        // cimgui_header.addIncludePath(cimgui_dep.path("dcimgui"));
-        // cimgui_header.addIncludePath(sdl.path("include"));
-        // cimgui_header.addIncludePath(vulkan_headers.path("include"));
-        // exe.root_module.addImport("dcimgui", cimgui_header.createModule());
-        // exe.step.dependOn(&cimgui_header.step);
 
         const vulkan = b.dependency("vulkan", .{
             .registry = vulkan_headers.path("registry/vk.xml"),
@@ -219,13 +229,6 @@ pub fn build(b: *Build) !void {
         b.installArtifact(exe);
     } else {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
-
-        // exe.addSystemIncludePath(emsdk.path("upstream/include"));
-        // freetype_headers.addSystemIncludePath(emsdk.path("upstream/include"));
-
-        // exe_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-        // freetype_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-
         const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
 
         var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
@@ -234,10 +237,12 @@ pub fn build(b: *Build) !void {
 
         try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
         try emcc_settings.put("LEGACY_RUNTIME", "1");
-        try emcc_settings.put("USE_FREETYPE", "1");
         try emcc_settings.put("WASM_WORKERS", "1");
         try emcc_settings.put("MAX_WEBGL_VERSION", "2");
         try emcc_settings.put("FULL_ES3", "1");
+
+        try emcc_settings.put("USE_FREETYPE", "1");
+        // try emcc_settings.put("USE_SDL", "2");
 
         const emcc_step = zemscripten.emccStep(
             b,

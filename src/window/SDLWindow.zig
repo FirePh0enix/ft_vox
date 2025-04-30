@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 
 const Self = @This();
@@ -20,8 +21,14 @@ pub fn create(options: Options) !Self {
 
     if (options.resizable) window_flags |= c.SDL_WINDOW_RESIZABLE;
 
-    switch (options.driver) {
-        .vulkan => window_flags |= c.SDL_WINDOW_VULKAN,
+    if (builtin.os.tag != .emscripten) {
+        switch (options.driver) {
+            .vulkan => window_flags |= c.SDL_WINDOW_VULKAN,
+        }
+    } else {
+        switch (options.driver) {
+            .gles => window_flags |= c.SDL_WINDOW_OPENGL,
+        }
     }
 
     const window = c.SDL_CreateWindow(options.title.ptr, @intCast(options.width orelse 1280), @intCast(options.height orelse 720), window_flags);

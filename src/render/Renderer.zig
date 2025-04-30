@@ -483,7 +483,7 @@ pub fn rdr() *Self {
 pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
     if (builtin.os.tag == .emscripten) {
         switch (driver) {
-            .opengl => {
+            .gles => {
                 const renderer = try createWithDefault(GLESRenderer, allocator);
                 renderer.allocator = allocator;
 

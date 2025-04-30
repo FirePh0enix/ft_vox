@@ -398,13 +398,13 @@ pub fn mainEmscripten() !void {
         .title = "ft_vox",
         .width = 1280,
         .height = 720,
-        .driver = .opengl,
+        .driver = .gles,
         .resizable = true,
         .allocator = allocator,
     });
     defer window.deinit();
 
-    try Renderer.create(allocator, .opengl);
+    try Renderer.create(allocator, .gles);
     try rdr().createDevice(&window, null);
 
     cube_mesh = try createCube();
