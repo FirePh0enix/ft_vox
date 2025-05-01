@@ -20,6 +20,8 @@ pub fn create(options: Options) !Self {
     _ = c.emscripten_set_keydown_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(c.em_key_callback_func, @ptrCast(&keydownCallback)));
     _ = c.emscripten_set_keyup_callback("#canvas", @as(*anyopaque, @ptrCast(&global_data)), false, @as(c.em_key_callback_func, @ptrCast(&keyupCallback)));
 
+    _ = c.emscripten_set_canvas_size(1280, 720);
+
     return .{};
 }
 

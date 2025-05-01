@@ -393,6 +393,8 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
     c.ImGui_End();
 }
 
+// TODO: Ultimately web/desktop should share there main function!
+
 pub fn mainEmscripten() !void {
     var window = try Window.create(.{
         .title = "ft_vox",
@@ -422,13 +424,20 @@ pub fn mainEmscripten() !void {
     graph = .init(allocator);
     graph.main_render_pass = &render_graph_pass;
 
-    const mat = zm.identity();
+    c.emscripten_request_animation_frame_loop(&updateEmscripten, null);
+}
 
+fn updateEmscripten(delta: f64, _: ?*anyopaque) callconv(.c) bool {
+    _ = delta;
+
+    render_graph_pass.reset();
+
+    const mat = zm.identity();
     render_graph_pass.draw(cube_mesh, material, 0, rdr().meshGetIndicesCount(cube_mesh), mat);
 
-    try rdr().processGraph(&graph);
+    rdr().processGraph(&graph) catch {};
 
-    // c.emscripten_set_main_loop_arg(func: em_arg_callback_func, arg: ?*anyopaque, fps: c_int, simulate_infinite_loop: bool);
+    return true;
 }
 
 pub const main = if (builtin.cpu.arch.isWasm())

@@ -3,12 +3,9 @@ const vk = @import("vulkan");
 const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
-const zigimg = @import("zigimg");
 const assets = @import("../../assets.zig");
 
 const Allocator = std.mem.Allocator;
-const Camera = @import("../../Camera.zig");
-const World = @import("../../voxel/World.zig");
 const Window = @import("../../Window.zig");
 const Graph = @import("../Graph.zig");
 const Renderer = @import("../Renderer.zig");

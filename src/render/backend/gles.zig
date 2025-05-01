@@ -60,21 +60,29 @@ pub const GLESRenderer = struct {
     };
 
     pub fn createDevice(self: *GLESRenderer, window: *const Window, index: ?usize) Renderer.CreateDeviceError!void {
-        _ = window;
         _ = index;
 
-        self.context = c.emscripten_webgl_create_context("#canvas", &c.EmscriptenWebGLContextAttributes{
-            .majorVersion = 2,
-            .minorVersion = 0,
-            .alpha = true,
-            .depth = true,
-        });
+        const size = window.size();
+        const dpr = c.emscripten_get_device_pixel_ratio();
+
+        _ = c.emscripten_set_element_css_size("canvas", @as(f64, @floatFromInt(size.width)) / dpr, @as(f64, @floatFromInt(size.height)) / dpr);
+        _ = c.emscripten_set_canvas_element_size("canvas", @intCast(size.width), @intCast(size.height));
+
+        var attribs: c.EmscriptenWebGLContextAttributes = undefined;
+        c.emscripten_webgl_init_context_attributes(&attribs);
+
+        attribs.alpha = false;
+        attribs.majorVersion = 2;
+        attribs.minorVersion = 0;
+
+        self.context = c.emscripten_webgl_create_context("canvas", &attribs);
+        std.debug.assert(self.context != 0);
 
         _ = c.emscripten_webgl_make_context_current(self.context);
 
         gl.binding.load({}, webgl_get_proc_address) catch return error.NoSuitableDevice;
 
-        gl.enable(.depth_test);
+        // gl.enable(.depth_test);
 
         self.output_renderpass = self.renderPassCreate(.{
             .attachments = &.{},
@@ -107,9 +115,7 @@ pub const GLESRenderer = struct {
             gl.drawElements(.triangles, call.vertex_count, mesh.index_type, 0);
         }
 
-        std.debug.print("{}\n", .{rp.draw_calls.items.len});
-
-        _ = c.emscripten_webgl_commit_frame();
+        // _ = c.emscripten_webgl_commit_frame();
     }
 
     pub fn getSize(self: *GLESRenderer) Renderer.Size {

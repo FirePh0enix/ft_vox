@@ -79,11 +79,6 @@ pub fn build(b: *Build) !void {
         exe_mod.linkLibrary(sdl_lib);
     }
 
-    if (target_is_emscripten) {
-        // const sysroot_include_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot", "include" });
-        // sdl_lib.addSystemIncludePath(.{ .cwd_relative = sysroot_include_path });
-    }
-
     const cimgui_dep = b.dependency("cimgui_zig", .{
         .target = target,
         .optimize = optimize,
