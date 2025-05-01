@@ -368,7 +368,7 @@ fn update(world: *World) !void {
 
     try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, view_matrix, light_matrix);
 
-    try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
+    // try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
 
     try rdr().processGraph(&graph);
 

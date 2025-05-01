@@ -51,6 +51,10 @@ pub const BlockState = packed struct(u32) {
     transparent: bool = false,
 
     _padding: u6 = 0,
+
+    pub inline fn isAir(self: BlockState) bool {
+        return self.id == 0;
+    }
 };
 
 pub const BlockPos = struct {
@@ -63,6 +67,7 @@ pub const RaycastResult = union(enum) {
     block: struct {
         state: BlockState,
         pos: BlockPos,
+        distance: f32,
     },
 };
 
@@ -100,6 +105,7 @@ buffers_states: std.bit_set.DynamicBitSetUnmanaged = .{},
 buffers_mutex: std.Thread.Mutex = .{},
 
 render_distance: usize = 0,
+registry: *const Registry = undefined,
 
 const BufferData = struct {
     rid: RID,
@@ -127,6 +133,8 @@ pub fn startWorkers(self: *Self, registry: *const Registry) !void {
     self.chunk_worker_state.store(true, .release);
     self.chunk_load_worker.thread = try std.Thread.spawn(.{}, ChunkLoadWorker.worker, .{ &self.chunk_load_worker, self, registry });
     self.chunk_unload_worker.thread = try std.Thread.spawn(.{}, ChunkUnloadWorker.worker, .{ &self.chunk_unload_worker, self, registry });
+
+    self.registry = registry;
 }
 
 pub fn createBuffers(self: *Self, render_distance: usize) !void {
@@ -180,30 +188,48 @@ pub fn getBlockState(self: *const Self, x: i64, y: i64, z: i64) ?BlockState {
     return null;
 }
 
-pub fn setBlockState(self: *const Self, x: i64, y: i64, z: i64, state: BlockState) void {
+pub fn setBlockState(self: *Self, x: i64, y: i64, z: i64, state: BlockState) void {
     const chunk_x = @divFloor(x, 16);
     const chunk_z = @divFloor(z, 16);
 
     if (self.getChunk(chunk_x, chunk_z)) |chunk| {
-        const local_x: usize = @intCast(@mod(x, 16));
-        const local_z: usize = @intCast(@mod(x, 16));
+        const local_x: usize = @intCast(x - chunk_x * 16);
+        const local_z: usize = @intCast(z - chunk_z * 16);
+
+        std.debug.print("{} {}\n", .{ local_x, local_z });
 
         chunk.setBlockState(local_x, @intCast(y), local_z, state);
+
+        {
+            self.chunks_lock.lock();
+            defer self.chunks_lock.unlock();
+
+            chunk.computeVisibilityNoLock(self);
+        }
+
+        rebuildInstanceBuffer(chunk, self.registry, &self.buffers[chunk.instance_buffer_index]) catch {};
     }
 }
 
-pub fn raycastBlock(self: *const Self, ray: Ray, precision: f32) ?RaycastResult {
-    const length = ray.length();
+pub fn castRay(self: *const Self, ray: Ray, max_length: f32, precision: f32) ?RaycastResult {
     var t: f32 = 0.0;
 
-    while (t < length) : (t += precision) {
+    while (t < max_length) : (t += precision) {
         const point = ray.at(t);
 
         const block_x: i64 = @intFromFloat(point[0]);
         const block_y: i64 = @intFromFloat(point[1]);
         const block_z: i64 = @intFromFloat(point[2]);
 
+        if (block_y < 0) continue;
+
         if (self.getBlockState(block_x, block_y, block_z)) |state| {
+            if (state.isAir()) continue;
+
+            const block = self.registry.getBlock(state.id) orelse continue;
+
+            if (!block.solid) continue;
+
             return RaycastResult{
                 .block = .{
                     .state = state,
@@ -212,6 +238,7 @@ pub fn raycastBlock(self: *const Self, ray: Ray, precision: f32) ?RaycastResult 
                         .y = block_y,
                         .z = block_z,
                     },
+                    .distance = t,
                 },
             };
         }
@@ -431,7 +458,7 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
                     .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
                     .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
                     .visibility = @intCast(block_state.visibility),
-                    .gradient_type = if (block.name == grass_name_hash) .grass else .none,
+                    .gradient_type = if (block.name_hash == grass_name_hash) .grass else .none,
                 };
                 index += 1;
             }
@@ -459,7 +486,7 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
                     .textures0 = .{ @floatFromInt(textures[0]), @floatFromInt(textures[1]), @floatFromInt(textures[2]) },
                     .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
                     .visibility = @intCast(block_state.visibility),
-                    .gradient_type = if (block.name == grass_name_hash) .grass else .none,
+                    .gradient_type = if (block.name_hash == grass_name_hash) .grass else .none,
                 };
                 index += 1;
             }

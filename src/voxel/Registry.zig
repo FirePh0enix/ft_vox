@@ -20,6 +20,8 @@ pub const BlockZon = struct {
             textures: [6][]const u8,
         },
     },
+
+    solid: bool = true,
 };
 
 allocator: Allocator,
@@ -74,9 +76,11 @@ pub fn registerBlock(self: *Self, block_config: BlockZon, vtable: Block.VTable) 
     };
 
     const block: Block = .{
-        .name = Block.getNameHash(block_config.name),
+        .name = try self.allocator.dupe(u8, block_config.name),
+        .name_hash = Block.getNameHash(block_config.name),
         .visual = visual,
         .vtable = vtable,
+        .solid = block_config.solid,
     };
 
     const id: u16 = @intCast(self.blocks.items.len);

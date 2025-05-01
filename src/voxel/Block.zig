@@ -8,8 +8,11 @@ pub const Visual = union(enum) {
     },
 };
 
-name: u64,
+name: []const u8,
+name_hash: u64,
+
 transparent: bool = false,
+solid: bool = true,
 
 vtable: VTable,
 visual: Visual,
