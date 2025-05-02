@@ -16,6 +16,7 @@ pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const sanitize_thread = b.option(bool, "sanitize-thread", "Enable the thread sanitizer");
+    const enable_tracy = b.option(bool, "tracy", "Enable tracy integration") orelse false;
     const emrun_browser = b.option([]const u8, "emrun-browser", "") orelse "chromium";
 
     const target_is_emscripten = target.result.os.tag == .emscripten;
@@ -138,6 +139,17 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
     });
     exe.root_module.addImport("zgl", zgl.module("zgl"));
+
+    if (enable_tracy) {
+        const tracy = b.dependency("tracy", .{
+            .target = target,
+            .optimize = optimize,
+            .shared = true,
+        });
+
+        exe_mod.linkLibrary(tracy.artifact("tracy"));
+        exe_mod.link_libcpp = true;
+    }
 
     const freetype = b.dependency("freetype", .{
         .target = target,

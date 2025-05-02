@@ -410,11 +410,19 @@ pub const VulkanRenderer = struct {
         try cb.resetCommandBuffer(.{});
         try cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
 
+        // Write the timestamp at the start of rendering.
+        const profile_stage: vk.PipelineStageFlags = .{ .vertex_input_bit = true };
+
+        cb.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
+        cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2));
+
         if (graph.main_render_pass) |rp| {
             try self.processRenderPass(cb, fb, rp);
         } else {
             unreachable;
         }
+
+        cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
 
         try cb.endCommandBuffer();
 
@@ -443,6 +451,13 @@ pub const VulkanRenderer = struct {
             .p_swapchains = @ptrCast(&self.swapchain),
             .p_image_indices = @ptrCast(&image_index),
         });
+
+        // Save the timestamp.
+        var timestamp_buffer: [2]u64 = .{ 0, 0 };
+        if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
+            const time_ms = @as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) * self.physical_device_properties.limits.timestamp_period / 1000000.0;
+            self.statistics.gpu_time = time_ms;
+        }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
     }

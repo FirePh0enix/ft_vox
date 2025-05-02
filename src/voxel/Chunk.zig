@@ -6,6 +6,7 @@ const BlockState = World.BlockState;
 const Registry = @import("../voxel/Registry.zig");
 const Renderer = @import("../render/Renderer.zig");
 const RID = Renderer.RID;
+const AABB = @import("../AABB.zig");
 
 const rdr = Renderer.rdr;
 
@@ -106,4 +107,14 @@ pub fn computeVisibilityNoLock(
             }
         }
     }
+}
+
+pub fn aabb(self: *const Self) AABB {
+    const x: f32 = @as(f32, @floatFromInt(self.position.x)) * 16.0 + 8.0;
+    const z: f32 = @as(f32, @floatFromInt(self.position.z)) * 16.0 + 8.0;
+
+    return .{
+        .center = .{ x, height / 2.0, z, 1.0 },
+        .half_extent = .{ 8.0, 128.0, 8.0, 0.0 },
+    };
 }

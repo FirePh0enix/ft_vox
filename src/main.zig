@@ -314,7 +314,7 @@ pub fn mainDesktop() !void {
     the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
     defer the_world.deinit();
 
-    try the_world.createBuffers(10);
+    try the_world.createBuffers(15);
     try the_world.startWorkers(&registry);
 
     render_graph_pass.addImguiHook(&statsDebugHook);
@@ -343,7 +343,10 @@ fn update(world: *World) !void {
     const aspect_ratio = @as(f32, @floatFromInt(surface_size.width)) / @as(f32, @floatFromInt(surface_size.height));
     var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
     projection_matrix[1][1] *= -1;
-    const view_matrix = zm.mul(camera.getViewMatrix(), projection_matrix);
+
+    // TODO: Move projection calculation in Camera.zig
+
+    camera.projection_matrix = projection_matrix;
 
     // Record draw calls into the render pass
     render_graph_pass.reset();
@@ -366,7 +369,7 @@ fn update(world: *World) !void {
     };
     try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
 
-    try the_world.encodeDrawCalls(cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, view_matrix, light_matrix);
+    try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
     // try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
 
