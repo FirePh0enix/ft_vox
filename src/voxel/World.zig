@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const gen = @import("gen.zig");
+const tracy = @import("tracy");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
@@ -252,7 +253,6 @@ pub fn loadChunk(self: *Self, pos: ChunkPos) !void {
     self.chunk_load_worker.orders_mutex.lock();
     defer self.chunk_load_worker.orders_mutex.unlock();
 
-    // try self.chunk_load_worker.orders.append(self.allocator, pos);
     try self.chunk_load_worker.orders.add(pos);
     self.chunk_load_worker.sleep_semaphore.post();
 }
@@ -270,6 +270,8 @@ const ChunkLoadWorker = struct {
     }
 
     fn worker(self: *ChunkLoadWorker, world: *Self, registry: *const Registry) void {
+        tracy.setThreadName("ChunkLoadWorker");
+
         var remaining: usize = 0;
 
         while (world.chunk_worker_state.load(.acquire)) {
@@ -343,6 +345,8 @@ const ChunkUnloadWorker = struct {
     fn worker(self: *ChunkUnloadWorker, world: *Self, registry: *const Registry) void {
         _ = registry;
 
+        tracy.setThreadName("ChunkUnloadWorker");
+
         var remaining: usize = 0;
 
         while (world.chunk_worker_state.load(.acquire)) {
@@ -412,6 +416,9 @@ pub fn freeBuffer(self: *Self, index: usize) void {
 }
 
 pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass: *Graph.RenderPass, shadow_material: RID, render_pass: *Graph.RenderPass, render_material: RID, camera_matrix: zm.Mat, shadow_matrix: zm.Mat) !void {
+    const zone = tracy.beginZone(@src(), .{ .name = "World.encodeDrawCalls" });
+    defer zone.end();
+
     self.chunks_lock.lock();
     defer self.chunks_lock.unlock();
 
@@ -421,13 +428,11 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass
 
     var chunk_iter = self.chunks.valueIterator();
 
-    const frustum = camera.frustum();
-
     while (chunk_iter.next()) |chunk| {
         const buffer_data = &self.buffers[chunk.instance_buffer_index];
         const aabb = chunk.aabb();
 
-        if (!frustum.containsBox(aabb)) {
+        if (!camera.frustum.containsBox(aabb)) {
             continue;
         }
 
@@ -440,7 +445,7 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass
         const buffer_data = &self.buffers[chunk.instance_buffer_index];
         const aabb = chunk.aabb();
 
-        if (!frustum.containsBox(aabb)) {
+        if (!camera.frustum.containsBox(aabb)) {
             continue;
         }
 
@@ -450,6 +455,9 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass
 }
 
 pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *BufferData) !void {
+    const zone = tracy.beginZone(@src(), .{ .name = "World.rebuildInstanceBuffer" });
+    defer zone.end();
+
     var index: usize = 0;
     var instances: [Chunk.block_count]BlockInstanceData = @splat(BlockInstanceData{});
 

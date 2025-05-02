@@ -4,6 +4,7 @@ const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
 const assets = @import("../../assets.zig");
+const tracy = @import("tracy");
 
 const Allocator = std.mem.Allocator;
 const Window = @import("../../Window.zig");
@@ -400,6 +401,9 @@ pub const VulkanRenderer = struct {
 
         const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
         const image_index = image_index_result.image_index;
+
+        const zone = tracy.beginZone(@src(), .{ .name = "VulkanRenderer.processGraph" });
+        defer zone.end();
 
         const cb = self.command_buffers[self.current_frame];
         const fb = self.swapchain_framebuffers[image_index];

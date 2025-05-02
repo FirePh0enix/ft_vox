@@ -1,5 +1,15 @@
+# Zig
+
 .zig-cache
 zig-out
+
+# macOS
+
 .DS_Store
+
+# Visual Studio Code
+.vscode
+
+# Misc
 imgui.ini
 /user_data

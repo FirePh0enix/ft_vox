@@ -99,6 +99,7 @@ pub fn pollEvents() void {
             },
             .resized => |r| {
                 try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = .performance });
+                camera.setAspectRatio(@as(f32, @floatFromInt(r.width)) / @as(f32, @floatFromInt(r.height)));
             },
 
             .key => |k| {

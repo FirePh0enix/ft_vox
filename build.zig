@@ -140,13 +140,15 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("zgl", zgl.module("zgl"));
 
-    if (enable_tracy) {
-        const tracy = b.dependency("tracy", .{
-            .target = target,
-            .optimize = optimize,
-            .shared = true,
-        });
+    const tracy = b.dependency("tracy", .{
+        .target = target,
+        .optimize = optimize,
+        .tracy_enable = enable_tracy,
+    });
 
+    exe_mod.addImport("tracy", tracy.module("tracy"));
+
+    if (enable_tracy) {
         exe_mod.linkLibrary(tracy.artifact("tracy"));
         exe_mod.link_libcpp = true;
     }

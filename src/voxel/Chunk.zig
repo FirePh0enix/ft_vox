@@ -1,4 +1,5 @@
 const std = @import("std");
+const tracy = @import("tracy");
 
 const Self = @This();
 const World = @import("World.zig");
@@ -48,6 +49,9 @@ pub fn computeVisibilityNoLock(
     self: *Self,
     world: *const World,
 ) void {
+    const zone = tracy.beginZone(@src(), .{ .name = "Chunk.computeVisibilityNoLock" });
+    defer zone.end();
+
     const north = world.getChunk(self.position.x, self.position.z - 1);
     const south = world.getChunk(self.position.x, self.position.z + 1);
     const west = world.getChunk(self.position.x - 1, self.position.z);

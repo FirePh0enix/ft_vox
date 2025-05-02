@@ -6,6 +6,7 @@ const zm = @import("zmath");
 const input = @import("input.zig");
 const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
+const tracy = @import("tracy");
 
 const Renderer = @import("render/Renderer.zig");
 const Window = @import("Window.zig");
@@ -58,11 +59,13 @@ const cli = .{
 };
 const Args = argzon.Args(cli, .{});
 
-pub var camera = Camera{
+pub var camera = Camera.init(.{
+    .aspect_ratio = 16.0 / 9.0,
+    .fov = std.math.degreesToRadians(60.0),
     .position = .{ 0.0, 100.0, 0.0, 0.0 },
     .rotation = .{ 0.0, 0.0, 0.0, 0.0 },
     .speed = 0.5,
-};
+});
 
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
@@ -205,6 +208,10 @@ var font: Font = undefined;
 
 pub fn mainDesktop() !void {
     // defer _ = debug_allocator.detectLeaks();
+    tracy.setThreadName("Main");
+
+    const mainZone = tracy.beginZone(@src(), .{ .name = "main" });
+    defer mainZone.end();
 
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
@@ -322,15 +329,20 @@ pub fn mainDesktop() !void {
     input.init(&window, &camera);
 
     while (window.running()) {
-        try update(&the_world);
+        try tick(&the_world);
     }
 }
 
-fn update(world: *World) !void {
+fn tick(world: *World) !void {
     if (std.time.microTimestamp() - last_update_time < time_between_update) {
         return;
     }
     last_update_time = std.time.microTimestamp();
+
+    tracy.frameMark();
+
+    const zone = tracy.beginZone(@src(), .{ .name = "tick" });
+    defer zone.end();
 
     // const time_before = std.time.microTimestamp();
 
@@ -427,10 +439,10 @@ pub fn mainEmscripten() !void {
     graph = .init(allocator);
     graph.main_render_pass = &render_graph_pass;
 
-    c.emscripten_request_animation_frame_loop(&updateEmscripten, null);
+    c.emscripten_request_animation_frame_loop(&tickEmscripten, null);
 }
 
-fn updateEmscripten(delta: f64, _: ?*anyopaque) callconv(.c) bool {
+fn tickEmscripten(delta: f64, _: ?*anyopaque) callconv(.c) bool {
     _ = delta;
 
     render_graph_pass.reset();

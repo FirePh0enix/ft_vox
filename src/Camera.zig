@@ -9,12 +9,56 @@ const Mat = zm.Mat;
 const World = @import("voxel/World.zig");
 const AABB = @import("AABB.zig");
 
+position: Vec,
+rotation: Vec,
+
 speed: f32 = 0.15,
 speed_mul: f32 = 1.0,
-position: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
-rotation: Vec = .{ 0.0, 0.0, 0.0, 0.0 },
 
 projection_matrix: zm.Mat = zm.identity(),
+
+aspect_ratio: f32,
+
+/// Field of View in radians.
+fov: f32,
+
+/// Frustum of the camera, this can be used to check if a primitive shape is in view of the camera,
+/// and implement Frustum Culling.
+frustum: Frustum,
+
+pub const Options = struct {
+    position: zm.Vec = zm.f32x4s(0.0),
+    rotation: zm.Vec = zm.f32x4s(0.0),
+    speed: f32 = 0.15,
+    speed_mul: f32 = 1.0,
+    aspect_ratio: f32,
+    fov: f32 = std.math.degreesToRadians(60.0),
+};
+
+pub fn init(options: Options) Self {
+    var camera: Self = .{
+        .speed = options.speed,
+        .speed_mul = options.speed_mul,
+        .position = options.position,
+        .rotation = options.rotation,
+        .fov = options.fov,
+        .aspect_ratio = options.aspect_ratio,
+        .projection_matrix = calculateProjectionMatrix(options.aspect_ratio, options.fov),
+        .frustum = undefined,
+    };
+    camera.frustum = Frustum.init(camera.getViewProjMatrix());
+    return camera;
+}
+
+pub fn setAspectRatio(self: *Self, aspect_ratio: f32) void {
+    self.projection_matrix = calculateProjectionMatrix(aspect_ratio, self.fov);
+    self.aspect_ratio = aspect_ratio;
+}
+
+pub fn setFov(self: *Self, fov: f32) void {
+    self.projection_matrix = calculateProjectionMatrix(self.aspect_ratio, fov);
+    self.fov = fov;
+}
 
 pub fn forward(self: *const Self) Vec {
     return zm.rotate(zm.conjugate(self.rotationQuat()), .{ 0.0, 0.0, -1.0, 1.0 });
@@ -35,6 +79,9 @@ pub fn rotate(self: *Self, x_rel: f32, y_rel: f32) void {
 }
 
 pub fn updateCamera(self: *Self, world: *World) void {
+    // Update the frustum once per frame.
+    self.frustum = Frustum.init(self.getViewProjMatrix());
+
     const forward_vec = self.forward();
     const right_vec = self.right();
     const up_vec = zm.f32x4(0.0, 1.0, 0.0, 0.0);
@@ -82,6 +129,12 @@ pub fn rotationQuat(self: *const Self) Quat {
     const q_yaw = zm.quatFromAxisAngle(.{ 0.0, 1.0, 0.0, 0.0 }, self.rotation[1]);
 
     return zm.normalize4(zm.qmul(q_yaw, q_pitch));
+}
+
+fn calculateProjectionMatrix(aspect_ratio: f32, fov: f32) zm.Mat {
+    var projection_matrix = zm.perspectiveFovRh(fov, aspect_ratio, 0.01, 1000.0);
+    projection_matrix[1][1] *= -1;
+    return projection_matrix;
 }
 
 pub const Frustum = struct {
@@ -204,7 +257,3 @@ pub const Frustum = struct {
         return true;
     }
 };
-
-pub fn frustum(self: *const Self) Frustum {
-    return Frustum.init(self.getViewProjMatrix());
-}
