@@ -56,8 +56,7 @@
             .path = "deps/zgl_es3",
         },
         .tracy = .{
-            .url = "git+https://github.com/tealsnow/zig-tracy#4f23bca3e4f59604a8d298796030858677df3f53",
-            .hash = "tracy-0.0.9-Dn49mw9SAACCtNBeyyb3EOipVIAhYuoDI9bLBi3LDJh6",
+            .path = "deps/zig-tracy",
         },
     },
     .paths = .{

@@ -1,6 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 const input = @import("input.zig");
+const tracy = @import("tracy");
 
 const Self = @This();
 const Vec = zm.Vec;
@@ -79,6 +80,9 @@ pub fn rotate(self: *Self, x_rel: f32, y_rel: f32) void {
 }
 
 pub fn updateCamera(self: *Self, world: *World) void {
+    const zone = tracy.beginZone(@src(), .{ .name = "updateCamera" });
+    defer zone.end();
+
     // Update the frustum once per frame.
     self.frustum = Frustum.init(self.getViewProjMatrix());
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
 const dcimgui = @import("dcimgui");
+const tracy = @import("tracy");
 
 const World = @import("World.zig");
 const Chunk = @import("Chunk.zig");
@@ -16,6 +17,9 @@ const grass = 4;
 const sand = 5;
 
 pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
+    const zone = tracy.beginZone(@src(), .{});
+    defer zone.end();
+
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
 
     const sea_level = world.generation_settings.sea_level;
@@ -185,6 +189,9 @@ const Noises = struct {
 };
 
 fn getNoises(noise: *const SimplexNoise, x: f32, z: f32) Noises {
+    const zone = tracy.beginZone(@src(), .{});
+    defer zone.end();
+
     const cont = getContinentalness(noise, x, z);
     const cont_level = getContinentalnessLevel(cont);
     const erosion = getErosion(noise, x, z);
@@ -256,6 +263,6 @@ fn getTemperature(noise: *const SimplexNoise, x: f32, z: f32) Temperature {
     }
 }
 
-fn remapValue(value: f32, low1: f32, high1: f32, low2: f32, high2: f32) f32 {
+inline fn remapValue(value: f32, low1: f32, high1: f32, low2: f32, high2: f32) f32 {
     return low2 + (value - low1) * (high2 - low2) / (high1 - low1);
 }

@@ -41,7 +41,7 @@ fn noBlockOrTransparent(self: *const Self, x: usize, y: usize, z: usize, current
     return block.id == 0 or (block.transparent and block.id != current_id);
 }
 
-pub fn setBlockState(self: *Self, x: usize, y: usize, z: usize, state: BlockState) void {
+pub inline fn setBlockState(self: *Self, x: usize, y: usize, z: usize, state: BlockState) void {
     self.blocks[z * length * height + y * length + x] = state;
 }
 

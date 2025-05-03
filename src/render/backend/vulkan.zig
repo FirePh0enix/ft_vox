@@ -79,6 +79,8 @@ pub const VulkanRenderer = struct {
     imgui_sampler: vk.Sampler,
     imgui_descriptor_pool: vk.DescriptorPool,
 
+    tracy_ctx: tracy.GPUContext,
+
     rid_infos_mutex: if (builtin.mode == .Debug) std.Thread.Mutex else DummyMutex = .{},
     rid_infos: if (builtin.mode == .Debug) std.AutoArrayHashMapUnmanaged(RID, RIDAllocInfo) else void = if (builtin.mode == .Debug) .empty else {},
 
@@ -389,6 +391,13 @@ pub const VulkanRenderer = struct {
                 },
             },
         });
+
+        self.tracy_ctx = tracy.newGPUContext(.{
+            .context = 0,
+            .type = .vulkan,
+            .gpu_time = 0,
+            .period = self.physical_device_properties.limits.timestamp_period,
+        });
     }
 
     pub fn processGraph(self: *VulkanRenderer, graph: *const Graph) !void {
@@ -402,8 +411,11 @@ pub const VulkanRenderer = struct {
         const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
         const image_index = image_index_result.image_index;
 
-        const zone = tracy.beginZone(@src(), .{ .name = "VulkanRenderer.processGraph" });
+        const zone = tracy.beginZone(@src(), .{});
         defer zone.end();
+
+        const gpuZone = self.tracy_ctx.beginZone(@src(), .{ .name = "top_of_pipe" });
+        defer gpuZone.end();
 
         const cb = self.command_buffers[self.current_frame];
         const fb = self.swapchain_framebuffers[image_index];
@@ -415,7 +427,7 @@ pub const VulkanRenderer = struct {
         try cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
 
         // Write the timestamp at the start of rendering.
-        const profile_stage: vk.PipelineStageFlags = .{ .vertex_input_bit = true };
+        const profile_stage: vk.PipelineStageFlags = .{ .top_of_pipe_bit = true };
 
         cb.resetQueryPool(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2);
         cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2));
@@ -459,14 +471,20 @@ pub const VulkanRenderer = struct {
         // Save the timestamp.
         var timestamp_buffer: [2]u64 = .{ 0, 0 };
         if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
-            const time_ms = @as(f32, @floatFromInt(timestamp_buffer[1] - timestamp_buffer[0])) * self.physical_device_properties.limits.timestamp_period / 1000000.0;
-            self.statistics.gpu_time = time_ms;
+            const elapsed = timestamp_buffer[1] - timestamp_buffer[0];
+            const elapsed_ms = @as(f32, @floatFromInt(elapsed)) * self.physical_device_properties.limits.timestamp_period / 1000000.0;
+            self.statistics.gpu_time = elapsed_ms;
+
+            gpuZone.time(@intCast(elapsed));
         }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
     }
 
     fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {
+        const zone = tracy.beginZone(@src(), .{});
+        defer zone.end();
+
         for (pass.dependencies.items) |dep| {
             try self.processRenderPass(cb, fb, dep);
         }
