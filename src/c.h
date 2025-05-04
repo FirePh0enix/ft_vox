@@ -12,6 +12,7 @@
 #ifdef TARGET_IS_EMSCRIPTEN
 
 #include <emscripten/html5.h>
+#include <webgpu/webgpu.h>
 
 #else
 

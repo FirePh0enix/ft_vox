@@ -140,17 +140,39 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("zgl", zgl.module("zgl"));
 
-    const tracy = b.dependency("tracy", .{
-        .target = target,
-        .optimize = optimize,
-        .tracy_enable = enable_tracy,
-    });
+    if (!target_is_emscripten) {
+        const tracy = b.dependency("tracy", .{
+            .target = target,
+            .optimize = optimize,
+            .tracy_enable = enable_tracy,
+        });
+        const tracy_artifact = tracy.artifact("tracy");
 
-    exe_mod.addImport("tracy", tracy.module("tracy"));
+        exe_mod.addImport("tracy", tracy.module("tracy"));
 
-    if (enable_tracy) {
-        exe_mod.linkLibrary(tracy.artifact("tracy"));
-        exe_mod.link_libcpp = true;
+        if (enable_tracy) {
+            exe_mod.linkLibrary(tracy_artifact);
+            exe_mod.link_libcpp = true;
+        }
+    } else {
+        const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
+
+        const tracy = b.dependency("tracy", .{
+            .target = target,
+            .optimize = optimize,
+            .tracy_enable = enable_tracy,
+        });
+        const tracy_artifact = tracy.artifact("tracy");
+
+        exe_mod.addImport("tracy", tracy.module("tracy"));
+
+        if (enable_tracy) {
+            exe_mod.linkLibrary(tracy_artifact);
+            exe_mod.link_libcpp = true;
+        }
+
+        std.debug.print("{s}\n", .{emscripten_sysroot_path});
+        tracy_artifact.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
     }
 
     const freetype = b.dependency("freetype", .{
@@ -238,11 +260,13 @@ pub fn build(b: *Build) !void {
         b.installArtifact(exe);
     } else {
         const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
-        const emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
 
+        var emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
         var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
             .optimize = optimize,
         });
+
+        try emcc_flags.put("-std=c++11", {});
 
         try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
         try emcc_settings.put("LEGACY_RUNTIME", "1");
@@ -250,8 +274,8 @@ pub fn build(b: *Build) !void {
         try emcc_settings.put("MAX_WEBGL_VERSION", "2");
         try emcc_settings.put("FULL_ES3", "1");
 
+        try emcc_settings.put("USE_PTHREADS", "1");
         try emcc_settings.put("USE_FREETYPE", "1");
-        // try emcc_settings.put("USE_SDL", "2");
 
         const emcc_step = zemscripten.emccStep(
             b,
@@ -338,13 +362,7 @@ const CompileShader = struct {
     file_ident: []const u8,
 };
 
-fn addCompileShader(
-    b: *Build,
-    glslc: *Step.Compile,
-    path: []const u8,
-    flags: []const []const u8,
-    optimize: std.builtin.OptimizeMode,
-) CompileShader {
+fn addCompileShader(b: *Build, glslc: *Step.Compile, path: []const u8, flags: []const []const u8, optimize: std.builtin.OptimizeMode) CompileShader {
     const cmd = b.addRunArtifact(glslc);
     cmd.addArgs(flags);
 
