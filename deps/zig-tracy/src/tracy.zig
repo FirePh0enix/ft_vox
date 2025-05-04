@@ -429,7 +429,7 @@ pub const GPUContext = struct {
 };
 
 pub inline fn newGPUContext(opts: GPUContextOptions) GPUContext {
-    if (!options.tracy_enable) return .{};
+    if (!options.tracy_enable) return .{ .context = {} };
 
     const data: c.___tracy_gpu_new_context_data = .{
         .type = @intFromEnum(opts.type),
