@@ -496,7 +496,8 @@ pub const VulkanRenderer = struct {
         for (render_pass.attachments, 0..render_pass.attachments.len) |attach, index| {
             switch (attach.type) {
                 .color => {
-                    clears[index] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } };
+                    // clears[index] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 0.0, 0.0 } } };
+                    clears[index] = .{ .color = .{ .float_32 = .{ 0.0, 0.0, 1.0, 1.0 } } };
                 },
                 .depth => {
                     clears[index] = .{ .depth_stencil = .{ .depth = 1.0, .stencil = 0.0 } };

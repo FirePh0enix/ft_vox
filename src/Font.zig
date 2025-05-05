@@ -41,7 +41,7 @@ const FontUniform = extern struct {
 };
 
 const FontInstance = extern struct {
-    bounds: [2]f32,
+    bounds: [4]f32,
     char_pos: [3]f32,
     scale: [2]f32,
 };
@@ -54,13 +54,24 @@ characters: std.AutoHashMap(u8, Character),
 
 width: usize,
 height: usize,
-inv_bmp_width: f32,
 
 var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
 pub var mesh: RID = undefined;
 
 var instance_buffer: RID = undefined;
+
+pub fn orthographicRh(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) zm.Mat {
+    const w = right - left;
+    const h = bottom - top;
+
+    return .{
+        zm.f32x4(2 / w, 0.0, 0.0, 0.0),
+        zm.f32x4(0.0, -2 / (top - bottom), 0.0, 0.0),
+        zm.f32x4(0.0, 0.0, -1 / (far - near), 0.0),
+        zm.f32x4(-(right + left) / w, -(top + bottom) / h, -near / (far - near), 1.0),
+    };
+}
 
 pub fn initLib() !void {
     const res: c.FT_Error = c.FT_Init_FreeType(&library);
@@ -76,10 +87,15 @@ pub fn initLib() !void {
             0, 2, 3,
         })),
         .vertices = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
-            .{ -0.5, 0.5, -1.0 },
-            .{ 0.5, 0.5, -1.0 },
-            .{ 0.5, -0.5, -1.0 },
-            .{ -0.5, -0.5, -1.0 },
+            // .{ -0.5, 0.5, -1.0 },
+            // .{ 0.5, 0.5, -1.0 },
+            // .{ 0.5, -0.5, -1.0 },
+            // .{ -0.5, -0.5, -1.0 },
+
+            .{ -0.5, 1.0, -1.0 },
+            .{ 0.5, 1.0, -1.0 },
+            .{ 0.5, 0.0, -1.0 },
+            .{ -0.5, 0.0, -1.0 },
         })),
         .normals = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
             .{ 0.0, 0.0, 0.0 },
@@ -100,7 +116,10 @@ pub fn initLib() !void {
         .usage = .{ .vertex_buffer = true, .transfer_dst = true },
     });
 
-    ortho_matrix = zm.orthographicRh(2.0, 2.0, 0.01, 10.0);
+    const size = rdr().getSize();
+    const aspect_ratio = @as(f32, @floatFromInt(size.width)) / @as(f32, @floatFromInt(size.height));
+
+    ortho_matrix = orthographicRh(-1.0 * aspect_ratio, 1.0 * aspect_ratio, -1.0, 1.0, 0.01, 10.0);
 }
 
 pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocator) !Self {
@@ -110,7 +129,7 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
     var data = std.AutoHashMap(u8, []const u8).init(allocator);
     defer data.deinit();
 
-    const font_size = if (font_size_ < 1 or font_size_ > 12) 18 else font_size_;
+    const font_size = font_size_;
 
     var face: c.FT_Face = undefined;
 
@@ -145,8 +164,6 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
         }
         bmp_width += face.*.glyph.*.bitmap.width;
     }
-
-    const inv_bmp_width = 1 / @as(f32, @floatFromInt(bmp_width));
 
     const buffer = try allocator.alloc(u8, bmp_height * bmp_width);
     defer allocator.free(buffer);
@@ -195,16 +212,16 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
             .{ .path = "font.vert.spv", .stage = .{ .vertex = true } },
             .{ .path = "font.frag.spv", .stage = .{ .fragment = true } },
         },
-        .transparency = true,
+        .transparency = false,
         .params = &.{
             .{ .name = "text", .type = .image, .stage = .{ .fragment = true } },
             .{ .name = "font", .type = .buffer, .stage = .{ .fragment = true } },
         },
         .instance_layout = .{
             .inputs = &.{
-                .{ .type = .vec2, .offset = 0 },
-                .{ .type = .vec3, .offset = 2 * @sizeOf(f32) },
-                .{ .type = .vec2, .offset = 5 * @sizeOf(f32) },
+                .{ .type = .vec4, .offset = 0 },
+                .{ .type = .vec3, .offset = 4 * @sizeOf(f32) },
+                .{ .type = .vec2, .offset = 7 * @sizeOf(f32) },
             },
             .stride = @sizeOf(FontInstance),
         },
@@ -222,7 +239,6 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
         .width = @intCast(bmp_width),
         .height = @intCast(bmp_height),
         .characters = characters,
-        .inv_bmp_width = inv_bmp_width,
     };
 }
 
@@ -243,20 +259,24 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
 
         const offset = @as(f32, @floatFromInt(char_data.offset)) / @as(f32, @floatFromInt(self.width));
         const char_width = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.width));
+        // const advance = @as(f32, @floatFromInt(char_data.advance)) / @as(f32, @floatFromInt(self.width));
+
+        const char_height = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height));
+
+        std.debug.print("{d}\n", .{char_height});
 
         const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width));
         const by = @as(f32, @floatFromInt(char_data.bearing.y)) / @as(f32, @floatFromInt(self.width));
 
         const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(char_data.size.x));
-        const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(char_data.size.y));
 
         instances[index] = .{
-            .bounds = .{ offset, offset + char_width },
+            .bounds = .{ offset, offset + char_width, 0.0, char_height },
             .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
-            .scale = .{ scale * scale_x * 0.5, scale * scale_y },
+            .scale = .{ scale, scale * scale_y },
         };
 
-        offset_x += char_width * 12.0;
+        offset_x += 0.3;
     }
 
     try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);

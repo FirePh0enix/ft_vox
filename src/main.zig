@@ -254,7 +254,7 @@ pub fn mainDesktop() !void {
     defer rdr().freeRid(cube_mesh);
 
     try Font.initLib();
-    font = try Font.init("assets/fonts/Minecraft.ttf", 10, allocator);
+    font = try Font.init("assets/fonts/Minecraft.ttf", 16, allocator);
     defer font.deinit();
 
     registry = Registry.init(allocator);
@@ -329,19 +329,20 @@ pub fn mainDesktop() !void {
     input.init(&window, &camera);
 
     while (window.running()) {
+        if (std.time.microTimestamp() - last_update_time < time_between_update) {
+            std.Thread.yield() catch {};
+            continue;
+        }
+        last_update_time = std.time.microTimestamp();
+
         try tick(&the_world);
     }
 }
 
 fn tick(world: *World) !void {
-    if (std.time.microTimestamp() - last_update_time < time_between_update) {
-        return;
-    }
-    last_update_time = std.time.microTimestamp();
-
     tracy.frameMark();
 
-    const zone = tracy.beginZone(@src(), .{ .name = "tick" });
+    const zone = tracy.beginZone(@src(), .{});
     defer zone.end();
 
     // const time_before = std.time.microTimestamp();
@@ -383,7 +384,7 @@ fn tick(world: *World) !void {
 
     try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
-    // try font.draw(&render_graph_pass, "HELLO", .{ 0.0, 0.0, 0.0 }, 0.2);
+    try font.draw(&render_graph_pass, "dead", .{ 0.0, 0.0, 0.0 }, 0.2);
 
     try rdr().processGraph(&graph);
 
