@@ -3,7 +3,6 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
-#include <SDL3/SDL_opengles2.h>
 
 #include <dcimgui.h>
 #include <backends/dcimgui_impl_sdl3.h>

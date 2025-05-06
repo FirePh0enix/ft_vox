@@ -87,15 +87,21 @@ pub fn initLib() !void {
             0, 2, 3,
         })),
         .vertices = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
+
             // .{ -0.5, 0.5, -1.0 },
             // .{ 0.5, 0.5, -1.0 },
             // .{ 0.5, -0.5, -1.0 },
             // .{ -0.5, -0.5, -1.0 },
 
-            .{ -0.5, 1.0, -1.0 },
-            .{ 0.5, 1.0, -1.0 },
-            .{ 0.5, 0.0, -1.0 },
+            // .{ -0.5, 1.0, -1.0 },
+            // .{ 0.5, 1.0, -1.0 },
+            // .{ 0.5, 0.0, -1.0 },
+            // .{ -0.5, 0.0, -1.0 },
+
             .{ -0.5, 0.0, -1.0 },
+            .{ 0.5, 0.0, -1.0 },
+            .{ 0.5, -1.0, -1.0 },
+            .{ -0.5, -1.0, -1.0 },
         })),
         .normals = std.mem.sliceAsBytes(@as([]const [3]f32, &.{
             .{ 0.0, 0.0, 0.0 },
@@ -259,11 +265,7 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
 
         const offset = @as(f32, @floatFromInt(char_data.offset)) / @as(f32, @floatFromInt(self.width));
         const char_width = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.width));
-        // const advance = @as(f32, @floatFromInt(char_data.advance)) / @as(f32, @floatFromInt(self.width));
-
         const char_height = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height));
-
-        std.debug.print("{d}\n", .{char_height});
 
         const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width));
         const by = @as(f32, @floatFromInt(char_data.bearing.y)) / @as(f32, @floatFromInt(self.width));
@@ -271,12 +273,12 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
         const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(char_data.size.x));
 
         instances[index] = .{
-            .bounds = .{ offset, offset + char_width, 0.0, char_height },
-            .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
+            .bounds = .{ offset, offset + char_width, char_height, 0.0 },
+            .char_pos = .{ pos[0] + bx + offset_x, pos[1] - by, pos[2] },
             .scale = .{ scale, scale * scale_y },
         };
 
-        offset_x += 0.3;
+        offset_x += 0.21;
     }
 
     try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);

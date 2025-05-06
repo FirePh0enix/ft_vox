@@ -98,7 +98,7 @@ pub fn build(b: *Build) !void {
 
     if (!target_is_emscripten) {
         const vulkan_headers = b.dependency("vulkan_headers", .{});
-
+        c_headers.addIncludePath(vulkan_headers.path("include"));
         const vulkan = b.dependency("vulkan", .{
             .registry = vulkan_headers.path("registry/vk.xml"),
         }).module("vulkan-zig");
