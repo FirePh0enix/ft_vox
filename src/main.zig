@@ -388,7 +388,9 @@ fn tick(world: *World) !void {
 
     try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
-    try font.draw(&render_graph_pass, "abcdefghijklmnop", .{ -1.5, 0.0, 0.0 }, 0.2);
+    // try font.draw(&render_graph_pass, "abcdefghijklmnop", .{ -1.5, 0.5, 0.0 }, 0.2);
+    // try font.draw(&render_graph_pass, "ABCDEFGHIJKLMNOP", .{ -1.5, 0.0, 0.0 }, 0.2);
+    try font.draw(&render_graph_pass, "dead", .{ -1.5, 0.0, 0.0 }, 0.2);
 
     try rdr().processGraph(&graph);
 
