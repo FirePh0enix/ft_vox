@@ -11,7 +11,7 @@ const Window = @import("../Window.zig");
 const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("backend/vulkan.zig").VulkanRenderer else void;
 const GLESRenderer = if (builtin.os.tag == .emscripten) @import("backend/gles.zig").GLESRenderer else void;
 
-const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+pub const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 
 ptr: *anyopaque,
 vtable: *const VTable,
@@ -474,6 +474,8 @@ pub const VTable = struct {
 
 pub const CreateError = error{} || Allocator.Error;
 
+var driver_used: Driver = undefined;
+var gpa: Allocator = undefined;
 var singleton: Self = undefined;
 
 pub fn rdr() *Self {
@@ -504,6 +506,21 @@ pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
                     .vtable = &VulkanRenderer.vtable,
                 };
             },
+        }
+    }
+
+    gpa = allocator;
+    driver_used = driver;
+}
+
+pub fn deinit() void {
+    if (builtin.os.tag == .emscripten) {
+        switch (driver_used) {
+            .gles => gpa.destroy(singleton.asGL()),
+        }
+    } else {
+        switch (driver_used) {
+            .vulkan => gpa.destroy(singleton.asVk()),
         }
     }
 }

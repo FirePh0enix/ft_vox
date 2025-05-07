@@ -40,6 +40,8 @@ pub fn init(allocator: Allocator) Self {
 }
 
 pub fn deinit(self: *Self) void {
+    for (self.blocks.items) |block| block.deinit(self.allocator);
+
     self.blocks.deinit(self.allocator);
     self.block_ids.deinit(self.allocator);
 
@@ -85,7 +87,7 @@ pub fn registerBlock(self: *Self, block_config: BlockZon, vtable: Block.VTable) 
 
     const id: u16 = @intCast(self.blocks.items.len);
 
-    try self.block_ids.put(self.allocator, try self.allocator.dupe(u8, block_config.name), id + 1);
+    try self.block_ids.put(self.allocator, block.name, id + 1);
     try self.blocks.append(self.allocator, block);
 }
 

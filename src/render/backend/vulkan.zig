@@ -649,11 +649,15 @@ pub const VulkanRenderer = struct {
                     entry.value_ptr.stack_trace.dump();
                 }
             }
+
+            self.rid_infos.deinit(self.allocator);
         }
 
         self.device.destroyDevice(null);
         self.instance.destroySurfaceKHR(self.surface, null);
         self.instance.destroyInstance(null);
+
+        self.allocator.free(self.surface_present_modes);
     }
 
     fn destroySwapchain(self: *VulkanRenderer) void {
@@ -833,18 +837,24 @@ pub const VulkanRenderer = struct {
     pub fn freeRid(self: *VulkanRenderer, rid: RID) void {
         if (rid.tryAs(VulkanBuffer)) |buffer| {
             buffer.deinit(self);
+            self.allocator.destroy(buffer);
         } else if (rid.tryAs(VulkanImage)) |image| {
             image.deinit(self);
+            self.allocator.destroy(image);
         } else if (rid.tryAs(VulkanFramebuffer)) |framebuffer| {
             self.device.destroyFramebuffer(framebuffer.framebuffer, null);
+            self.allocator.destroy(framebuffer);
         } else if (rid.tryAs(VulkanRenderPass)) |render_pass| {
-            self.device.destroyRenderPass(render_pass.render_pass, null);
+            render_pass.deinit(self);
+            self.allocator.destroy(render_pass);
         } else if (rid.tryAs(VulkanMaterial)) |material| {
             material.deinit(self);
+            self.allocator.destroy(material);
         } else if (rid.tryAs(VulkanMesh)) |mesh| {
             mesh.deinit(self);
+            self.allocator.destroy(mesh);
         } else {
-            std.debug.panic("Trying to free rid with signature {x}", .{@as(*const usize, @ptrFromInt(rid.inner)).*});
+            if (Renderer.runtime_safety) std.debug.panic("Trying to free rid with signature {x}", .{@as(*const usize, @ptrFromInt(rid.inner)).*});
         }
 
         self.rid_infos_mutex.lock();
@@ -1759,7 +1769,7 @@ pub const VulkanRenderer = struct {
             errdefer allocator.free(extensions);
 
             const queue_properties = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
-            errdefer allocator.free(queue_properties);
+            defer allocator.free(queue_properties);
 
             const surface_formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(device, surface, allocator);
             defer allocator.free(surface_formats);
@@ -1790,7 +1800,6 @@ pub const VulkanRenderer = struct {
                 };
             } else {
                 allocator.free(extensions);
-                allocator.free(queue_properties);
             }
         }
 
@@ -1908,6 +1917,11 @@ pub const VulkanRenderPass = struct {
     signature: usize = resource_signature,
     render_pass: vk.RenderPass,
     attachments: []const Renderer.Attachment,
+
+    pub fn deinit(self: *const VulkanRenderPass, r: *VulkanRenderer) void {
+        r.device.destroyRenderPass(self.render_pass, null);
+        r.allocator.free(self.attachments);
+    }
 };
 
 pub const VulkanFramebuffer = struct {

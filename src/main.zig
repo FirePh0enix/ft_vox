@@ -207,7 +207,7 @@ var light_buffer_rid: RID = undefined;
 var font: Font = undefined;
 
 pub fn mainDesktop() !void {
-    // defer _ = debug_allocator.detectLeaks();
+    defer _ = debug_allocator.detectLeaks();
     tracy.setThreadName("Main");
 
     const mainZone = tracy.beginZone(@src(), .{ .name = "main" });
@@ -226,6 +226,8 @@ pub fn mainDesktop() !void {
     defer window.deinit();
 
     try Renderer.create(allocator, .vulkan);
+    defer Renderer.deinit();
+
     try rdr().createDevice(&window, null);
     defer rdr().destroy();
 
@@ -254,6 +256,8 @@ pub fn mainDesktop() !void {
     defer rdr().freeRid(cube_mesh);
 
     try Font.initLib();
+    defer Font.deinitLib();
+
     font = try Font.init("assets/fonts/Minecraft.ttf", 16, allocator);
     defer font.deinit();
 

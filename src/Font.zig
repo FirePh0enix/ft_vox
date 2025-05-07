@@ -128,12 +128,21 @@ pub fn initLib() !void {
     ortho_matrix = orthographicRh(-1.0 * aspect_ratio, 1.0 * aspect_ratio, -1.0, 1.0, 0.01, 10.0);
 }
 
+pub fn deinitLib() void {
+    rdr().freeRid(instance_buffer);
+    rdr().freeRid(mesh);
+}
+
 pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocator) !Self {
     var bmp_height: usize = 0;
 
     var characters = std.AutoHashMap(u8, Character).init(allocator);
     var data = std.AutoHashMap(u8, []const u8).init(allocator);
-    defer data.deinit();
+    defer {
+        var iter = data.valueIterator();
+        while (iter.next()) |char_data| allocator.free(char_data.*);
+        data.deinit();
+    }
 
     const font_size = font_size_;
 
@@ -248,11 +257,12 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
     };
 }
 
-pub fn deinit(self: *const Self) void {
-    _ = self;
+pub fn deinit(self: *Self) void {
+    rdr().freeRid(self.bitmap);
+    rdr().freeRid(self.material);
+    rdr().freeRid(self.uniform_buffer);
 
-    // container -> self.data.deinit()
-    // char_data -> allocator.free(char_data)
+    self.characters.deinit();
 }
 
 pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, pos: [3]f32, scale: f32) !void {
