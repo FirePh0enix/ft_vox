@@ -118,7 +118,7 @@ pub fn initLib() !void {
     });
 
     instance_buffer = try rdr().bufferCreate(.{
-        .size = @sizeOf(FontInstance) * 16,
+        .size = @sizeOf(FontInstance) * 43,
         .usage = .{ .vertex_buffer = true, .transfer_dst = true },
     });
 
@@ -266,7 +266,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, pos: [3]f32, scale: f32) !void {
-    var instances: [16]FontInstance = undefined;
+    var instances: [43]FontInstance = undefined;
 
     var offset_x: f32 = 0;
 
@@ -280,20 +280,22 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
         // Calculate horizontal and vertical bearing offsets to align glyphs relative to the baseline.
         // For example, the letter 'g' is a descender, so its vertical offset places it below the baseline.
         const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width)) * scale;
-        const by = @as(f32, @floatFromInt((char_data.size.y - char_data.bearing.y))) * scale;
-
+        const by = @as(f32, @floatFromInt((char_data.size.y - char_data.bearing.y))) / @as(f32, @floatFromInt(self.height)) * scale;
+        
         // Calculate scaling factors to maintain correct aspect ratio and avoid texture stretching.
         const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.height)) * scale;
         const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height)) * scale;
 
         instances[index] = .{
             .bounds = .{ offset, offset + char_width, char_height, 0.0 },
-            .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by * scale_y * scale, pos[2] },
+            .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
             .scale = .{ scale_x, scale_y },
         };
 
         // Convert advance from 1/64 pixels to pixels, normalize by font height, then apply scale.
         offset_x += @as(f32, @floatFromInt(char_data.advance >> 6)) / @as(f32, @floatFromInt(self.height)) * scale;
+
+        std.debug.print("Char: {c} Bearing y: {d}\n", .{ char, by });
     }
 
     try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);

@@ -388,8 +388,8 @@ fn tick(world: *World) !void {
 
     try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
-    // try font.draw(&render_graph_pass, "The quick brown fox jumps over the lazy dog", .{ -1.5, 0.5, 0.0 }, 0.1);
-    try font.draw(&render_graph_pass, "Pl0uf grrr", .{ -1.5, 0.5, 0.0 }, 0.3);
+    try font.draw(&render_graph_pass, "The quick brown fox jumps over the lazy dog", .{ -1.5, 0.5, 0.0 }, 0.2);
+    // try font.draw(&render_graph_pass, "Pl0uf grrr", .{ -1.5, 0.5, 0.0 }, 0.3);
 
     try rdr().processGraph(&graph);
 
