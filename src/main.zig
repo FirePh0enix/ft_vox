@@ -34,8 +34,6 @@ else if (builtin.mode == .Debug)
 else
     std.heap.smp_allocator;
 
-// export VK_LAYER_MESSAGE_ID_FILTER=UNASSIGNED-CoreValidation-DrawState-QueryNotReset
-
 const cli = .{
     .name = .ft_vox,
     .description = "",
@@ -285,8 +283,8 @@ pub fn mainDesktop() !void {
 
     material = try rdr().materialCreate(.{
         .shaders = &.{
-            .{ .path = "basic_cube.vert.spv", .stage = .{ .vertex = true } },
-            .{ .path = "basic_cube.frag.spv", .stage = .{ .fragment = true } },
+            .{ .path = "voxel.vert.spv", .stage = .{ .vertex = true } },
+            .{ .path = "voxel.frag.spv", .stage = .{ .fragment = true } },
         },
         .instance_layout = .{
             .inputs = &.{
@@ -313,16 +311,6 @@ pub fn mainDesktop() !void {
                 .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
                 .min_filter = .nearest,
             },
-        },
-    });
-    try rdr().materialSetParam(material, "shadowMap", .{
-        .image = .{
-            .rid = shadow_pass.depth_image_rid,
-            .sampler = .{
-                .mag_filter = .nearest, // Nearest is best for pixel art and voxels.
-                .min_filter = .nearest,
-            },
-            .layout = .depth_stencil_read_only_optimal,
         },
     });
     try rdr().materialSetParam(material, "light", .{ .buffer = light_buffer_rid });

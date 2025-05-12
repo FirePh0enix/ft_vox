@@ -9,24 +9,14 @@ const Graph = @import("Graph.zig");
 const Device = @import("Device.zig");
 const Window = @import("../Window.zig");
 const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("backend/vulkan.zig").VulkanRenderer else void;
-const GLESRenderer = if (builtin.os.tag == .emscripten) @import("backend/gles.zig").GLESRenderer else void;
 
 pub const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 
 ptr: *anyopaque,
 vtable: *const VTable,
 
-pub const Driver = if (builtin.os.tag == .emscripten)
-    DriverWeb
-else
-    DriverDesktop;
-
-pub const DriverDesktop = enum {
+pub const Driver = enum {
     vulkan,
-};
-
-pub const DriverWeb = enum {
-    gles,
 };
 
 pub const VSync = enum {
@@ -483,30 +473,16 @@ pub fn rdr() *Self {
 }
 
 pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
-    if (builtin.os.tag == .emscripten) {
-        switch (driver) {
-            .gles => {
-                const renderer = try createWithDefault(GLESRenderer, allocator);
-                renderer.allocator = allocator;
+    switch (driver) {
+        .vulkan => {
+            const renderer = try createWithDefault(VulkanRenderer, allocator);
+            renderer.allocator = allocator;
 
-                singleton = .{
-                    .ptr = renderer,
-                    .vtable = &GLESRenderer.vtable,
-                };
-            },
-        }
-    } else {
-        switch (driver) {
-            .vulkan => {
-                const renderer = try createWithDefault(VulkanRenderer, allocator);
-                renderer.allocator = allocator;
-
-                singleton = .{
-                    .ptr = renderer,
-                    .vtable = &VulkanRenderer.vtable,
-                };
-            },
-        }
+            singleton = .{
+                .ptr = renderer,
+                .vtable = &VulkanRenderer.vtable,
+            };
+        },
     }
 
     gpa = allocator;
@@ -514,14 +490,8 @@ pub fn create(allocator: Allocator, driver: Driver) CreateError!void {
 }
 
 pub fn deinit() void {
-    if (builtin.os.tag == .emscripten) {
-        switch (driver_used) {
-            .gles => gpa.destroy(singleton.asGL()),
-        }
-    } else {
-        switch (driver_used) {
-            .vulkan => gpa.destroy(singleton.asVk()),
-        }
+    switch (driver_used) {
+        .vulkan => gpa.destroy(singleton.asVk()),
     }
 }
 
@@ -529,11 +499,10 @@ pub inline fn asVk(self: *const Self) *VulkanRenderer {
     return @ptrCast(@alignCast(self.ptr));
 }
 
-pub inline fn asGL(self: *const Self) *GLESRenderer {
-    return @ptrCast(@alignCast(self.ptr));
-}
-
 pub const CreateDeviceError = error{
+    /// A function returned an unexpected error.
+    BadDriver,
+
     /// No device are suitable to run the engine.
     NoSuitableDevice,
 } || Allocator.Error;

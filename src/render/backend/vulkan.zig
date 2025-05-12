@@ -137,14 +137,22 @@ pub const VulkanRenderer = struct {
         .framebuffer_create = @ptrCast(&framebufferCreate),
     };
 
-    pub fn createDevice(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
+    pub fn createDevice_(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
         self.createDeviceVk(window) catch |e| switch (e) {
             Allocator.Error.OutOfMemory => return Renderer.CreateDeviceError.OutOfMemory,
-            else => return Renderer.CreateDeviceError.NoSuitableDevice,
+            else => return error.NoSuitableDevice,
         };
     }
 
-    fn createDeviceVk(self: *VulkanRenderer, window: *Window) !void {
+    fn convertDeviceError(err: anyerror) Renderer.CreateDeviceError {
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.OutOfHostMemory => error.OutOfMemory,
+            else => error.BadDriver,
+        };
+    }
+
+    pub fn createDevice(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
         const get_instance_proc_addr: *const GetInstanceProcAddrFn = @ptrCast(window.impl.getVkGetInstanceProcAddr());
         const instance_extensions = window.impl.getVkInstanceExtensions();
 
@@ -166,14 +174,14 @@ pub const VulkanRenderer = struct {
         defer required_instance_extensions.deinit();
         for (0..instance_extensions.len) |index| try required_instance_extensions.append(instance_extensions[index] orelse unreachable);
 
-        const instance_handle = try vkb.createInstance(&vk.InstanceCreateInfo{
+        const instance_handle = vkb.createInstance(&vk.InstanceCreateInfo{
             .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
             .p_application_info = &app_info,
             .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
             .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
             .enabled_extension_count = @intCast(required_instance_extensions.items.len),
             .pp_enabled_extension_names = required_instance_extensions.items.ptr,
-        }, null);
+        }, null) catch return error.BadDriver;
         instance_wrapper = .load(instance_handle, get_instance_proc_addr);
 
         self.instance = vk.InstanceProxy.init(instance_handle, &instance_wrapper);
@@ -215,10 +223,10 @@ pub const VulkanRenderer = struct {
             host_query_reset_features.p_next = @ptrCast(&portability_subset_features);
         }
 
-        const physical_devices = try self.instance.enumeratePhysicalDevicesAlloc(self.allocator);
+        const physical_devices = self.instance.enumeratePhysicalDevicesAlloc(self.allocator) catch |e| return convertDeviceError(e);
         defer self.allocator.free(physical_devices);
 
-        const physical_device_with_info = (try getBestDevice(self.allocator, self.instance, self.surface, physical_devices, required_features, optional_features, required_extensions.items, optional_extensions)) orelse return error.NoSuitableDevice;
+        const physical_device_with_info = (getBestDevice(self.allocator, self.instance, self.surface, physical_devices, required_features, optional_features, required_extensions.items, optional_extensions) catch |e| return convertDeviceError(e)) orelse return error.NoSuitableDevice;
         defer physical_device_with_info.deinit(self.allocator);
 
         self.physical_device = physical_device_with_info.physical_device;
@@ -235,9 +243,9 @@ pub const VulkanRenderer = struct {
         }
 
         // Query surface capabilities.
-        self.surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface);
+        self.surface_capabilities = self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface) catch return error.BadDriver;
 
-        self.surface_present_modes = try self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator);
+        self.surface_present_modes = self.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(self.physical_device, self.surface, self.allocator) catch return error.BadDriver;
         errdefer self.allocator.free(self.surface_present_modes);
 
         self.surface_format = physical_device_with_info.surface_format;
@@ -259,7 +267,7 @@ pub const VulkanRenderer = struct {
         };
 
         const device_extensions = combine_extensions: {
-            var extensions = std.ArrayList([*:0]const u8).init(self.allocator);
+            var extensions: std.ArrayList([*:0]const u8) = .init(self.allocator);
 
             for (required_extensions.items) |ext| {
                 try extensions.append(ext);
@@ -287,7 +295,7 @@ pub const VulkanRenderer = struct {
 
         const get_device_proc_addr: *const GetDeviceProcAddrFn = @ptrCast(instance_wrapper.dispatch.vkGetDeviceProcAddr);
 
-        const device_handle = try self.instance.createDevice(self.physical_device, &vk.DeviceCreateInfo{
+        const device_handle = self.instance.createDevice(self.physical_device, &vk.DeviceCreateInfo{
             .queue_create_info_count = @intCast(queue_infos.len),
             .p_queue_create_infos = queue_infos.ptr,
             .enabled_layer_count = 0,
@@ -296,7 +304,7 @@ pub const VulkanRenderer = struct {
             .pp_enabled_extension_names = device_extensions.ptr,
             .p_enabled_features = &device_features,
             .p_next = @ptrCast(&host_query_reset_features),
-        }, null);
+        }, null) catch return error.BadDriver;
         // errdefer instance_wrapper.dispatch.vkDestroyDevice(device_handle, null);
         device_wrapper = .load(device_handle, get_device_proc_addr);
 
@@ -308,51 +316,51 @@ pub const VulkanRenderer = struct {
         self.compute_queue = vk.QueueProxy.init(self.device.getDeviceQueue(self.compute_queue_index, 0), &device_wrapper);
 
         // Allocate command buffers
-        self.command_pool = try self.device.createCommandPool(&vk.CommandPoolCreateInfo{
+        self.command_pool = self.device.createCommandPool(&vk.CommandPoolCreateInfo{
             .flags = .{ .reset_command_buffer_bit = true },
             .queue_family_index = physical_device_with_info.queue_info.graphics_index orelse 0,
-        }, null);
+        }, null) catch |e| return convertDeviceError(e);
 
         var command_buffer_handles: [max_frames_in_flight]vk.CommandBuffer = undefined;
-        try self.device.allocateCommandBuffers(&vk.CommandBufferAllocateInfo{
+        self.device.allocateCommandBuffers(&vk.CommandBufferAllocateInfo{
             .command_pool = self.command_pool,
             .level = .primary,
             .command_buffer_count = max_frames_in_flight,
-        }, &command_buffer_handles);
+        }, &command_buffer_handles) catch |e| return convertDeviceError(e);
 
         for (0..max_frames_in_flight) |index| self.command_buffers[index] = vk.CommandBufferProxy.init(command_buffer_handles[index], &device_wrapper);
 
         // Create synchronization primitives.
         for (0..max_frames_in_flight) |index| {
-            self.image_available_semaphores[index] = try self.device.createSemaphore(&vk.SemaphoreCreateInfo{}, null);
-            self.render_finished_semaphores[index] = try self.device.createSemaphore(&vk.SemaphoreCreateInfo{}, null);
-            self.in_flight_fences[index] = try self.device.createFence(&vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } }, null);
+            self.image_available_semaphores[index] = self.device.createSemaphore(&vk.SemaphoreCreateInfo{}, null) catch |e| return convertDeviceError(e);
+            self.render_finished_semaphores[index] = self.device.createSemaphore(&vk.SemaphoreCreateInfo{}, null) catch |e| return convertDeviceError(e);
+            self.in_flight_fences[index] = self.device.createFence(&vk.FenceCreateInfo{ .flags = .{ .signaled_bit = true } }, null) catch |e| return convertDeviceError(e);
         }
 
         self.memory_properties = self.instance.getPhysicalDeviceMemoryProperties(self.physical_device);
 
         // Allocate a command buffer to transfer data between buffers.
         var transfer_command_buffer_handle: vk.CommandBuffer = undefined;
-        try self.device.allocateCommandBuffers(&vk.CommandBufferAllocateInfo{
+        self.device.allocateCommandBuffers(&vk.CommandBufferAllocateInfo{
             .command_pool = self.command_pool,
             .level = .primary,
             .command_buffer_count = 1,
-        }, @ptrCast(&transfer_command_buffer_handle));
+        }, @ptrCast(&transfer_command_buffer_handle)) catch |e| return convertDeviceError(e);
 
         self.transfer_command_buffer = vk.CommandBufferProxy.init(transfer_command_buffer_handle, &device_wrapper);
 
-        self.timestamp_query_pool = try self.device.createQueryPool(&vk.QueryPoolCreateInfo{
+        self.timestamp_query_pool = self.device.createQueryPool(&vk.QueryPoolCreateInfo{
             .pipeline_statistics = .{},
             .query_type = .timestamp,
             .query_count = max_frames_in_flight * 2,
-        }, null);
+        }, null) catch |e| return convertDeviceError(e);
 
         self.primitives_query_pool = if (device_features.pipeline_statistics_query == 1)
-            try self.device.createQueryPool(&vk.QueryPoolCreateInfo{
+            self.device.createQueryPool(&vk.QueryPoolCreateInfo{
                 .pipeline_statistics = .{ .input_assembly_primitives_bit = true },
                 .query_type = .pipeline_statistics,
                 .query_count = max_frames_in_flight,
-            }, null)
+            }, null) catch |e| return convertDeviceError(e)
         else
             .null_handle;
 
@@ -365,7 +373,7 @@ pub const VulkanRenderer = struct {
         self.physical_device = physical_device_with_info.physical_device;
         self.swapchain = .null_handle;
 
-        self.output_render_pass = try rdr().renderPassCreate(.{
+        self.output_render_pass = rdr().renderPassCreate(.{
             .attachments = &.{
                 .{
                     .type = .color,
@@ -390,7 +398,7 @@ pub const VulkanRenderer = struct {
                     .final_layout = .depth_stencil_attachment_optimal,
                 },
             },
-        });
+        }) catch return error.BadDriver;
 
         self.tracy_ctx = tracy.newGPUContext(.{
             .context = 0,
@@ -400,15 +408,20 @@ pub const VulkanRenderer = struct {
         });
     }
 
-    pub fn processGraph(self: *VulkanRenderer, graph: *const Graph) !void {
-        self.processGraphVk(graph) catch unreachable; // TODO
+    fn convertGraphError(err: anyerror) Renderer.ProcessGraphError {
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.OutOfHostMemory => error.OutOfMemory,
+            else => error.Failed,
+        };
     }
 
-    fn processGraphVk(self: *VulkanRenderer, graph: *const Graph) !void {
-        _ = try self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
-        try self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
+    pub fn processGraph(self: *VulkanRenderer, graph: *const Graph) Renderer.ProcessGraphError!void {
+        _ = self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64)) catch |e| return convertGraphError(e);
+        self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame])) catch |e| return convertGraphError(e);
 
-        const image_index_result = try self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
+        // TODO: `acquireNextImageKHR` can returns `out_of_date_khr` which is not an error worth crashing over, this only means that we need to recreate the swapchain.
+        const image_index_result = self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle) catch |e| return convertGraphError(e);
         const image_index = image_index_result.image_index;
 
         const zone = tracy.beginZone(@src(), .{});
@@ -423,8 +436,8 @@ pub const VulkanRenderer = struct {
         self.graphics_queue_mutex.lock();
         defer self.graphics_queue_mutex.unlock();
 
-        try cb.resetCommandBuffer(.{});
-        try cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } });
+        cb.resetCommandBuffer(.{}) catch |e| return convertGraphError(e);
+        cb.beginCommandBuffer(&vk.CommandBufferBeginInfo{ .flags = .{ .one_time_submit_bit = true } }) catch |e| return convertGraphError(e);
 
         // Write the timestamp at the start of rendering.
         const profile_stage: vk.PipelineStageFlags = .{ .top_of_pipe_bit = true };
@@ -433,14 +446,17 @@ pub const VulkanRenderer = struct {
         cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2));
 
         if (graph.main_render_pass) |rp| {
-            try self.processRenderPass(cb, fb, rp);
+            // TODO: We probably dont want to crash when we fail to draw a frame.
+            self.processRenderPass(cb, fb, rp) catch unreachable;
         } else {
             unreachable;
         }
 
+        // self.encodeCommandBuffer();
+
         cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
 
-        try cb.endCommandBuffer();
+        cb.endCommandBuffer() catch |e| return convertGraphError(e);
 
         // Submit the command buffer
         const wait_semaphores: []const vk.Semaphore = &.{self.image_available_semaphores[self.current_frame]};
@@ -448,7 +464,7 @@ pub const VulkanRenderer = struct {
 
         const signal_semaphores: []const vk.Semaphore = &.{self.render_finished_semaphores[self.current_frame]};
 
-        try self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
+        self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
             .wait_semaphore_count = @intCast(wait_semaphores.len),
             .p_wait_semaphores = wait_semaphores.ptr,
             .p_wait_dst_stage_mask = wait_stages.ptr,
@@ -458,19 +474,19 @@ pub const VulkanRenderer = struct {
 
             .signal_semaphore_count = @intCast(signal_semaphores.len),
             .p_signal_semaphores = signal_semaphores.ptr,
-        }), self.in_flight_fences[self.current_frame]);
+        }), self.in_flight_fences[self.current_frame]) catch |e| return convertGraphError(e);
 
-        _ = try self.graphics_queue.presentKHR(&vk.PresentInfoKHR{
+        _ = self.graphics_queue.presentKHR(&vk.PresentInfoKHR{
             .wait_semaphore_count = @intCast(signal_semaphores.len),
             .p_wait_semaphores = signal_semaphores.ptr,
             .swapchain_count = 1,
             .p_swapchains = @ptrCast(&self.swapchain),
             .p_image_indices = @ptrCast(&image_index),
-        });
+        }) catch |e| return convertGraphError(e);
 
         // Save the timestamp.
         var timestamp_buffer: [2]u64 = .{ 0, 0 };
-        if ((try self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true })) == .success) {
+        if ((self.device.getQueryPoolResults(self.timestamp_query_pool, @intCast(self.current_frame * 2), 2, @sizeOf(u64) * 2, @ptrCast(&timestamp_buffer), @sizeOf(u64), .{ .@"64_bit" = true }) catch |e| return convertGraphError(e)) == .success) {
             const elapsed = timestamp_buffer[1] - timestamp_buffer[0];
             const elapsed_ms = @as(f32, @floatFromInt(elapsed)) * self.physical_device_properties.limits.timestamp_period / 1000000.0;
             self.statistics.gpu_time = elapsed_ms;
@@ -479,6 +495,10 @@ pub const VulkanRenderer = struct {
         }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
+    }
+
+    fn encodeCommandBuffer(self: *VulkanRenderer) void {
+        _ = self;
     }
 
     fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {

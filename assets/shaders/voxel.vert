@@ -67,6 +67,7 @@ void main() {
 
     gl_Position = viewMatrix * modelMatrix * vec4(position, 1.0);
 
+#ifndef DEPTH_PREPASS
     fragPos = modelMatrix * vec4(position, 1.0);
     fragUV = uv;
     fragNormal = normal;
@@ -75,4 +76,5 @@ void main() {
 
     uint textureIndices[] = uint[](uint(texture0.x), uint(texture0.y), uint(texture0.z), uint(texture1.x), uint(texture1.y), uint(texture1.z));
     textureIndex = textureIndices[gl_VertexIndex / 4];
+#endif
 }

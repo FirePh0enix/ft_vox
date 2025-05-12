@@ -134,12 +134,6 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("argzon", argzon.module("argzon"));
 
-    const zgl = b.dependency("zgl", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("zgl", zgl.module("zgl"));
-
     if (!target_is_emscripten) {
         const tracy = b.dependency("tracy", .{
             .target = target,
@@ -196,28 +190,15 @@ pub fn build(b: *Build) !void {
     const flags: []const []const u8 = &.{
         "--target", "Vulkan-1.2",
     };
-    const files: []const []const u8 = if (!target_is_emscripten)
-        &.{
-            "assets/shaders/vk/basic_cube.vert",
-            "assets/shaders/vk/basic_cube.frag",
+    const files: []const []const u8 = &.{
+        "assets/shaders/voxel.vert",
+        "assets/shaders/voxel.frag",
 
-            "assets/shaders/vk/cube_shadow.vert",
-            "assets/shaders/vk/cube_shadow.frag",
+        "assets/shaders/depth_only.frag",
 
-            "assets/shaders/vk/font.vert",
-            "assets/shaders/vk/font.frag",
-        }
-    else
-        &.{
-            "assets/shaders/gl/basic_cube.vert",
-            "assets/shaders/gl/basic_cube.frag",
-
-            // "assets/shaders/gl/cube_shadow.vert",
-            // "assets/shaders/gl/cube_shadow.frag",
-
-            // "assets/shaders/gl/font.vert",
-            // "assets/shaders/gl/font.frag",
-        };
+        "assets/shaders/font.vert",
+        "assets/shaders/font.frag",
+    };
 
     for (files) |file| {
         if (!target_is_emscripten) {
