@@ -667,8 +667,7 @@ pub const VulkanRenderer = struct {
             }
 
             for (self.swapchain_images) |image_rid| {
-                // self.freeRid(image_rid); FIXME
-                _ = image_rid;
+                self.freeRid(image_rid);
             }
 
             self.freeRid(self.depth_image);
