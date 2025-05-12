@@ -10,10 +10,5 @@ layout(binding = 1) uniform FontFragment{
 };
 
 void main(){
-    vec2 uv2 = inTextCoords;
-    // uv2.y = 1.0 - uv2.y;
-
-    // vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, uv2).r);
-    vec4 sampled = vec4(texture(text, uv2).r, 0.0, 0.0, 1.0);
-    outFragColor = color * sampled;
+    outFragColor = color * vec4(1.0, 1.0, 1.0, texture(text, inTextCoords).r);
 }

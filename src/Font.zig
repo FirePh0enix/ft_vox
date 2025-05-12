@@ -54,6 +54,7 @@ characters: std.AutoHashMap(u8, Character),
 
 width: usize,
 height: usize,
+scale: usize,
 
 var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
@@ -227,7 +228,7 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
             .{ .path = "font.vert.spv", .stage = .{ .vertex = true } },
             .{ .path = "font.frag.spv", .stage = .{ .fragment = true } },
         },
-        .transparency = false,
+        .transparency = true,
         .params = &.{
             .{ .name = "text", .type = .image, .stage = .{ .fragment = true } },
             .{ .name = "font", .type = .buffer, .stage = .{ .fragment = true } },
@@ -241,10 +242,12 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
             .stride = @sizeOf(FontInstance),
         },
     });
-    try rdr().materialSetParam(material_rid, "text", .{ .image = .{
-        .rid = texture_rid,
-        .sampler = .{ .mag_filter = .nearest, .min_filter = .nearest },
-    } });
+    try rdr().materialSetParam(material_rid, "text", .{
+        .image = .{
+            .rid = texture_rid,
+            .sampler = .{ .mag_filter = .nearest, .min_filter = .nearest }, // FIXME: using .linear create artifacts on the edge of the characters, probably due to sampling neighbor pixels from other characters
+        },
+    });
     try rdr().materialSetParam(material_rid, "font", .{ .buffer = uniform_buffer_rid });
 
     return Self{
@@ -281,7 +284,7 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
         // For example, the letter 'g' is a descender, so its vertical offset places it below the baseline.
         const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width)) * scale;
         const by = @as(f32, @floatFromInt((char_data.size.y - char_data.bearing.y))) / @as(f32, @floatFromInt(self.height)) * scale;
-        
+
         // Calculate scaling factors to maintain correct aspect ratio and avoid texture stretching.
         const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.height)) * scale;
         const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height)) * scale;
@@ -294,8 +297,6 @@ pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, po
 
         // Convert advance from 1/64 pixels to pixels, normalize by font height, then apply scale.
         offset_x += @as(f32, @floatFromInt(char_data.advance >> 6)) / @as(f32, @floatFromInt(self.height)) * scale;
-
-        std.debug.print("Char: {c} Bearing y: {d}\n", .{ char, by });
     }
 
     try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);
