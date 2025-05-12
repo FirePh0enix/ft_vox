@@ -19,6 +19,7 @@ const Block = @import("voxel/Block.zig");
 const Registry = @import("voxel/Registry.zig");
 const RID = Renderer.RID;
 const Font = @import("Font.zig");
+const Text = @import("Text.zig");
 
 const rdr = Renderer.rdr;
 
@@ -205,6 +206,7 @@ var light_matrix: zm.Mat = undefined;
 var light_buffer_rid: RID = undefined;
 
 var font: Font = undefined;
+var text: Text = undefined;
 
 pub fn mainDesktop() !void {
     defer _ = debug_allocator.detectLeaks();
@@ -260,6 +262,9 @@ pub fn mainDesktop() !void {
 
     font = try Font.init("assets/fonts/Anonymous.ttf", 16, allocator);
     defer font.deinit();
+
+    text = try Text.initCapacity(&font, 5);
+    defer text.deinit();
 
     registry = Registry.init(allocator);
     defer registry.deinit();
@@ -388,8 +393,12 @@ fn tick(world: *World) !void {
 
     try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
-    try font.draw(&render_graph_pass, "The quick brown fox jumps over the lazy dog", .{ -1.5, 0.5, 0.0 }, 0.2);
-    // try font.draw(&render_graph_pass, "Pl0uf grrr", .{ -1.5, 0.5, 0.0 }, 0.3);
+    const stats = rdr().getStatistics();
+
+    var buf: [64]u8 = undefined;
+    try text.set(std.fmt.bufPrint(&buf, "{d:.2} ms", .{stats.gpu_time}) catch &.{}, .{ -2.0, 0.0, 0.0 }, 0.1);
+
+    text.draw(&render_graph_pass);
 
     try rdr().processGraph(&graph);
 

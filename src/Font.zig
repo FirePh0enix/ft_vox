@@ -54,7 +54,6 @@ characters: std.AutoHashMap(u8, Character),
 
 width: usize,
 height: usize,
-scale: usize,
 
 var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
@@ -266,40 +265,4 @@ pub fn deinit(self: *Self) void {
     rdr().freeRid(self.uniform_buffer);
 
     self.characters.deinit();
-}
-
-pub fn draw(self: *const Self, render_pass: *Graph.RenderPass, s: []const u8, pos: [3]f32, scale: f32) !void {
-    var instances: [43]FontInstance = undefined;
-
-    var offset_x: f32 = 0;
-
-    for (s, 0..s.len) |char, index| {
-        const char_data = self.characters.get(char) orelse unreachable;
-
-        const offset = @as(f32, @floatFromInt(char_data.offset)) / @as(f32, @floatFromInt(self.width));
-        const char_width = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.width));
-        const char_height = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height));
-
-        // Calculate horizontal and vertical bearing offsets to align glyphs relative to the baseline.
-        // For example, the letter 'g' is a descender, so its vertical offset places it below the baseline.
-        const bx = @as(f32, @floatFromInt(char_data.bearing.x)) / @as(f32, @floatFromInt(self.width)) * scale;
-        const by = @as(f32, @floatFromInt((char_data.size.y - char_data.bearing.y))) / @as(f32, @floatFromInt(self.height)) * scale;
-
-        // Calculate scaling factors to maintain correct aspect ratio and avoid texture stretching.
-        const scale_x = @as(f32, @floatFromInt(char_data.size.x)) / @as(f32, @floatFromInt(self.height)) * scale;
-        const scale_y = @as(f32, @floatFromInt(char_data.size.y)) / @as(f32, @floatFromInt(self.height)) * scale;
-
-        instances[index] = .{
-            .bounds = .{ offset, offset + char_width, char_height, 0.0 },
-            .char_pos = .{ pos[0] + bx + offset_x, pos[1] + by, pos[2] },
-            .scale = .{ scale_x, scale_y },
-        };
-
-        // Convert advance from 1/64 pixels to pixels, normalize by font height, then apply scale.
-        offset_x += @as(f32, @floatFromInt(char_data.advance >> 6)) / @as(f32, @floatFromInt(self.height)) * scale;
-    }
-
-    try rdr().bufferUpdate(instance_buffer, std.mem.sliceAsBytes(&instances), 0);
-
-    render_pass.drawInstanced(mesh, self.material, instance_buffer, 0, 6, 0, s.len, ortho_matrix);
 }
