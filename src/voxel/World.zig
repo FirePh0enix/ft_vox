@@ -14,6 +14,7 @@ const Renderer = @import("../render/Renderer.zig");
 const Graph = @import("../render/Graph.zig");
 const Camera = @import("../Camera.zig");
 const RID = Renderer.RID;
+const Buffer = @import("../render/Buffer.zig");
 
 const rdr = Renderer.rdr;
 
@@ -109,7 +110,7 @@ render_distance: usize = 0,
 registry: *const Registry = undefined,
 
 const BufferData = struct {
-    rid: RID,
+    buffer: Buffer,
 
     opaque_instance_count: usize = 0,
     transparent_instance_count: usize = 0,
@@ -144,7 +145,7 @@ pub fn createBuffers(self: *Self, render_distance: usize) !void {
     self.buffers_states = try .initFull(self.allocator, (render_distance * 2 + 1) * (render_distance * 2 + 1));
 
     self.buffers = try self.allocator.alloc(BufferData, (render_distance * 2 + 1) * (render_distance * 2 + 1));
-    for (0..self.buffers.len) |index| self.buffers[index] = .{ .rid = try rdr().bufferCreate(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }) };
+    for (0..self.buffers.len) |index| self.buffers[index] = .{ .buffer = try Buffer.create(.{ .size = @sizeOf(BlockInstanceData) * Chunk.block_count, .usage = .{ .vertex_buffer = true, .transfer_dst = true } }) };
 }
 
 pub fn deinit(self: *Self) void {
@@ -164,7 +165,7 @@ pub fn deinit(self: *Self) void {
 
     rdr().waitIdle();
 
-    for (self.buffers) |buffer| rdr().freeRid(buffer.rid);
+    for (self.buffers) |*buffer| buffer.buffer.destroy();
     self.allocator.free(self.buffers);
 
     self.buffers_states.deinit(self.allocator);
@@ -415,16 +416,14 @@ pub fn freeBuffer(self: *Self, index: usize) void {
     self.buffers_states.set(index);
 }
 
-pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass: *Graph.RenderPass, shadow_material: RID, render_pass: *Graph.RenderPass, render_material: RID, camera_matrix: zm.Mat, shadow_matrix: zm.Mat) !void {
+pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass: *Graph.RenderPass, render_material: RID, camera_matrix: zm.Mat, shadow_matrix: zm.Mat) !void {
     const zone = tracy.beginZone(@src(), .{ .name = "World.encodeDrawCalls" });
     defer zone.end();
 
     self.chunks_lock.lock();
     defer self.chunks_lock.unlock();
 
-    _ = shadow_pass;
     _ = shadow_matrix;
-    _ = shadow_material;
 
     var chunk_iter = self.chunks.valueIterator();
 
@@ -437,7 +436,7 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass
         }
 
         // shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, shadow_matrix); // inversing the two matrices is interesting !
-        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, camera_matrix);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.buffer, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, camera_matrix);
     }
 
     var chunk_iter2 = self.chunks.valueIterator();
@@ -450,7 +449,7 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, shadow_pass
         }
 
         // shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, shadow_matrix);
-        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, camera_matrix);
+        render_pass.drawInstanced(cube_mesh, render_material, buffer_data.buffer, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, camera_matrix);
     }
 }
 
@@ -519,7 +518,7 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *
 
     buffer.transparent_instance_count = index - buffer.opaque_instance_count;
 
-    try rdr().bufferUpdate(buffer.rid, std.mem.sliceAsBytes(instances[0..index]), 0);
+    try buffer.buffer.update(std.mem.sliceAsBytes(instances[0..index]), 0);
 }
 
 pub const ConfigZon = struct {

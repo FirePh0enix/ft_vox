@@ -1,14 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const gl = @import("zgl");
 const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const Graph = @import("Graph.zig");
-const Device = @import("Device.zig");
 const Window = @import("../Window.zig");
 const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("backend/vulkan.zig").VulkanRenderer else void;
+const Buffer = @import("Buffer.zig");
 
 pub const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 
@@ -72,32 +71,6 @@ pub const Format = enum {
             .r8g8b8a8_srgb => .r8g8b8a8_srgb,
             .b8g8r8a8_srgb => .b8g8r8a8_srgb,
             .d32_sfloat => .d32_sfloat,
-        };
-    }
-
-    pub fn asGLInternal(self: Format) gl.TextureInternalFormat {
-        return switch (self) {
-            .r8_srgb, .r8_unorm => .r8,
-            .r8g8b8a8_srgb => .rgba,
-            .b8g8r8a8_srgb => unreachable,
-            .d32_sfloat => .depth_component,
-        };
-    }
-
-    pub fn asGLPixelFormat(self: Format) gl.PixelFormat {
-        return switch (self) {
-            .r8_srgb, .r8_unorm => .red,
-            .r8g8b8a8_srgb => .rgba,
-            .b8g8r8a8_srgb => unreachable,
-            .d32_sfloat => .depth_component,
-        };
-    }
-
-    pub fn asGLPixelType(self: Format) gl.PixelType {
-        return switch (self) {
-            .r8_srgb, .r8_unorm, .r8g8b8a8_srgb => .unsigned_byte,
-            .d32_sfloat => .float,
-            .b8g8r8a8_srgb => unreachable,
         };
     }
 
@@ -225,14 +198,6 @@ pub const BufferUsageFlags = packed struct {
             .vertex_buffer_bit = self.vertex_buffer,
         };
     }
-
-    pub fn asGL(self: BufferUsageFlags) gl.BufferTarget {
-        if (self.uniform_buffer) return .uniform_buffer;
-        if (self.index_buffer) return .element_array_buffer;
-        if (self.vertex_buffer) return .array_buffer;
-
-        unreachable;
-    }
 };
 
 pub const IndexType = enum {
@@ -243,13 +208,6 @@ pub const IndexType = enum {
         return switch (self) {
             .u16 => .uint16,
             .u32 => .uint32,
-        };
-    }
-
-    pub fn asGL(self: IndexType) gl.ElementType {
-        return switch (self) {
-            .u16 => .unsigned_short,
-            .u32 => .unsigned_int,
         };
     }
 
@@ -272,14 +230,6 @@ pub const ShaderStage = packed struct {
             .fragment_bit = self.fragment,
             .compute_bit = self.compute,
         };
-    }
-
-    pub fn asGL(self: ShaderStage) gl.ShaderType {
-        if (self.vertex) return .vertex;
-        if (self.fragment) return .fragment;
-        if (self.compute) unreachable;
-
-        unreachable;
     }
 };
 
@@ -422,10 +372,7 @@ pub const VTable = struct {
     // Buffer
     //
 
-    buffer_create: *const fn (*anyopaque, options: BufferOptions) BufferCreateError!RID,
-    buffer_update: *const fn (*anyopaque, buffer_rid: RID, s: []const u8, offset: usize) BufferUpdateError!void,
-    buffer_map: *const fn (*anyopaque, buffer_rid: RID) BufferMapError![]u8,
-    buffer_unmap: *const fn (*anyopaque, buffer_rid: RID) void,
+    create_buffer: *const fn (*anyopaque, options: Buffer.Options) Buffer.CreateError!Buffer,
 
     //
     // Image
@@ -588,39 +535,8 @@ pub inline fn freeRid(self: *const Self, rid: RID) void {
 // Buffer
 //
 
-pub const BufferOptions = struct {
-    size: usize,
-    usage: BufferUsageFlags,
-    alloc_usage: AllocUsage = .gpu_only,
-};
-
-pub const BufferCreateError = error{
-    Failed,
-    OutOfDeviceMemory,
-} || Allocator.Error;
-
-pub inline fn bufferCreate(self: *const Self, options: BufferOptions) BufferCreateError!RID {
-    return self.vtable.buffer_create(self.ptr, options);
-}
-
-pub const BufferUpdateError = error{
-    Failed,
-} || BufferCreateError;
-
-pub inline fn bufferUpdate(self: *const Self, buffer_rid: RID, s: []const u8, offset: usize) BufferUpdateError!void {
-    return self.vtable.buffer_update(self.ptr, buffer_rid, s, offset);
-}
-
-pub const BufferMapError = error{
-    Failed,
-};
-
-pub inline fn bufferMap(self: *const Self, buffer_rid: RID) BufferMapError![]const u8 {
-    return self.vtable.buffer_map(self.ptr, buffer_rid);
-}
-
-pub inline fn bufferUnmap(self: *const Self, buffer_rid: RID) void {
-    return self.vtable.buffer_unmap(self.ptr, buffer_rid);
+pub inline fn createBuffer(self: *const Self, options: Buffer.Options) Buffer.CreateError!Buffer {
+    return self.vtable.create_buffer(self.ptr, options);
 }
 
 //
@@ -699,7 +615,7 @@ pub const MaterialParameterValue = union(MaterialParameterValueType) {
         sampler: SamplerOptions = .{},
         layout: ImageLayout = .shader_read_only_optimal,
     },
-    buffer: RID,
+    buffer: Buffer,
 };
 
 pub const MaterialInstanceLayout = struct {

@@ -11,7 +11,7 @@ const tracy = @import("tracy");
 const Renderer = @import("render/Renderer.zig");
 const Window = @import("Window.zig");
 const Graph = @import("render/Graph.zig");
-const ShadowPass = @import("render/ShadowPass.zig");
+const Buffer = @import("render/Buffer.zig");
 const Camera = @import("Camera.zig");
 const World = @import("voxel/World.zig");
 const Chunk = @import("voxel/Chunk.zig");
@@ -77,8 +77,6 @@ pub var registry: Registry = undefined;
 
 var graph: Graph = undefined;
 pub var render_graph_pass: Graph.RenderPass = undefined;
-
-var shadow_pass: ShadowPass = undefined;
 
 fn n(v: [3]f32) [3]f32 {
     const inv_length = 1.0 / std.math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -201,7 +199,7 @@ const LightData = struct {
 };
 
 var light_matrix: zm.Mat = undefined;
-var light_buffer_rid: RID = undefined;
+var light_buffer: Buffer = undefined;
 
 var font: Font = undefined;
 var text: Text = undefined;
@@ -243,12 +241,6 @@ pub fn mainDesktop() !void {
     });
     defer render_graph_pass.deinit();
 
-    shadow_pass = try ShadowPass.init(.{ .allocator = allocator });
-    defer shadow_pass.deinit();
-
-    render_graph_pass.addImguiHook(&ShadowPass.debugHook);
-    render_graph_pass.dependsOn(&shadow_pass.pass);
-
     graph = Graph.init(allocator);
     graph.main_render_pass = &render_graph_pass;
 
@@ -275,11 +267,11 @@ pub fn mainDesktop() !void {
 
     try registry.lock();
 
-    light_buffer_rid = try rdr().bufferCreate(.{
+    light_buffer = try Buffer.create(.{
         .size = @sizeOf(LightData),
         .usage = .{ .uniform_buffer = true, .transfer_dst = true },
     });
-    defer rdr().freeRid(light_buffer_rid);
+    defer light_buffer.destroy();
 
     material = try rdr().materialCreate(.{
         .shaders = &.{
@@ -313,7 +305,7 @@ pub fn mainDesktop() !void {
             },
         },
     });
-    try rdr().materialSetParam(material, "light", .{ .buffer = light_buffer_rid });
+    try rdr().materialSetParam(material, "light", .{ .buffer = light_buffer });
 
     the_world = World.initEmpty(allocator, .{ .seed = args.options.seed });
     defer the_world.deinit();
@@ -342,8 +334,6 @@ fn tick(world: *World) !void {
     const zone = tracy.beginZone(@src(), .{});
     defer zone.end();
 
-    // const time_before = std.time.microTimestamp();
-
     input.pollEvents();
 
     camera.updateCamera(world);
@@ -360,7 +350,6 @@ fn tick(world: *World) !void {
 
     // Record draw calls into the render pass
     render_graph_pass.reset();
-    shadow_pass.pass.reset();
 
     const light_proj_bound: f32 = 100.0;
 
@@ -377,9 +366,9 @@ fn tick(world: *World) !void {
         .matrix = zm.matToArr(light_matrix),
         .position = zm.vecToArr3(light_pos),
     };
-    try rdr().bufferUpdate(light_buffer_rid, std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
+    try light_buffer.update(std.mem.sliceAsBytes(@as([*]const LightData, @ptrCast(&light_data))[0..1]), 0);
 
-    try the_world.encodeDrawCalls(&camera, cube_mesh, &shadow_pass.pass, shadow_pass.material, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
+    try the_world.encodeDrawCalls(&camera, cube_mesh, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
     const stats = rdr().getStatistics();
 
@@ -389,11 +378,6 @@ fn tick(world: *World) !void {
     text.draw(&render_graph_pass);
 
     try rdr().processGraph(&graph);
-
-    // const time_after = std.time.microTimestamp();
-    // const elapsed = time_after - time_before;
-
-    // rdr().asVk().statistics.prv_cpu_time = @as(f32, @floatFromInt(elapsed)) / 1000.0;
 }
 
 fn statsDebugHook(render_pass: *Graph.RenderPass) void {

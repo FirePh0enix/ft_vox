@@ -5,6 +5,7 @@ const zm = @import("zmath");
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const Renderer = @import("Renderer.zig");
+const Buffer = @import("Buffer.zig");
 const RID = Renderer.RID;
 const Rect = Renderer.Rect;
 
@@ -126,7 +127,7 @@ pub const RenderPass = struct {
         self: *RenderPass,
         mesh: RID,
         material: RID,
-        instance_buffer: RID,
+        instance_buffer: Buffer,
         first_vertex: usize,
         vertex_count: usize,
         first_instance: usize,
@@ -151,7 +152,7 @@ pub const RenderPass = struct {
 pub const DrawCall = struct {
     material: RID,
     mesh: RID,
-    instance_buffer: ?RID = null,
+    instance_buffer: ?Buffer = null,
 
     first_vertex: usize,
     vertex_count: usize,

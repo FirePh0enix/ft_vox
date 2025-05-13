@@ -6,6 +6,7 @@ const Self = @This();
 const Renderer = @import("render/Renderer.zig");
 const RID = Renderer.RID;
 const Graph = @import("render/Graph.zig");
+const Buffer = @import("render/Buffer.zig");
 
 const rdr = Renderer.rdr;
 
@@ -48,7 +49,7 @@ const FontInstance = extern struct {
 
 bitmap: RID,
 material: RID,
-uniform_buffer: RID,
+uniform_buffer: Buffer,
 
 characters: std.AutoHashMap(u8, Character),
 
@@ -59,7 +60,7 @@ var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
 pub var mesh: RID = undefined;
 
-var instance_buffer: RID = undefined;
+var instance_buffer: Buffer = undefined;
 
 pub fn orthographicRh(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) zm.Mat {
     const w = right - left;
@@ -117,7 +118,7 @@ pub fn initLib() !void {
         })),
     });
 
-    instance_buffer = try rdr().bufferCreate(.{
+    instance_buffer = try Buffer.create(.{
         .size = @sizeOf(FontInstance) * 43,
         .usage = .{ .vertex_buffer = true, .transfer_dst = true },
     });
@@ -129,7 +130,7 @@ pub fn initLib() !void {
 }
 
 pub fn deinitLib() void {
-    rdr().freeRid(instance_buffer);
+    instance_buffer.destroy();
     rdr().freeRid(mesh);
 }
 
@@ -216,11 +217,11 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
         .color = .{ 1.0, 1.0, 1.0, 1.0 },
     };
 
-    const uniform_buffer_rid = try rdr().bufferCreate(.{
+    var uniform_buffer = try Buffer.create(.{
         .size = @sizeOf(FontUniform),
         .usage = .{ .uniform_buffer = true, .transfer_dst = true },
     });
-    try rdr().bufferUpdate(uniform_buffer_rid, std.mem.asBytes(&font_uniform), 0);
+    try uniform_buffer.update(std.mem.asBytes(&font_uniform), 0);
 
     const material_rid = try rdr().materialCreate(.{
         .shaders = &.{
@@ -247,12 +248,12 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
             .sampler = .{ .mag_filter = .nearest, .min_filter = .nearest }, // FIXME: using .linear create artifacts on the edge of the characters, probably due to sampling neighbor pixels from other characters
         },
     });
-    try rdr().materialSetParam(material_rid, "font", .{ .buffer = uniform_buffer_rid });
+    try rdr().materialSetParam(material_rid, "font", .{ .buffer = uniform_buffer });
 
     return Self{
         .bitmap = texture_rid,
         .material = material_rid,
-        .uniform_buffer = uniform_buffer_rid,
+        .uniform_buffer = uniform_buffer,
         .width = @intCast(bmp_width),
         .height = @intCast(bmp_height),
         .characters = characters,
@@ -262,7 +263,7 @@ pub fn init(font_name: [:0]const u8, font_size_: u32, allocator: std.mem.Allocat
 pub fn deinit(self: *Self) void {
     rdr().freeRid(self.bitmap);
     rdr().freeRid(self.material);
-    rdr().freeRid(self.uniform_buffer);
 
+    self.uniform_buffer.destroy();
     self.characters.deinit();
 }

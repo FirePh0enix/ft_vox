@@ -11,6 +11,7 @@ const Window = @import("../../Window.zig");
 const Graph = @import("../Graph.zig");
 const Renderer = @import("../Renderer.zig");
 const RID = Renderer.RID;
+const Buffer = @import("../Buffer.zig");
 
 const rdr = Renderer.rdr;
 const createWithInit = Renderer.createWithInit;
@@ -117,10 +118,7 @@ pub const VulkanRenderer = struct {
 
         .free_rid = @ptrCast(&freeRid),
 
-        .buffer_create = @ptrCast(&bufferCreate),
-        .buffer_update = @ptrCast(&bufferUpdate),
-        .buffer_map = @ptrCast(&bufferMap),
-        .buffer_unmap = @ptrCast(&bufferUnmap),
+        .create_buffer = @ptrCast(&createBuffer),
 
         .image_create = @ptrCast(&imageCreate),
         .image_update = @ptrCast(&imageUpdate),
@@ -552,15 +550,23 @@ pub const VulkanRenderer = struct {
             cb.bindPipeline(.graphics, pipeline.pipeline);
             cb.bindDescriptorSets(.graphics, pipeline.layout, 0, 1, @ptrCast(&material.descriptor_set), 0, null);
 
-            cb.bindIndexBuffer(mesh.index_buffer.as(VulkanBuffer).buffer, 0, mesh.index_type);
+            const index_buffer: *VulkanBuffer = @ptrCast(@alignCast(mesh.index_buffer.ptr));
+            const vertex_buffer: *VulkanBuffer = @ptrCast(@alignCast(mesh.vertex_buffer.ptr));
+            const normal_buffer: *VulkanBuffer = @ptrCast(@alignCast(mesh.normal_buffer.ptr));
+            const uv_buffer: *VulkanBuffer = @ptrCast(@alignCast(mesh.uv_buffer.ptr));
+
+            cb.bindIndexBuffer(index_buffer.buffer, 0, mesh.index_type);
 
             cb.bindVertexBuffers(0, 3, &.{
-                mesh.vertex_buffer.as(VulkanBuffer).buffer,
-                mesh.normal_buffer.as(VulkanBuffer).buffer,
-                mesh.texture_coords_buffer.as(VulkanBuffer).buffer,
+                vertex_buffer.buffer,
+                normal_buffer.buffer,
+                uv_buffer.buffer,
             }, &.{ 0, 0, 0 });
 
-            if (call.instance_buffer) |ib| cb.bindVertexBuffers(3, 1, @ptrCast(&ib.as(VulkanBuffer).buffer), &.{0});
+            if (call.instance_buffer) |ib| {
+                const instance_buffer: *VulkanBuffer = @ptrCast(@alignCast(ib.ptr));
+                cb.bindVertexBuffers(3, 1, &.{instance_buffer.buffer}, &.{0});
+            }
 
             cb.setViewport(0, 1, @ptrCast(&vk.Viewport{
                 .x = 0.0,
@@ -854,10 +860,7 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn freeRid(self: *VulkanRenderer, rid: RID) void {
-        if (rid.tryAs(VulkanBuffer)) |buffer| {
-            buffer.deinit(self);
-            self.allocator.destroy(buffer);
-        } else if (rid.tryAs(VulkanImage)) |image| {
+        if (rid.tryAs(VulkanImage)) |image| {
             image.deinit(self);
             self.allocator.destroy(image);
         } else if (rid.tryAs(VulkanFramebuffer)) |framebuffer| {
@@ -894,7 +897,7 @@ pub const VulkanRenderer = struct {
     // Buffer
     //
 
-    pub fn bufferCreate(self: *VulkanRenderer, options: Renderer.BufferOptions) Renderer.BufferCreateError!RID {
+    pub fn createBuffer(self: *VulkanRenderer, options: Buffer.Options) Buffer.CreateError!Buffer {
         const alloc_flags: vk.MemoryPropertyFlags = switch (options.alloc_usage) {
             .gpu_only => .{ .device_local_bit = true },
             .cpu_to_gpu => .{ .device_local_bit = true, .host_visible_bit = true },
@@ -914,79 +917,14 @@ pub const VulkanRenderer = struct {
         };
         errdefer self.device.freeMemory(memory, null);
 
-        const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanBuffer, self.allocator, .{
-            .size = options.size,
-            .buffer = buffer,
-            .memory = memory,
-        })) };
-
-        self.rid_infos_mutex.lock();
-        defer self.rid_infos_mutex.unlock();
-
-        try self.addRIDInfo(rid, @returnAddress());
-        return rid;
-    }
-
-    pub fn bufferUpdate(self: *VulkanRenderer, buffer_rid: RID, s: []const u8, offset: usize) Renderer.BufferUpdateError!void {
-        const buffer = buffer_rid.as(VulkanBuffer);
-
-        std.debug.assert(s.len <= buffer.size - offset);
-
-        // Nothing to update, skip it otherwise `bufferCreate` will fail.
-        if (s.len == 0) {
-            return;
-        }
-
-        var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
-        defer self.freeRid(staging_buffer_rid);
-
-        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
-
-        {
-            const map_data = try self.bufferMap(staging_buffer_rid);
-            defer self.bufferUnmap(staging_buffer_rid);
-
-            @memcpy(map_data[0..s.len], s);
-        }
-
-        // Record the command buffer
-        self.graphics_queue_mutex.lock();
-        defer self.graphics_queue_mutex.unlock();
-
-        self.transfer_command_buffer.resetCommandBuffer(.{}) catch return error.Failed;
-        self.transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
-        }) catch return error.Failed;
-
-        const regions: []const vk.BufferCopy = &.{
-            vk.BufferCopy{ .src_offset = 0, .dst_offset = @intCast(offset), .size = @intCast(s.len) },
+        return .{
+            .ptr = try createWithInit(VulkanBuffer, self.allocator, .{
+                .size = options.size,
+                .buffer = buffer,
+                .memory = memory,
+            }),
+            .vtable = &VulkanBuffer.vtable,
         };
-
-        self.transfer_command_buffer.copyBuffer(staging_buffer.buffer, buffer.buffer, @intCast(regions.len), regions.ptr);
-        self.transfer_command_buffer.endCommandBuffer() catch return error.Failed;
-
-        self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
-            .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&self.transfer_command_buffer),
-        }), .null_handle) catch return error.Failed;
-        self.graphics_queue.waitIdle() catch return error.Failed;
-    }
-
-    pub fn bufferMap(self: *VulkanRenderer, buffer_rid: RID) Renderer.BufferMapError![]u8 {
-        const buffer = buffer_rid.as(VulkanBuffer);
-
-        const data: ?*anyopaque = self.device.mapMemory(buffer.memory, 0, buffer.size, .{}) catch return error.Failed;
-
-        if (data) |ptr| {
-            return @as([*]u8, @ptrCast(ptr))[0..buffer.size];
-        } else {
-            return error.Failed;
-        }
-    }
-
-    pub fn bufferUnmap(self: *VulkanRenderer, buffer_rid: RID) void {
-        const buffer = buffer_rid.as(VulkanBuffer);
-        self.device.unmapMemory(buffer.memory);
     }
 
     //
@@ -1093,15 +1031,14 @@ pub const VulkanRenderer = struct {
 
         std.debug.assert(s.len <= image.size - offset);
 
-        var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
-        const staging_buffer = staging_buffer_rid.as(VulkanBuffer);
-        defer self.freeRid(staging_buffer_rid);
+        var staging_buffer = try Buffer.create(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
+        defer staging_buffer.destroy();
 
         {
-            const map_data = try self.bufferMap(staging_buffer_rid);
-            defer self.bufferUnmap(staging_buffer_rid);
+            const mapped_slice = try staging_buffer.map();
+            defer staging_buffer.unmap();
 
-            @memcpy(map_data[0..s.len], s);
+            @memcpy(mapped_slice[0..s.len], s);
         }
 
         // Record the command buffer
@@ -1129,7 +1066,7 @@ pub const VulkanRenderer = struct {
             },
         };
 
-        self.transfer_command_buffer.copyBufferToImage(staging_buffer.buffer, image.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
+        self.transfer_command_buffer.copyBufferToImage(@as(*VulkanBuffer, @ptrCast(@alignCast(staging_buffer.ptr))).buffer, image.image, .transfer_dst_optimal, @intCast(regions.len), regions.ptr);
         self.transfer_command_buffer.endCommandBuffer() catch return error.Failed;
 
         self.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
@@ -1290,7 +1227,7 @@ pub const VulkanRenderer = struct {
                 self.device.updateDescriptorSets(@intCast(writes.len), writes.ptr, 0, null);
             },
             .buffer => |b| {
-                const buffer = b.as(VulkanBuffer);
+                const buffer: *VulkanBuffer = @ptrCast(@alignCast(b.ptr));
 
                 param.value = .{ .buffer = b };
 
@@ -1319,21 +1256,21 @@ pub const VulkanRenderer = struct {
     //
 
     pub fn meshCreate(self: *VulkanRenderer, options: Renderer.MeshOptions) Renderer.MeshCreateError!RID {
-        const index_buffer = try self.bufferCreate(.{ .size = options.indices.len, .usage = .{ .index_buffer = true, .transfer_dst = true } });
-        const vertex_buffer = try self.bufferCreate(.{ .size = options.vertices.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
-        const normal_buffer = try self.bufferCreate(.{ .size = options.normals.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
-        const texture_coords_buffer = try self.bufferCreate(.{ .size = options.texture_coords.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+        var index_buffer = try Buffer.create(.{ .size = options.indices.len, .usage = .{ .index_buffer = true, .transfer_dst = true } });
+        var vertex_buffer = try Buffer.create(.{ .size = options.vertices.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+        var normal_buffer = try Buffer.create(.{ .size = options.normals.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
+        var uv_buffer = try Buffer.create(.{ .size = options.texture_coords.len, .usage = .{ .vertex_buffer = true, .transfer_dst = true } });
 
-        self.bufferUpdate(index_buffer, options.indices, 0) catch return error.Failed;
-        self.bufferUpdate(vertex_buffer, options.vertices, 0) catch return error.Failed;
-        self.bufferUpdate(normal_buffer, options.normals, 0) catch return error.Failed;
-        self.bufferUpdate(texture_coords_buffer, options.texture_coords, 0) catch return error.Failed;
+        index_buffer.update(options.indices, 0) catch return error.Failed;
+        vertex_buffer.update(options.vertices, 0) catch return error.Failed;
+        normal_buffer.update(options.normals, 0) catch return error.Failed;
+        uv_buffer.update(options.texture_coords, 0) catch return error.Failed;
 
         const rid: RID = .{ .inner = @intFromPtr(try createWithInit(VulkanMesh, self.allocator, .{
             .index_buffer = index_buffer,
             .vertex_buffer = vertex_buffer,
             .normal_buffer = normal_buffer,
-            .texture_coords_buffer = texture_coords_buffer,
+            .uv_buffer = uv_buffer,
             .indices_count = options.indices.len / options.index_type.bytes(),
             .index_type = options.index_type.asVk(),
         })) };
@@ -1879,16 +1816,90 @@ pub const Features = struct {
 };
 
 pub const VulkanBuffer = struct {
-    pub const resource_signature: usize = @truncate(0x5e165628f7e0b61a);
-
-    signature: usize = resource_signature,
     size: usize,
     buffer: vk.Buffer,
     memory: vk.DeviceMemory,
 
-    pub fn deinit(self: *const VulkanBuffer, r: *VulkanRenderer) void {
+    pub const vtable: Buffer.VTable = .{
+        .destroy = @ptrCast(&destroy),
+        .update = @ptrCast(&update),
+        .map = @ptrCast(&map),
+        .unmap = @ptrCast(&unmap),
+    };
+
+    pub fn destroy(self: *VulkanBuffer) void {
+        const r = rdr().asVk();
+
         r.device.freeMemory(self.memory, null);
         r.device.destroyBuffer(self.buffer, null);
+        r.allocator.destroy(self);
+    }
+
+    pub fn update(self: *VulkanBuffer, s: []const u8, offset: usize) Buffer.UpdateError!void {
+        // `s` is too big for the buffer.
+        if (s.len > self.size - offset) {
+            return error.OutOfBounds;
+        }
+
+        // Nothing to update, skip it otherwise `bufferCreate` will fail.
+        if (s.len == 0) {
+            return;
+        }
+
+        // var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
+        // defer self.freeRid(staging_buffer_rid);
+
+        var staging_buffer = try Buffer.create(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
+        defer staging_buffer.destroy();
+
+        {
+            const mapped_slice = try staging_buffer.map();
+            defer staging_buffer.unmap();
+
+            @memcpy(mapped_slice[0..s.len], s);
+        }
+
+        const r = rdr().asVk();
+
+        // Record the command buffer
+        r.graphics_queue_mutex.lock();
+        defer r.graphics_queue_mutex.unlock();
+
+        r.transfer_command_buffer.resetCommandBuffer(.{}) catch return error.Failed;
+        r.transfer_command_buffer.beginCommandBuffer(&vk.CommandBufferBeginInfo{
+            .flags = .{ .one_time_submit_bit = true },
+        }) catch return error.Failed;
+
+        const regions: []const vk.BufferCopy = &.{
+            vk.BufferCopy{ .src_offset = 0, .dst_offset = @intCast(offset), .size = @intCast(s.len) },
+        };
+
+        r.transfer_command_buffer.copyBuffer(@as(*VulkanBuffer, @ptrCast(@alignCast(staging_buffer.ptr))).buffer, self.buffer, @intCast(regions.len), regions.ptr);
+        r.transfer_command_buffer.endCommandBuffer() catch return error.Failed;
+
+        r.graphics_queue.submit(1, @ptrCast(&vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&r.transfer_command_buffer),
+        }), .null_handle) catch return error.Failed;
+
+        // TODO: Probably remove this.
+        r.graphics_queue.waitIdle() catch return error.Failed;
+    }
+
+    pub fn map(self: *VulkanBuffer) Buffer.MapError![]u8 {
+        const r = rdr().asVk();
+        const data: ?*anyopaque = r.device.mapMemory(self.memory, 0, self.size, .{}) catch return error.Failed;
+
+        if (data) |ptr| {
+            return @as([*]u8, @ptrCast(ptr))[0..self.size];
+        } else {
+            return error.Failed;
+        }
+    }
+
+    pub fn unmap(self: *const VulkanBuffer) void {
+        const r = rdr().asVk();
+        r.device.unmapMemory(self.memory);
     }
 };
 
@@ -2019,7 +2030,7 @@ pub const VulkanMaterial = struct {
             sampler: vk.Sampler,
             rid: RID,
         },
-        buffer: RID,
+        buffer: Buffer,
     };
 
     pub const Param = struct {
@@ -2074,19 +2085,21 @@ pub const VulkanMesh = struct {
 
     signature: usize = resource_signature,
 
-    index_buffer: RID,
-    vertex_buffer: RID,
-    normal_buffer: RID,
-    texture_coords_buffer: RID,
+    index_buffer: Buffer,
+    vertex_buffer: Buffer,
+    normal_buffer: Buffer,
+    uv_buffer: Buffer,
 
     indices_count: usize,
     index_type: vk.IndexType,
 
-    pub fn deinit(self: *const VulkanMesh, r: *VulkanRenderer) void {
-        r.freeRid(self.index_buffer);
-        r.freeRid(self.vertex_buffer);
-        r.freeRid(self.normal_buffer);
-        r.freeRid(self.texture_coords_buffer);
+    pub fn deinit(self: *VulkanMesh, r: *VulkanRenderer) void {
+        _ = r;
+
+        self.index_buffer.destroy();
+        self.vertex_buffer.destroy();
+        self.normal_buffer.destroy();
+        self.uv_buffer.destroy();
     }
 };
 

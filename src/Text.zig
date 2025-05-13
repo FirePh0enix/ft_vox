@@ -6,6 +6,7 @@ const RID = Renderer.RID;
 const Graph = @import("render/Graph.zig");
 const Font = @import("Font.zig");
 const Allocator = std.mem.Allocator;
+const Buffer = @import("render/Buffer.zig");
 
 const CharInstance = extern struct {
     bounds: [4]f32,
@@ -18,13 +19,13 @@ const rdr = Renderer.rdr;
 text: []const u8 = &.{},
 font: *const Font,
 
-instance_buffer: RID,
+instance_buffer: Buffer,
 capacity: usize,
 
 pub fn initCapacity(font: *const Font, capacity: usize) !Self {
     return .{
         .font = font,
-        .instance_buffer = try rdr().bufferCreate(.{
+        .instance_buffer = try Buffer.create(.{
             .size = capacity * @sizeOf(CharInstance),
             .usage = .{ .vertex_buffer = true, .transfer_dst = true },
         }),
@@ -32,8 +33,8 @@ pub fn initCapacity(font: *const Font, capacity: usize) !Self {
     };
 }
 
-pub fn deinit(self: *const Self) void {
-    rdr().freeRid(self.instance_buffer);
+pub fn deinit(self: *Self) void {
+    self.instance_buffer.destroy();
 }
 
 pub fn from(font: *const Font, scale: f32, pos: [3]f32, s: []const u8) !Self {
@@ -51,9 +52,9 @@ pub fn set(self: *Self, s: []const u8, pos: [3]f32, scale: f32) !void {
     if (s.len > self.text.len) {
         self.capacity = s.len;
 
-        rdr().freeRid(self.instance_buffer);
+        self.instance_buffer.destroy();
 
-        self.instance_buffer = try rdr().bufferCreate(.{
+        self.instance_buffer = try Buffer.create(.{
             .size = self.capacity * @sizeOf(CharInstance),
             .usage = .{ .vertex_buffer = true, .transfer_dst = true },
         });
@@ -90,7 +91,7 @@ pub fn set(self: *Self, s: []const u8, pos: [3]f32, scale: f32) !void {
                 batch_size
             else
                 index - (index / batch_size) * batch_size + 1;
-            try rdr().bufferUpdate(self.instance_buffer, std.mem.sliceAsBytes(instances[0..size]), batch_size * @sizeOf(CharInstance) * (index / batch_size));
+            try self.instance_buffer.update(std.mem.sliceAsBytes(instances[0..size]), batch_size * @sizeOf(CharInstance) * (index / batch_size));
         }
 
         // Convert advance from 1/64 pixels to pixels, normalize by font height, then apply scale.
