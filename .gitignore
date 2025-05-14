@@ -1,7 +1,6 @@
-# Zig
+# CMake
 
-.zig-cache
-zig-out
+build
 
 # macOS
 
