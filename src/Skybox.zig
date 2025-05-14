@@ -133,6 +133,7 @@ pub fn init(allocator: Allocator) !Self {
         .height = 1024,
         .layers = 6,
         .format = .r8g8b8a8_srgb,
+        .flags = .{ .cube_compatible = true },
     });
 
     const faces: []const []const u8 = &.{ "bk", "lf", "ft", "rt", "up", "dn" };
@@ -177,7 +178,15 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn encodeDraw(self: *const Self, render_pass: *Graph.RenderPass) void {
-    const scale = zm.scaling(10.0, 10.0, 10.0);
+    const proj = root.camera.projection_matrix;
+    var view = root.camera.getViewMatrix();
 
-    render_pass.draw(self.mesh, self.material_rid, 0, rdr().meshGetIndicesCount(self.mesh), zm.mul(root.camera.getViewProjMatrix(), scale));
+    // Removing Translation.
+    view[3][0] = 0.0;
+    view[3][1] = 0.0;
+    view[3][2] = 0.0;
+
+    const view_proj = zm.mul(view, proj);
+
+    render_pass.draw(self.mesh, self.material_rid, 0, rdr().meshGetIndicesCount(self.mesh), view_proj);
 }

@@ -1,17 +1,15 @@
 #version 450
 
 layout(location = 0) in vec3 inPos;
-layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec2 inTexCoords;
-
-layout (location = 0) out vec3 outTexCoords; 
+layout(location = 0) out vec3 texCoords;
 
 layout(push_constant) uniform PushConst {
-    mat4 viewMatrix;
+    mat4 viewProj;
 };
 
-void main(){
-    outTexCoords = vec3(inTexCoords, 0.0);
-    mat4 viewMat = mat4(mat3(viewMatrix));
-    gl_Position = viewMatrix * vec4(inPos, 1.0);
+void main() {
+    texCoords = inPos;
+    vec4 pos = viewProj * vec4(inPos, 1.0);
+    gl_Position = pos;
+    gl_Position.z = gl_Position.w; 
 }

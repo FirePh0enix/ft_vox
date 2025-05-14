@@ -954,9 +954,16 @@ pub const VulkanRenderer = struct {
         };
         errdefer self.device.freeMemory(memory, null);
 
+        // Had to modify here since 6 layers must correspond to cub map view.
+        const view_type: vk.ImageViewType = switch (options.layers) {
+            1 => .@"2d",
+            6 => .cube,
+            else => .@"2d_array",
+        };
+
         const image_view = self.device.createImageView(&vk.ImageViewCreateInfo{
             .image = image,
-            .view_type = if (options.layers == 1) .@"2d" else .@"2d_array",
+            .view_type = view_type,
             .format = options.format.asVk(),
             .components = switch (options.pixel_mapping) {
                 .identity => .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
@@ -1554,10 +1561,12 @@ pub const VulkanRenderer = struct {
             .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
         };
 
+        // Changed the compare op to less or equal.
+        // Less only does not render the cube map.
         const depth_info: vk.PipelineDepthStencilStateCreateInfo = .{
             .depth_test_enable = vk.TRUE,
             .depth_write_enable = vk.TRUE,
-            .depth_compare_op = .less,
+            .depth_compare_op = .less_or_equal,
             .depth_bounds_test_enable = vk.FALSE,
             .min_depth_bounds = 0.0,
             .max_depth_bounds = 1.0,
