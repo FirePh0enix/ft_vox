@@ -60,8 +60,6 @@ var library: c.FT_Library = undefined;
 pub var ortho_matrix: zm.Mat = undefined;
 pub var mesh: RID = undefined;
 
-var instance_buffer: Buffer = undefined;
-
 pub fn orthographicRh(left: f32, right: f32, top: f32, bottom: f32, near: f32, far: f32) zm.Mat {
     const w = right - left;
     const h = bottom - top;
@@ -118,11 +116,6 @@ pub fn initLib() !void {
         })),
     });
 
-    instance_buffer = try Buffer.create(.{
-        .size = @sizeOf(FontInstance) * 43,
-        .usage = .{ .vertex_buffer = true, .transfer_dst = true },
-    });
-
     const size = rdr().getSize();
     const aspect_ratio = @as(f32, @floatFromInt(size.width)) / @as(f32, @floatFromInt(size.height));
 
@@ -130,7 +123,6 @@ pub fn initLib() !void {
 }
 
 pub fn deinitLib() void {
-    instance_buffer.destroy();
     rdr().freeRid(mesh);
 }
 

@@ -198,6 +198,9 @@ pub fn build(b: *Build) !void {
 
         "assets/shaders/font.vert",
         "assets/shaders/font.frag",
+
+        "assets/shaders/skybox.vert",
+        "assets/shaders/skybox.frag",
     };
 
     for (files) |file| {

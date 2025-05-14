@@ -61,6 +61,7 @@ pub const Format = enum {
     r8_srgb,
     r8_unorm,
     r8g8b8a8_srgb,
+    r8g8b8_uint,
     b8g8r8a8_srgb,
     d32_sfloat,
 
@@ -69,6 +70,7 @@ pub const Format = enum {
             .r8_srgb => .r8_srgb,
             .r8_unorm => .r8_unorm,
             .r8g8b8a8_srgb => .r8g8b8a8_srgb,
+            .r8g8b8_uint => .r8g8b8_uint,
             .b8g8r8a8_srgb => .b8g8r8a8_srgb,
             .d32_sfloat => .d32_sfloat,
         };
@@ -79,6 +81,7 @@ pub const Format = enum {
             .r8_srgb => .r8_srgb,
             .r8_unorm => .r8_unorm,
             .r8g8b8a8_srgb => .r8g8b8a8_srgb,
+            .r8g8b8_uint => .r8g8b8_uint,
             .b8g8r8a8_srgb => .b8g8r8a8_srgb,
             .d32_sfloat => .d32_sfloat,
             else => unreachable,
@@ -88,6 +91,7 @@ pub const Format = enum {
     pub fn sizeBytes(self: Format) usize {
         return switch (self) {
             .r8_srgb, .r8_unorm => 1,
+            .r8g8b8_uint => 3,
             .r8g8b8a8_srgb, .b8g8r8a8_srgb, .d32_sfloat => 4,
         };
     }
@@ -277,11 +281,13 @@ pub const PolygonMode = enum {
 };
 
 pub const CullMode = enum {
+    none,
     back,
     front,
 
     pub fn asVk(self: CullMode) vk.CullModeFlags {
         return switch (self) {
+            .none => .{},
             .back => .{ .back_bit = true },
             .front => .{ .front_bit = true },
         };
@@ -543,6 +549,16 @@ pub inline fn createBuffer(self: *const Self, options: Buffer.Options) Buffer.Cr
 // Image
 //
 
+pub const ImageFlags = packed struct {
+    cube_compatible: bool = false,
+
+    pub fn toVK(self: ImageFlags) vk.ImageCreateFlags {
+        return .{
+            .cube_compatible_bit = self.cube_compatible,
+        };
+    }
+};
+
 pub const ImageOptions = struct {
     width: usize,
     height: usize,
@@ -552,6 +568,7 @@ pub const ImageOptions = struct {
     usage: ImageUsageFlags = .{ .sampled = true, .transfer_dst = true },
     aspect_mask: ImageAspectFlags = .{ .color = true },
     pixel_mapping: PixelMapping = .identity,
+    flags: ImageFlags = .{},
 };
 
 pub const ImageCreateError = error{

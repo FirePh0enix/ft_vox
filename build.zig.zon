@@ -52,9 +52,6 @@
             .url = "git+https://github.com/hexops/freetype#972cd37bccecae2cc9f54cf0b562263a13209d02",
             .hash = "freetype-0.0.0-AAAAAA5JcwBMujojfNLEq5g_WijZtU56mRLYx8bjjiMU",
         },
-        .zgl = .{
-            .path = "deps/zgl_es3",
-        },
         .tracy = .{
             .path = "deps/zig-tracy",
         },

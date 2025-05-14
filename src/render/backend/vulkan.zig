@@ -933,6 +933,7 @@ pub const VulkanRenderer = struct {
 
     pub fn imageCreate(self: *VulkanRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
         const image = self.device.createImage(&vk.ImageCreateInfo{
+            .flags = options.flags.toVK(),
             .image_type = .@"2d",
             .format = options.format.asVk(),
             .extent = .{ .width = @intCast(options.width), .height = @intCast(options.height), .depth = 1 },
@@ -1506,7 +1507,7 @@ pub const VulkanRenderer = struct {
             .rasterizer_discard_enable = vk.FALSE,
             .polygon_mode = options.material.polygon_mode,
             .line_width = 1.0,
-            .cull_mode = .{ .back_bit = true },
+            .cull_mode = options.material.cull_mode,
             .front_face = .counter_clockwise,
             .depth_bias_enable = vk.FALSE,
             .depth_bias_constant_factor = 0.0,

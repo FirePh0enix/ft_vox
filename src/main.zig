@@ -20,6 +20,7 @@ const Registry = @import("voxel/Registry.zig");
 const RID = Renderer.RID;
 const Font = @import("Font.zig");
 const Text = @import("Text.zig");
+const Skybox = @import("Skybox.zig");
 
 const rdr = Renderer.rdr;
 
@@ -203,6 +204,7 @@ var light_buffer: Buffer = undefined;
 
 var font: Font = undefined;
 var text: Text = undefined;
+var skybox: Skybox = undefined;
 
 pub fn mainDesktop() !void {
     defer _ = debug_allocator.detectLeaks();
@@ -255,6 +257,9 @@ pub fn mainDesktop() !void {
 
     text = try Text.initCapacity(&font, 5);
     defer text.deinit();
+
+    skybox = try Skybox.init(allocator);
+    defer skybox.deinit();
 
     registry = Registry.init(allocator);
     defer registry.deinit();
@@ -370,10 +375,12 @@ fn tick(world: *World) !void {
 
     try the_world.encodeDrawCalls(&camera, cube_mesh, &render_graph_pass, material, camera.getViewProjMatrix(), light_matrix);
 
+    skybox.encodeDraw(&render_graph_pass);
+
     const stats = rdr().getStatistics();
 
     var buf: [64]u8 = undefined;
-    try text.set(std.fmt.bufPrint(&buf, "{d:.2} ms", .{stats.gpu_time}) catch &.{}, .{ -2.0, 0.0, 0.0 }, 0.1);
+    try text.set(std.fmt.bufPrint(&buf, "{d:.2} ms", .{stats.gpu_time}) catch &.{}, .{ 0.0, 0.0, 0.0 }, 0.1);
 
     text.draw(&render_graph_pass);
 
