@@ -209,7 +209,7 @@ pub fn setBlockState(self: *Self, x: i64, y: i64, z: i64, state: BlockState) voi
             chunk.computeVisibilityNoLock(self);
         }
 
-        rebuildInstanceBuffer(chunk, self.registry, &self.buffers[chunk.instance_buffer_index]) catch {};
+        rebuildInstanceBuffer(chunk, self.allocator, self.registry, &self.buffers[chunk.instance_buffer_index]) catch {};
     }
 }
 
@@ -304,7 +304,7 @@ const ChunkLoadWorker = struct {
                 defer world.chunks_lock.unlock();
 
                 chunk.computeVisibilityNoLock(world);
-                rebuildInstanceBuffer(&chunk, registry, &world.buffers[buffer_index]) catch unreachable;
+                rebuildInstanceBuffer(&chunk, world.allocator, registry, &world.buffers[buffer_index]) catch unreachable;
 
                 world.chunks.put(world.allocator, pos, chunk) catch unreachable;
 
@@ -319,7 +319,7 @@ const ChunkLoadWorker = struct {
                     for (chunks) |c| {
                         if (c) |c2| {
                             c2.computeVisibilityNoLock(world);
-                            rebuildInstanceBuffer(c2, registry, &world.buffers[c2.instance_buffer_index]) catch unreachable;
+                            rebuildInstanceBuffer(c2, world.allocator, registry, &world.buffers[c2.instance_buffer_index]) catch unreachable;
                         }
                     }
                 }
@@ -453,12 +453,14 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass
     }
 }
 
-pub fn rebuildInstanceBuffer(chunk: *Chunk, registry: *const Registry, buffer: *BufferData) !void {
+pub fn rebuildInstanceBuffer(chunk: *Chunk, allocator: Allocator, registry: *const Registry, buffer: *BufferData) !void {
     const zone = tracy.beginZone(@src(), .{ .name = "World.rebuildInstanceBuffer" });
     defer zone.end();
 
     var index: usize = 0;
-    var instances: [Chunk.block_count]BlockInstanceData = @splat(BlockInstanceData{});
+
+    var instances = try allocator.alloc(BlockInstanceData, Chunk.block_count);
+    defer allocator.free(instances);
 
     const grass_name_hash = Block.getNameHash("grass");
 
