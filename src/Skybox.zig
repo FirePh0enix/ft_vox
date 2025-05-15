@@ -129,28 +129,35 @@ pub fn init(allocator: Allocator) !Self {
     const box = try createCube();
 
     const image = try rdr().imageCreate(.{
-        .width = 1024,
-        .height = 1024,
+        .width = 512,
+        .height = 512,
         .layers = 6,
         .format = .r8g8b8a8_srgb,
         .cube = true,
     });
 
-    const faces: []const []const u8 = &.{ "bk", "lf", "ft", "rt", "up", "dn" };
+    const faces: []const []const u8 = &.{ "pz", "nz", "py", "ny", "nx", "px" };
+
+    // right
+    // left
+    // top
+    // bot
+    // back
+    // front
 
     try rdr().imageSetLayout(image, .transfer_dst_optimal);
 
     for (faces, 0..faces.len) |face, index| {
         var buf: [64]u8 = undefined;
-        const filename = try std.fmt.bufPrint(&buf, "bluecloud_{s}.png", .{face});
+        const filename = try std.fmt.bufPrint(&buf, "{s}.png", .{face});
         var pixel_buffer = if (assets.getTextureData(filename)) |data|
             try zigimg.Image.fromMemory(allocator, data)
         else
-            try assets.getMissingTexture(allocator, 1024, 1024);
+            try assets.getMissingTexture(allocator, 512, 512);
 
-        if (pixel_buffer.width != 1024 or pixel_buffer.height != 1024) {
+        if (pixel_buffer.width != 512 or pixel_buffer.height != 512) {
             pixel_buffer.deinit();
-            pixel_buffer = try assets.getMissingTexture(allocator, 1024, 1024);
+            pixel_buffer = try assets.getMissingTexture(allocator, 512, 512);
         }
 
         defer pixel_buffer.deinit();
