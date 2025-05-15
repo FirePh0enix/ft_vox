@@ -114,7 +114,7 @@ pub fn getOrRegisterImage(
         return index;
     } else {
         const index = self.images.items.len + 1;
-        const source = assets.getTextureData(path);
+        const source = assets.getTextureData(path) orelse return 0;
 
         const image = try zigimg.ImageUnmanaged.fromMemory(self.allocator, source);
 

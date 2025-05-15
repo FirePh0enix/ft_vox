@@ -133,7 +133,7 @@ pub fn init(allocator: Allocator) !Self {
         .height = 1024,
         .layers = 6,
         .format = .r8g8b8a8_srgb,
-        .flags = .{ .cube_compatible = true },
+        .cube = true,
     });
 
     const faces: []const []const u8 = &.{ "bk", "lf", "ft", "rt", "up", "dn" };
@@ -143,7 +143,16 @@ pub fn init(allocator: Allocator) !Self {
     for (faces, 0..faces.len) |face, index| {
         var buf: [64]u8 = undefined;
         const filename = try std.fmt.bufPrint(&buf, "bluecloud_{s}.png", .{face});
-        var pixel_buffer = try zigimg.Image.fromMemory(allocator, assets.getTextureData(filename));
+        var pixel_buffer = if (assets.getTextureData(filename)) |data|
+            try zigimg.Image.fromMemory(allocator, data)
+        else
+            try assets.getMissingTexture(allocator, 1024, 1024);
+
+        if (pixel_buffer.width != 1024 or pixel_buffer.height != 1024) {
+            pixel_buffer.deinit();
+            pixel_buffer = try assets.getMissingTexture(allocator, 1024, 1024);
+        }
+
         defer pixel_buffer.deinit();
 
         try rdr().imageUpdate(image, pixel_buffer.rawBytes(), 0, index);
@@ -160,6 +169,7 @@ pub fn init(allocator: Allocator) !Self {
             .{ .name = "cubemap", .type = .image, .stage = .{ .fragment = true } },
         },
         .cull_mode = .none,
+        .always_draw_before = true,
     });
 
     try rdr().materialSetParam(material_rid, "cubemap", .{ .image = .{ .rid = image } });

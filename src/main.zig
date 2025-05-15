@@ -207,7 +207,9 @@ var text: Text = undefined;
 var skybox: Skybox = undefined;
 
 pub fn mainDesktop() !void {
-    defer _ = debug_allocator.detectLeaks();
+    defer {
+        if (builtin.mode == .Debug) _ = debug_allocator.detectLeaks();
+    }
     tracy.setThreadName("Main");
 
     const mainZone = tracy.beginZone(@src(), .{ .name = "main" });

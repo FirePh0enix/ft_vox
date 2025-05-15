@@ -933,7 +933,7 @@ pub const VulkanRenderer = struct {
 
     pub fn imageCreate(self: *VulkanRenderer, options: Renderer.ImageOptions) Renderer.ImageCreateError!RID {
         const image = self.device.createImage(&vk.ImageCreateInfo{
-            .flags = options.flags.toVK(),
+            .flags = if (options.cube) .{ .cube_compatible_bit = true } else .{},
             .image_type = .@"2d",
             .format = options.format.asVk(),
             .extent = .{ .width = @intCast(options.width), .height = @intCast(options.height), .depth = 1 },
@@ -954,12 +954,13 @@ pub const VulkanRenderer = struct {
         };
         errdefer self.device.freeMemory(memory, null);
 
-        // Had to modify here since 6 layers must correspond to cub map view.
-        const view_type: vk.ImageViewType = switch (options.layers) {
-            1 => .@"2d",
-            6 => .cube,
-            else => .@"2d_array",
-        };
+        const view_type: vk.ImageViewType = if (!options.cube)
+            switch (options.layers) {
+                1 => .@"2d",
+                else => .@"2d_array",
+            }
+        else
+            .cube;
 
         const image_view = self.device.createImageView(&vk.ImageViewCreateInfo{
             .image = image,
@@ -1174,6 +1175,7 @@ pub const VulkanRenderer = struct {
                 .polygon_mode = options.polygon_mode.asVk(),
                 .cull_mode = options.cull_mode.asVk(),
                 .transparency = options.transparency,
+                .always_draw_before = options.always_draw_before,
             })),
         };
 
@@ -1454,7 +1456,7 @@ pub const VulkanRenderer = struct {
         for (options.material.shaders, 0..options.material.shaders.len) |shader, index| {
             shader_stages[index] = .{
                 .stage = shader.stage.asVk(),
-                .module = self.createShaderModule(assets.getShaderData(shader.path)) catch return error.ShaderCompilationFailed,
+                .module = self.createShaderModule(assets.getShaderData(shader.path) orelse return error.ShaderCompilationFailed) catch return error.ShaderCompilationFailed,
                 .p_name = "main",
             };
         }
@@ -1566,7 +1568,7 @@ pub const VulkanRenderer = struct {
         const depth_info: vk.PipelineDepthStencilStateCreateInfo = .{
             .depth_test_enable = vk.TRUE,
             .depth_write_enable = vk.TRUE,
-            .depth_compare_op = .less_or_equal,
+            .depth_compare_op = if (options.material.always_draw_before) .less_or_equal else .less,
             .depth_bounds_test_enable = vk.FALSE,
             .min_depth_bounds = 0.0,
             .max_depth_bounds = 1.0,
@@ -2064,6 +2066,7 @@ pub const VulkanMaterial = struct {
     cull_mode: vk.CullModeFlags,
 
     transparency: bool,
+    always_draw_before: bool,
 
     pub fn deinit(self: *const VulkanMaterial, r: *VulkanRenderer) void {
         self.descriptor_pool.deinit(r);

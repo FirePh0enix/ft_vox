@@ -549,16 +549,6 @@ pub inline fn createBuffer(self: *const Self, options: Buffer.Options) Buffer.Cr
 // Image
 //
 
-pub const ImageFlags = packed struct {
-    cube_compatible: bool = false,
-
-    pub fn toVK(self: ImageFlags) vk.ImageCreateFlags {
-        return .{
-            .cube_compatible_bit = self.cube_compatible,
-        };
-    }
-};
-
 pub const ImageOptions = struct {
     width: usize,
     height: usize,
@@ -568,7 +558,7 @@ pub const ImageOptions = struct {
     usage: ImageUsageFlags = .{ .sampled = true, .transfer_dst = true },
     aspect_mask: ImageAspectFlags = .{ .color = true },
     pixel_mapping: PixelMapping = .identity,
-    flags: ImageFlags = .{},
+    cube: bool = false,
 };
 
 pub const ImageCreateError = error{
@@ -678,6 +668,8 @@ pub const MaterialOptions = struct {
     topology: Topology = .triangle_list,
     polygon_mode: PolygonMode = .fill,
     cull_mode: CullMode = .back,
+
+    always_draw_before: bool = false,
 };
 
 pub const MaterialCreateError = error{
