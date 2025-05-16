@@ -253,7 +253,10 @@ pub fn mainDesktop() !void {
     try Font.initLib();
     defer Font.deinitLib();
 
-    font = try Font.init("assets/fonts/Anonymous.ttf", 16, allocator);
+    font = Font.init("assets/fonts/Anonymous.ttf", 16, allocator) catch {
+        std.log.err("Cannot load font", .{});
+        return;
+    };
     defer font.deinit();
 
     text = try Text.initCapacity(&font, 5);
