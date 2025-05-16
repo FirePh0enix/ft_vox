@@ -23,7 +23,6 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
 
     const sea_level = world.generation_settings.sea_level;
-    const world_height: f32 = 256.0;
 
     for (0..Chunk.length) |lx| {
         for (0..Chunk.length) |lz| {
@@ -51,20 +50,24 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
 
             // Creating caves.
             // https://www.youtube.com/watch?v=Ab8TOSFfNp4
+
+            const cave_floor: f32 = 10.0;
+            const cave_ceiling: f32 = 65.0;
+
             for (0..height) |y| {
                 const fy: f32 = @floatFromInt(y);
 
                 // The smaller the coefficient, the larger the cave entrance are.
-                const cave_noise = world.noise.sample3D(fx * 0.06, fy * 0.06, fz * 0.06);
+                const cave_noise = world.noise.sample3D(fx * 0.03, fy * 0.03, fz * 0.03);
 
                 // Summation raises height of the cave.
                 // Multiplying scales the noise.
-                const vertical_shape = world.noise.sample2D(fx * 0.1, fz * 0.1) * 3.0 + 3.0;
+                const vertical_shape = world.noise.sample2D(fx * 0.1, fz * 0.1) * 5.0 + 20.0;
 
-                if (fy < world_height - 1 and
-                    cave_noise > 0.3 and // Higher Threshold means there will be less cave.
-                    fy > vertical_shape and
-                    fy < world_height - 10) // Move the cave deeper as we increase value.
+                if (fy > cave_floor and
+                    fy < cave_ceiling and
+                    cave_noise > 0.6 and // Higher Threshold means there will be less cave.
+                    fy > vertical_shape)
                 {
                     chunk.setBlockState(lx, y, lz, .{ .id = air });
                 }
