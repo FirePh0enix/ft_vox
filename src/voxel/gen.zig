@@ -23,6 +23,7 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
 
     const sea_level = world.generation_settings.sea_level;
+    const world_height: f32 = 256.0;
 
     for (0..Chunk.length) |lx| {
         for (0..Chunk.length) |lz| {
@@ -36,7 +37,6 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
 
             const surface_block = getSurfaceBlock(biome);
             const fill_block = getFillBlock(biome);
-
             const fill_depth = 3;
 
             for (0..height - fill_depth - 1) |ly| {
@@ -49,9 +49,25 @@ pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
 
             chunk.setBlockState(lx, height - 1, lz, .{ .id = surface_block });
 
+            // Creating caves.
+            // https://www.youtube.com/watch?v=Ab8TOSFfNp4
             for (0..height) |y| {
-                const cave_density = getDensity(&world.noise, fx, @floatFromInt(y), fz, @floatFromInt(height));
-                if (cave_density > 0.3) chunk.setBlockState(lx, y, lz, .{ .id = air });
+                const fy: f32 = @floatFromInt(y);
+
+                // The smaller the coefficient, the larger the cave entrance are.
+                const cave_noise = world.noise.sample3D(fx * 0.06, fy * 0.06, fz * 0.06);
+
+                // Summation raises height of the cave.
+                // Multiplying scales the noise.
+                const vertical_shape = world.noise.sample2D(fx * 0.1, fz * 0.1) * 3.0 + 3.0;
+
+                if (fy < world_height - 1 and
+                    cave_noise > 0.3 and // Higher Threshold means there will be less cave.
+                    fy > vertical_shape and
+                    fy < world_height - 10) // Move the cave deeper as we increase value.
+                {
+                    chunk.setBlockState(lx, y, lz, .{ .id = air });
+                }
             }
 
             // Fill the rest with water
