@@ -45,17 +45,12 @@ const cli = .{
             .type = "u64",
         },
         .{
-            .long = "save-name",
-            .description = "The name of the save to load",
-            .type = "s",
+            .long = "fov",
+            .description = "Field of view in degrees",
+            .type = "?f32",
         },
     },
-    .flags = .{
-        .{
-            .long = "disable-save",
-            .description = "Disable world save",
-        },
-    },
+    .flags = .{},
 };
 const Args = argzon.Args(cli, .{});
 
@@ -217,6 +212,10 @@ pub fn mainDesktop() !void {
 
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
+    if (args.options.fov) |fov| {
+        camera.setFov(std.math.degreesToRadians(fov));
+    }
+
     var window = try Window.create(.{
         .title = "ft_vox",
         .width = 1280,
@@ -346,10 +345,7 @@ fn tick(world: *World) !void {
     camera.updateCamera(world);
 
     // Rebuild the render pass
-    const surface_size = rdr().getSize();
-    const aspect_ratio = @as(f32, @floatFromInt(surface_size.width)) / @as(f32, @floatFromInt(surface_size.height));
-    var projection_matrix = zm.perspectiveFovRh(std.math.degreesToRadians(60.0), aspect_ratio, 0.01, 1000.0);
-    projection_matrix[1][1] *= -1;
+    const projection_matrix = camera.projection_matrix;
 
     // TODO: Move projection calculation in Camera.zig
 
