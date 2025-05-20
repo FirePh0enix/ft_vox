@@ -205,6 +205,10 @@ var skybox: Skybox = undefined;
 pub fn mainDesktop() !void {
     defer {
         if (builtin.mode == .Debug) _ = debug_allocator.detectLeaks();
+
+        if (alloc_count > 0) {
+            std.log.warn("leaked from libc: {}\n", .{alloc_count});
+        }
     }
     tracy.setThreadName("Main");
 
@@ -456,3 +460,25 @@ pub const main = if (builtin.cpu.arch.isWasm())
     mainEmscripten
 else
     mainDesktop;
+
+var alloc_count: usize = 0;
+
+export fn malloc(s: usize) callconv(.c) ?*anyopaque {
+    const RealMalloc = *const fn (usize) callconv(.c) ?*anyopaque;
+
+    const rtld_next: *anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+    const real_malloc: ?RealMalloc = @ptrCast(@alignCast(std.c.dlsym(rtld_next, "malloc")));
+
+    alloc_count += 1;
+    return real_malloc.?(s);
+}
+
+export fn free(p: ?*anyopaque) callconv(.c) void {
+    const RealFree = *const fn (?*anyopaque) callconv(.c) void;
+
+    const rtld_next: *anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+    const real_free: ?RealFree = @ptrCast(@alignCast(std.c.dlsym(rtld_next, "free")));
+
+    alloc_count -= 1;
+    real_free.?(p);
+}
