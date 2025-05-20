@@ -6,7 +6,6 @@ const zm = @import("zmath");
 const input = @import("input.zig");
 const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
-const tracy = @import("tracy");
 const gen = @import("voxel/gen.zig");
 
 const Renderer = @import("render/Renderer.zig");
@@ -202,18 +201,10 @@ var font: Font = undefined;
 var text: Text = undefined;
 var skybox: Skybox = undefined;
 
-pub fn mainDesktop() !void {
+pub fn main() !void {
     defer {
         if (builtin.mode == .Debug) _ = debug_allocator.detectLeaks();
-
-        if (alloc_count > 0) {
-            std.log.warn("leaked from libc: {}\n", .{alloc_count});
-        }
     }
-    tracy.setThreadName("Main");
-
-    const mainZone = tracy.beginZone(@src(), .{ .name = "main" });
-    defer mainZone.end();
 
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
@@ -236,9 +227,6 @@ pub fn mainDesktop() !void {
 
     try rdr().createDevice(&window, null);
     defer rdr().destroy();
-
-    try rdr().imguiInit(&window, rdr().getOutputRenderPass());
-    defer rdr().imguiDestroy();
 
     const size = window.size();
 
@@ -343,11 +331,6 @@ pub fn mainDesktop() !void {
 }
 
 fn tick(world: *World) !void {
-    tracy.frameMark();
-
-    const zone = tracy.beginZone(@src(), .{});
-    defer zone.end();
-
     input.pollEvents();
 
     camera.updateCamera(world);
@@ -407,78 +390,4 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
         c.ImGui_Text("Biome: %s", @tagName(biome).ptr);
     }
     c.ImGui_End();
-}
-
-// TODO: Ultimately web/desktop should share there main function!
-
-pub fn mainEmscripten() !void {
-    var window = try Window.create(.{
-        .title = "ft_vox",
-        .width = 1280,
-        .height = 720,
-        .driver = .gles,
-        .resizable = true,
-        .allocator = allocator,
-    });
-    defer window.deinit();
-
-    try Renderer.create(allocator, .gles);
-    try rdr().createDevice(&window, null);
-
-    cube_mesh = try createCube();
-
-    material = try rdr().materialCreate(.{
-        .shaders = &.{
-            .{ .path = "basic_cube.vert.spv", .stage = .{ .vertex = true } },
-            .{ .path = "basic_cube.frag.spv", .stage = .{ .fragment = true } },
-        },
-    });
-
-    render_graph_pass = try .create(allocator, rdr().getOutputRenderPass(), .{
-        .max_draw_calls = 10,
-    });
-    graph = .init(allocator);
-    graph.main_render_pass = &render_graph_pass;
-
-    c.emscripten_request_animation_frame_loop(&tickEmscripten, null);
-}
-
-fn tickEmscripten(delta: f64, _: ?*anyopaque) callconv(.c) bool {
-    _ = delta;
-
-    render_graph_pass.reset();
-
-    const mat = zm.identity();
-    render_graph_pass.draw(cube_mesh, material, 0, rdr().meshGetIndicesCount(cube_mesh), mat);
-
-    rdr().processGraph(&graph) catch {};
-
-    return true;
-}
-
-pub const main = if (builtin.cpu.arch.isWasm())
-    mainEmscripten
-else
-    mainDesktop;
-
-var alloc_count: usize = 0;
-
-export fn malloc(s: usize) callconv(.c) ?*anyopaque {
-    const RealMalloc = *const fn (usize) callconv(.c) ?*anyopaque;
-
-    const rtld_next: *anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-    const real_malloc: ?RealMalloc = @ptrCast(@alignCast(std.c.dlsym(rtld_next, "malloc")));
-
-    alloc_count += 1;
-    return real_malloc.?(s);
-}
-
-export fn free(p: ?*anyopaque) callconv(.c) void {
-    const RealFree = *const fn (?*anyopaque) callconv(.c) void;
-
-    const rtld_next: *anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-    const real_free: ?RealFree = @ptrCast(@alignCast(std.c.dlsym(rtld_next, "free")));
-
-    alloc_count -= 1;
-    real_free.?(p);
 }

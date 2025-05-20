@@ -1,12 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const vk = if (builtin.os.tag != .emscripten) @import("vulkan") else void;
+const vk = @import("vulkan");
 
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const Graph = @import("Graph.zig");
 const Window = @import("../Window.zig");
-const VulkanRenderer = if (builtin.os.tag != .emscripten) @import("backend/vulkan.zig").VulkanRenderer else void;
+const VulkanRenderer = @import("backend/vulkan.zig").VulkanRenderer;
 const Buffer = @import("Buffer.zig");
 
 pub const runtime_safety = builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
@@ -20,9 +20,7 @@ pub const Driver = enum {
 
 pub const VSync = enum {
     off,
-    performance,
-    smooth,
-    efficient,
+    on,
 };
 
 pub const CreateSwapchainError = error{
@@ -357,15 +355,6 @@ pub const VTable = struct {
     get_output_render_pass: *const fn (*anyopaque) RID,
     wait_idle: *const fn (*anyopaque) void,
 
-    //
-    // Dear ImGUI integration
-    //
-
-    imgui_init: *const fn (*anyopaque, window: *const Window, render_pass_rid: RID) void,
-    imgui_destroy: *const fn (*anyopaque) void,
-    imgui_add_texture: *const fn (*anyopaque, image_rid: RID, layout: ImageLayout) ImGuiAddTextureError!c_ulonglong,
-    imgui_remove_texture: *const fn (*anyopaque, id: c_ulonglong) void,
-
     // --------------------------------------------- //
     // Resources
 
@@ -504,30 +493,6 @@ pub inline fn getOutputRenderPass(self: *const Self) RID {
 
 pub inline fn waitIdle(self: *const Self) void {
     return self.vtable.wait_idle(self.ptr);
-}
-
-//
-// Dear ImGui integration
-//
-
-pub const ImGuiInitError = error{Failed};
-
-pub inline fn imguiInit(self: *const Self, window: *const Window, render_pass_rid: RID) ImGuiInitError!void {
-    return self.vtable.imgui_init(self.ptr, window, render_pass_rid);
-}
-
-pub inline fn imguiDestroy(self: *const Self) void {
-    return self.vtable.imgui_destroy(self.ptr);
-}
-
-pub const ImGuiAddTextureError = error{Failed};
-
-pub inline fn imguiAddTexture(self: *const Self, image_rid: RID, layout: ImageLayout) ImGuiAddTextureError!c_ulonglong {
-    return self.vtable.imgui_add_texture(self.ptr, image_rid, layout);
-}
-
-pub inline fn imguiRemoveTexture(self: *const Self, id: c_ulonglong) void {
-    return self.vtable.imgui_remove_texture(self.ptr, id);
 }
 
 //

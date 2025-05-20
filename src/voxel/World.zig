@@ -223,7 +223,7 @@ pub fn castRay(self: *const Self, ray: Ray, max_length: f32, precision: f32) ?Ra
         const block_y: i64 = @intFromFloat(point[1]);
         const block_z: i64 = @intFromFloat(point[2]);
 
-        if (block_y < 0) continue;
+        if (block_y < 0 or block_y > Chunk.height) continue;
 
         if (self.getBlockState(block_x, block_y, block_z)) |state| {
             if (state.isAir()) continue;
@@ -271,8 +271,6 @@ const ChunkLoadWorker = struct {
     }
 
     fn worker(self: *ChunkLoadWorker, world: *Self, registry: *const Registry) void {
-        tracy.setThreadName("ChunkLoadWorker");
-
         var remaining: usize = 0;
 
         while (world.chunk_worker_state.load(.acquire)) {
@@ -346,8 +344,6 @@ const ChunkUnloadWorker = struct {
     fn worker(self: *ChunkUnloadWorker, world: *Self, registry: *const Registry) void {
         _ = registry;
 
-        tracy.setThreadName("ChunkUnloadWorker");
-
         var remaining: usize = 0;
 
         while (world.chunk_worker_state.load(.acquire)) {
@@ -417,9 +413,6 @@ pub fn freeBuffer(self: *Self, index: usize) void {
 }
 
 pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass: *Graph.RenderPass, render_material: RID, camera_matrix: zm.Mat, shadow_matrix: zm.Mat) !void {
-    const zone = tracy.beginZone(@src(), .{ .name = "World.encodeDrawCalls" });
-    defer zone.end();
-
     self.chunks_lock.lock();
     defer self.chunks_lock.unlock();
 
@@ -454,9 +447,6 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass
 }
 
 pub fn rebuildInstanceBuffer(chunk: *Chunk, allocator: Allocator, registry: *const Registry, buffer: *BufferData) !void {
-    const zone = tracy.beginZone(@src(), .{ .name = "World.rebuildInstanceBuffer" });
-    defer zone.end();
-
     var index: usize = 0;
 
     var instances = try allocator.alloc(BlockInstanceData, Chunk.block_count);

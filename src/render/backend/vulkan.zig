@@ -78,12 +78,6 @@ pub const VulkanRenderer = struct {
     last_time: i64 = 0,
     fps: usize = 0,
 
-    imgui_context: *c.ImGuiContext,
-    imgui_sampler: vk.Sampler,
-    imgui_descriptor_pool: vk.DescriptorPool,
-
-    tracy_ctx: tracy.GPUContext,
-
     rid_infos_mutex: if (builtin.mode == .Debug) std.Thread.Mutex else DummyMutex = .{},
     rid_infos: if (builtin.mode == .Debug) std.AutoArrayHashMapUnmanaged(RID, RIDAllocInfo) else void = if (builtin.mode == .Debug) .empty else {},
 
@@ -112,11 +106,6 @@ pub const VulkanRenderer = struct {
         .configure = @ptrCast(&configure),
         .get_output_render_pass = @ptrCast(&getOutputRenderPass),
         .wait_idle = @ptrCast(&waitIdle),
-
-        .imgui_init = @ptrCast(&imguiInit),
-        .imgui_destroy = @ptrCast(&imguiDestroy),
-        .imgui_add_texture = @ptrCast(&imguiAddTexture),
-        .imgui_remove_texture = @ptrCast(&imguiRemoveTexture),
 
         .free_rid = @ptrCast(&freeRid),
 
@@ -389,13 +378,6 @@ pub const VulkanRenderer = struct {
                 },
             },
         }) catch return error.BadDriver;
-
-        self.tracy_ctx = tracy.newGPUContext(.{
-            .context = 0,
-            .type = .vulkan,
-            .gpu_time = 0,
-            .period = self.physical_device_properties.limits.timestamp_period,
-        });
     }
 
     fn convertGraphError(err: anyerror) Renderer.ProcessGraphError {
@@ -420,12 +402,6 @@ pub const VulkanRenderer = struct {
         // TODO: `acquireNextImageKHR` can returns `out_of_date_khr` which is not an error worth crashing over, this only means that we need to recreate the swapchain.
         const image_index_result = self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle) catch |e| return convertGraphError(e);
         const image_index = image_index_result.image_index;
-
-        const zone = tracy.beginZone(@src(), .{});
-        defer zone.end();
-
-        const gpuZone = self.tracy_ctx.beginZone(@src(), .{ .name = "top_of_pipe" });
-        defer gpuZone.end();
 
         const cb = self.command_buffers[self.current_frame];
         const fb = self.swapchain_framebuffers[image_index];
@@ -487,8 +463,6 @@ pub const VulkanRenderer = struct {
             const elapsed = timestamp_buffer[1] - timestamp_buffer[0];
             const elapsed_ms = @as(f32, @floatFromInt(elapsed)) * self.physical_device_properties.limits.timestamp_period / 1000000.0;
             self.statistics.gpu_time = elapsed_ms;
-
-            gpuZone.time(@intCast(elapsed));
         }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
@@ -500,9 +474,6 @@ pub const VulkanRenderer = struct {
     }
 
     fn processRenderPass(self: *VulkanRenderer, cb: vk.CommandBufferProxy, fb: RID, pass: *Graph.RenderPass) !void {
-        const zone = tracy.beginZone(@src(), .{});
-        defer zone.end();
-
         for (pass.dependencies.items) |dep| {
             try self.processRenderPass(cb, fb, dep);
         }
@@ -595,19 +566,6 @@ pub const VulkanRenderer = struct {
             hook(pass);
         }
 
-        if (pass.imgui_hooks.items.len > 0) {
-            c.cImGui_ImplSDL3_NewFrame();
-            c.cImGui_ImplVulkan_NewFrame();
-            c.ImGui_NewFrame();
-
-            for (pass.imgui_hooks.items) |hook| {
-                hook(pass);
-            }
-
-            c.ImGui_Render();
-            c.cImGui_ImplVulkan_RenderDrawData(c.ImGui_GetDrawData(), @ptrFromInt(@intFromEnum(cb.handle)));
-        }
-
         cb.endRenderPass();
     }
 
@@ -640,8 +598,6 @@ pub const VulkanRenderer = struct {
         self.device.deviceWaitIdle() catch {};
 
         self.freeRid(self.output_render_pass);
-
-        self.device.destroySampler(self.imgui_sampler, null);
 
         self.pipeline_cache.deinit(self);
 
@@ -716,9 +672,7 @@ pub const VulkanRenderer = struct {
         // Per the Vulkan spec only FIFO is guaranteed to be supported, so we fallback to this if others are not.
         const surface_present_mode: vk.PresentModeKHR = switch (options.vsync) {
             .off => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .immediate_khr)) .immediate_khr else .fifo_khr,
-            .smooth => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .fifo_relaxed_khr)) .fifo_relaxed_khr else .fifo_khr,
-            .performance => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .mailbox_khr)) .mailbox_khr else .fifo_khr,
-            .efficient => .fifo_khr,
+            .on => if (std.mem.containsAtLeastScalar(vk.PresentModeKHR, self.surface_present_modes, 1, .fifo_relaxed_khr)) .fifo_relaxed_khr else .fifo_khr,
         };
 
         const surface_extent: vk.Extent2D = .{
@@ -785,78 +739,6 @@ pub const VulkanRenderer = struct {
         defer self.graphics_queue_mutex.unlock();
 
         self.graphics_queue.waitIdle() catch {};
-    }
-
-    pub fn imguiInit(self: *VulkanRenderer, window: *const Window, render_pass_rid: RID) Renderer.ImGuiInitError!void {
-        self.imgui_context = c.ImGui_CreateContext(null) orelse @panic("Failed to initialize DearImGui");
-
-        var io: *c.ImGuiIO = c.ImGui_GetIO() orelse unreachable;
-        io.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard;
-        _ = c.cImGui_ImplSDL3_InitForVulkan(@ptrCast(window.impl.handle));
-
-        self.imgui_descriptor_pool = self.device.createDescriptorPool(&vk.DescriptorPoolCreateInfo{
-            .flags = .{ .free_descriptor_set_bit = true },
-            .max_sets = 16,
-            .pool_size_count = 1,
-            .p_pool_sizes = @ptrCast(&vk.DescriptorPoolSize{ .type = .combined_image_sampler, .descriptor_count = 16 }),
-        }, null) catch return error.Failed;
-
-        var init_info: c.ImGui_ImplVulkan_InitInfo = .{
-            .Instance = @ptrFromInt(@intFromEnum(self.instance.handle)),
-            .PhysicalDevice = @ptrFromInt(@intFromEnum(self.physical_device)),
-            .Device = @ptrFromInt(@intFromEnum(self.device.handle)),
-            .QueueFamily = self.graphics_queue_index,
-            .Queue = @ptrFromInt(@intFromEnum(self.graphics_queue.handle)),
-            .RenderPass = @ptrFromInt(@intFromEnum(render_pass_rid.as(VulkanRenderPass).render_pass)),
-            .MinImageCount = @intCast(max_frames_in_flight),
-            .ImageCount = @intCast(max_frames_in_flight),
-            .MSAASamples = c.VK_SAMPLE_COUNT_1_BIT,
-            .DescriptorPool = @ptrFromInt(@intFromEnum(self.imgui_descriptor_pool)),
-        };
-
-        const loader = struct {
-            fn func(name: [*:0]const u8, _: ?*anyopaque) callconv(.c) c.PFN_vkVoidFunction {
-                return rdr().asVk().get_instance_proc_addr(rdr().asVk().instance.handle, name);
-            }
-        }.func;
-
-        _ = c.cImGui_ImplVulkan_LoadFunctions(@bitCast(vk.API_VERSION_1_2), @ptrCast(&loader));
-        _ = c.cImGui_ImplVulkan_Init(&init_info);
-
-        self.imgui_sampler = self.device.createSampler(&vk.SamplerCreateInfo{
-            .mag_filter = .nearest,
-            .min_filter = .nearest,
-            .mipmap_mode = .nearest,
-            .address_mode_u = .clamp_to_edge,
-            .address_mode_v = .clamp_to_edge,
-            .address_mode_w = .clamp_to_edge,
-            .mip_lod_bias = 0.0,
-            .anisotropy_enable = vk.FALSE,
-            .max_anisotropy = 0.0,
-            .compare_enable = vk.FALSE,
-            .compare_op = .equal,
-            .min_lod = 0.0,
-            .max_lod = 0.0,
-            .border_color = .int_opaque_black,
-            .unnormalized_coordinates = vk.FALSE,
-        }, null) catch return error.Failed;
-    }
-
-    pub fn imguiDestroy(self: *VulkanRenderer) void {
-        c.cImGui_ImplVulkan_Shutdown();
-        c.cImGui_ImplSDL3_Shutdown();
-        c.ImGui_DestroyContext(self.imgui_context);
-
-        self.device.destroyDescriptorPool(self.imgui_descriptor_pool, null);
-    }
-
-    pub fn imguiAddTexture(self: *VulkanRenderer, image_rid: RID, layout: Renderer.ImageLayout) Renderer.ImGuiAddTextureError!c_ulonglong {
-        return @intFromPtr(c.cImGui_ImplVulkan_AddTexture(@ptrFromInt(@intFromEnum(self.imgui_sampler)), @ptrFromInt(@intFromEnum(image_rid.as(VulkanImage).view)), @intCast(@intFromEnum(layout.asVk()))));
-    }
-
-    pub fn imguiRemoveTexture(self: *VulkanRenderer, id: c_ulonglong) void {
-        _ = self;
-        c.cImGui_ImplVulkan_RemoveTexture(@ptrFromInt(id));
     }
 
     //

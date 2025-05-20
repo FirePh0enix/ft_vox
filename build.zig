@@ -1,7 +1,6 @@
 const std = @import("std");
 const cimgui = @import("cimgui_zig");
 const builtin = @import("builtin");
-const zemscripten = @import("zemscripten");
 
 const Build = std.Build;
 const Step = Build.Step;
@@ -9,15 +8,11 @@ const LazyPath = Build.LazyPath;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const Optimize = std.builtin.OptimizeMode;
 
-// Compile for the web: zig build run `-Dtarget=wasm32-emscripten -Dcpu=baseline+atomics`
-
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const sanitize_thread = b.option(bool, "sanitize-thread", "Enable the thread sanitizer");
-    const enable_tracy = b.option(bool, "tracy", "Enable tracy integration") orelse false;
-    const emrun_browser = b.option([]const u8, "emrun-browser", "") orelse "chromium";
 
     const target_is_emscripten = target.result.os.tag == .emscripten;
 
@@ -49,71 +44,33 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("c", c_headers.createModule());
 
-    if (target_is_emscripten) {
-        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-        c_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot_path, "include" }) });
-    }
-
-    const sdl = if (!target_is_emscripten)
-        b.dependency("sdl", .{
-            .target = target,
-            .optimize = optimize,
-            .preferred_link_mode = .static,
-        })
-    else a: {
-        const sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-
-        b.sysroot = sysroot_path;
-
-        break :a b.dependency("sdl", .{
-            .target = target,
-            .optimize = optimize,
-            .preferred_link_mode = .static,
-        });
-    };
+    const sdl = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        .preferred_link_mode = .static,
+    });
 
     c_headers.addIncludePath(sdl.path("include"));
 
-    // On web on use the emscripten port of SDL.
-    if (!target_is_emscripten) {
-        const sdl_lib = sdl.artifact("SDL3");
-        exe_mod.linkLibrary(sdl_lib);
-    }
+    const sdl_lib = sdl.artifact("SDL3");
+    exe_mod.linkLibrary(sdl_lib);
 
-    const cimgui_dep = b.dependency("cimgui_zig", .{
-        .target = target,
-        .optimize = optimize,
-        .platform = cimgui.Platform.SDL3,
-        .renderer = if (!target_is_emscripten) cimgui.Renderer.Vulkan else cimgui.Renderer.OpenGL3,
-    });
-    const cimgui_artifact = cimgui_dep.artifact("cimgui");
-    exe.linkLibrary(cimgui_artifact);
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
+    c_headers.addIncludePath(vulkan_headers.path("include"));
+    const vulkan = b.dependency("vulkan", .{
+        .registry = vulkan_headers.path("registry/vk.xml"),
+    }).module("vulkan-zig");
+    exe.root_module.addImport("vulkan", vulkan);
 
-    if (target_is_emscripten) {
-        const sysroot_include_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot", "include" });
-        cimgui_artifact.addSystemIncludePath(.{ .cwd_relative = sysroot_include_path });
-    }
+    // On macOS we need to install MoltenVK at the correct location.
+    if (target.result.os.tag == .macos) {
+        const moltenvk = b.dependency("moltenvk", .{});
 
-    c_headers.addIncludePath(cimgui_dep.path("dcimgui"));
+        const install_icd = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"), "vulkan/icd.d/MoltenVK_icd.json");
+        const install_lib = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"), "vulkan/icd.d/libMoltenVK.dylib");
 
-    if (!target_is_emscripten) {
-        const vulkan_headers = b.dependency("vulkan_headers", .{});
-        c_headers.addIncludePath(vulkan_headers.path("include"));
-        const vulkan = b.dependency("vulkan", .{
-            .registry = vulkan_headers.path("registry/vk.xml"),
-        }).module("vulkan-zig");
-        exe.root_module.addImport("vulkan", vulkan);
-
-        // On macOS we need to install MoltenVK at the correct location.
-        if (target.result.os.tag == .macos) {
-            const moltenvk = b.dependency("moltenvk", .{});
-
-            const install_icd = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"), "vulkan/icd.d/MoltenVK_icd.json");
-            const install_lib = b.addInstallBinFile(moltenvk.path("MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"), "vulkan/icd.d/libMoltenVK.dylib");
-
-            b.getInstallStep().dependOn(&install_icd.step);
-            b.getInstallStep().dependOn(&install_lib.step);
-        }
+        b.getInstallStep().dependOn(&install_icd.step);
+        b.getInstallStep().dependOn(&install_lib.step);
     }
 
     const zm = b.dependency("zmath", .{
@@ -134,51 +91,13 @@ pub fn build(b: *Build) !void {
     });
     exe.root_module.addImport("argzon", argzon.module("argzon"));
 
-    if (!target_is_emscripten) {
-        const tracy = b.dependency("tracy", .{
-            .target = target,
-            .optimize = optimize,
-            .tracy_enable = enable_tracy,
-        });
-        const tracy_artifact = tracy.artifact("tracy");
-
-        exe_mod.addImport("tracy", tracy.module("tracy"));
-
-        if (enable_tracy) {
-            exe_mod.linkLibrary(tracy_artifact);
-            exe_mod.link_libcpp = true;
-        }
-    } else {
-        const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-
-        const tracy = b.dependency("tracy", .{
-            .target = target,
-            .optimize = optimize,
-            .tracy_enable = enable_tracy,
-        });
-        const tracy_artifact = tracy.artifact("tracy");
-
-        exe_mod.addImport("tracy", tracy.module("tracy"));
-
-        if (enable_tracy) {
-            exe_mod.linkLibrary(tracy_artifact);
-            exe_mod.link_libcpp = true;
-        }
-
-        std.debug.print("{s}\n", .{emscripten_sysroot_path});
-        tracy_artifact.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-    }
-
     const freetype = b.dependency("freetype", .{
         .target = target,
         .optimize = optimize,
     });
     c_headers.addIncludePath(freetype.path("include"));
 
-    // On web the emscripten port of FreeType is used.
-    if (!target_is_emscripten) {
-        exe.root_module.linkLibrary(freetype.artifact("freetype"));
-    }
+    exe.root_module.linkLibrary(freetype.artifact("freetype"));
 
     // Compile shaders to SPIR-V
     var spirv_files: std.ArrayList(CompileShader) = .init(b.allocator);
@@ -204,21 +123,8 @@ pub fn build(b: *Build) !void {
     };
 
     for (files) |file| {
-        if (!target_is_emscripten) {
-            const compile_shader = addCompileShader(b, glslc, file, flags, optimize);
-            spirv_files.append(compile_shader) catch unreachable;
-        } else {
-            const output_filename = std.mem.join(b.allocator, "", &.{ file, ".spv" }) catch @panic("OOM");
-            const file_ident = b.dupe(std.fs.path.basename(output_filename));
-            std.mem.replaceScalar(u8, file_ident, '.', '_');
-
-            spirv_files.append(.{
-                .path = b.path(file),
-                .filename = output_filename,
-                .file_ident = file_ident,
-                .step = undefined,
-            }) catch unreachable;
-        }
+        const compile_shader = addCompileShader(b, glslc, file, flags, optimize);
+        spirv_files.append(compile_shader) catch unreachable;
     }
 
     // Embed all assets, with some of them transformed, into the executable.
@@ -231,102 +137,43 @@ pub fn build(b: *Build) !void {
     exe.step.dependOn(embedded_assets.step);
     exe.root_module.addImport("embeded_assets", embedded_assets.module);
 
-    const zemscripten_dep = b.dependency("zemscripten", .{});
-    exe.root_module.addImport("zemscripten", zemscripten_dep.module("root"));
-
-    if (target_is_emscripten) {
-        const emscripten_sysroot_path = b.pathResolve(&.{ zemscripten.emccPath(b), "..", "cache", "sysroot" });
-        c_headers.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emscripten_sysroot_path, "include" }) });
-        c_headers.defineCMacro("TARGET_IS_EMSCRIPTEN", null);
-    }
-
-    if (!target_is_emscripten) {
-        b.installArtifact(exe);
-    } else {
-        const activate_emsdk_step = zemscripten.activateEmsdkStep(b);
-
-        var emcc_flags = zemscripten.emccDefaultFlags(b.allocator, optimize);
-        var emcc_settings = zemscripten.emccDefaultSettings(b.allocator, .{
-            .optimize = optimize,
-        });
-
-        try emcc_flags.put("-std=c++11", {});
-
-        try emcc_settings.put("ALLOW_MEMORY_GROWTH", "1");
-        try emcc_settings.put("LEGACY_RUNTIME", "1");
-        try emcc_settings.put("WASM_WORKERS", "1");
-        try emcc_settings.put("MAX_WEBGL_VERSION", "2");
-        try emcc_settings.put("FULL_ES3", "1");
-
-        try emcc_settings.put("USE_PTHREADS", "1");
-        try emcc_settings.put("USE_FREETYPE", "1");
-
-        const emcc_step = zemscripten.emccStep(
-            b,
-            exe,
-            .{
-                .optimize = optimize,
-                .flags = emcc_flags,
-                .settings = emcc_settings,
-                .use_preload_plugins = true,
-                .embed_paths = &.{},
-                .preload_paths = &.{},
-                .install_dir = .{ .custom = "www" },
-                .shell_file_path = "shell.html",
-            },
-        );
-        emcc_step.dependOn(activate_emsdk_step);
-
-        b.getInstallStep().dependOn(emcc_step);
-    }
+    b.installArtifact(exe);
 
     // Add a run step
     const run_step = b.step("run", "Run the app");
 
-    if (!target_is_emscripten) {
-        const run_cmd = b.addRunArtifact(exe);
-        run_cmd.step.dependOn(b.getInstallStep());
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
 
-        const env_map = std.process.getEnvMap(b.allocator) catch unreachable;
+    const env_map = std.process.getEnvMap(b.allocator) catch unreachable;
 
-        if (env_map.get("XDG_SESSION_TYPE")) |value| {
-            // Force SDL to use wayland if available.
-            if (std.mem.eql(u8, value, "wayland"))
-                run_cmd.setEnvironmentVariable("SDL_VIDEODRIVER", "wayland");
-        }
-
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
-
-        run_step.dependOn(&run_cmd.step);
-    } else {
-        const args: []const []const u8 = &.{ "--browser", emrun_browser };
-
-        const emrun_step = zemscripten.emrunStep(b, b.pathJoin(&.{ b.install_path, "www", "ft_vox.html" }), args);
-        emrun_step.dependOn(b.getInstallStep());
-
-        // if (b.args) |args| emrun_step.addArgs(args);
-        run_step.dependOn(emrun_step);
+    if (env_map.get("XDG_SESSION_TYPE")) |value| {
+        // Force SDL to use wayland if available.
+        if (std.mem.eql(u8, value, "wayland"))
+            run_cmd.setEnvironmentVariable("SDL_VIDEODRIVER", "wayland");
     }
 
-    if (!target_is_emscripten) {
-        // Standard lldb on macos will prevent SDL from creating a window.
-        const lldb_path = if (@import("builtin").os.tag.isDarwin())
-            "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb"
-        else
-            "lldb";
-
-        const lldb_cmd = b.addSystemCommand(&.{ lldb_path, "./zig-out/bin/ft_vox" });
-        lldb_cmd.step.dependOn(b.getInstallStep());
-
-        if (b.args) |args| {
-            lldb_cmd.addArgs(args);
-        }
-
-        const lldb_step = b.step("lldb", "Run the app with lldb");
-        lldb_step.dependOn(&lldb_cmd.step);
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
     }
+
+    run_step.dependOn(&run_cmd.step);
+
+    // Standard lldb on macos will prevent SDL from creating a window.
+    const lldb_path = if (@import("builtin").os.tag.isDarwin())
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb"
+    else
+        "lldb";
+
+    const lldb_cmd = b.addSystemCommand(&.{ lldb_path, "./zig-out/bin/ft_vox" });
+    lldb_cmd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        lldb_cmd.addArgs(args);
+    }
+
+    const lldb_step = b.step("lldb", "Run the app with lldb");
+    lldb_step.dependOn(&lldb_cmd.step);
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,

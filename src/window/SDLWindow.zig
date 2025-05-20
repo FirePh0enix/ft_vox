@@ -41,6 +41,7 @@ pub fn create(options: Options) !Self {
 
 pub fn deinit(self: *const Self) void {
     c.SDL_DestroyWindow(self.handle);
+    c.SDL_Vulkan_UnloadLibrary();
     c.SDL_Quit();
 }
 
@@ -80,8 +81,6 @@ fn convertEvent(self: *const Self, event: c.SDL_Event) Event {
 pub fn pollEvent(self: *const Self) ?Event {
     var event: c.SDL_Event = undefined;
     if (c.SDL_PollEvent(&event)) {
-        _ = c.cImGui_ImplSDL3_ProcessEvent(@ptrCast(&event));
-
         return self.convertEvent(event);
     } else {
         return null;

@@ -18,9 +18,6 @@ const sand = 5;
 const snowy_grass = 6;
 
 pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
-    const zone = tracy.beginZone(@src(), .{});
-    defer zone.end();
-
     var chunk: Chunk = .{ .position = .{ .x = x, .z = z } };
 
     const sea_level = world.generation_settings.sea_level;
@@ -212,9 +209,6 @@ const Noises = struct {
 };
 
 pub fn getNoises(noise: *const SimplexNoise, x: f32, z: f32) Noises {
-    const zone = tracy.beginZone(@src(), .{});
-    defer zone.end();
-
     const cont = getContinentalness(noise, x, z);
     const cont_level = getContinentalnessLevel(cont);
     const erosion = getErosion(noise, x, z);

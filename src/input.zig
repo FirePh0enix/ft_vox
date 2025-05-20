@@ -98,7 +98,7 @@ pub fn pollEvents() void {
                 window.close();
             },
             .resized => |r| {
-                try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = .performance });
+                try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = .on });
                 camera.setAspectRatio(@as(f32, @floatFromInt(r.width)) / @as(f32, @floatFromInt(r.height)));
             },
 
@@ -111,7 +111,7 @@ pub fn pollEvents() void {
 
                             const size = window.size();
 
-                            try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
+                            try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .on });
                         },
 
                         c.SDLK_ESCAPE => setMouseGrab(false),

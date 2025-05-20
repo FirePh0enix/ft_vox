@@ -5,7 +5,7 @@ const Self = @This();
 const Driver = @import("render/Renderer.zig").Driver;
 const Allocator = std.mem.Allocator;
 
-const Impl = if (builtin.os.tag != .emscripten) @import("window/SDLWindow.zig") else @import("window/EmWindow.zig");
+const Impl = @import("window/SDLWindow.zig");
 
 impl: Impl,
 
