@@ -15,6 +15,7 @@ const stone = 2;
 const dirt = 3;
 const grass = 4;
 const sand = 5;
+const snowy_grass = 6;
 
 pub fn generateChunk(world: *const World, x: i64, z: i64) Chunk {
     const zone = tracy.beginZone(@src(), .{});
@@ -91,6 +92,7 @@ fn getSurfaceBlock(biome: Biome) u16 {
         .beach => sand,
         .desert => sand,
         .plains => grass,
+        .snowy_plains => snowy_grass,
     };
 }
 
@@ -99,7 +101,7 @@ fn getFillBlock(biome: Biome) u16 {
         .ocean, .river => sand,
         .beach => sand,
         .desert => sand,
-        .plains => dirt,
+        .plains, .snowy_plains => dirt,
     };
 }
 
@@ -142,6 +144,7 @@ const Biome = enum {
     beach,
     plains,
     desert,
+    snowy_plains,
 
     pub fn color(self: Biome) Rgb24 {
         return switch (self) {
@@ -182,12 +185,13 @@ const Temperature = enum {
     burning,
 };
 
-fn getBiome(noises: Noises) Biome {
+pub fn getBiome(noises: Noises) Biome {
     return switch (noises.cont_level) {
         .deep_ocean, .ocean => .ocean,
         .coast => .beach,
         .near_inland, .mid_inland, .far_inland => switch (noises.temperature) {
-            .freezing, .cold, .temperate => .plains,
+            .temperate => .plains,
+            .cold, .freezing => .snowy_plains,
             .hot, .burning => .desert,
         },
     };
@@ -207,7 +211,7 @@ const Noises = struct {
     temperature: Temperature,
 };
 
-fn getNoises(noise: *const SimplexNoise, x: f32, z: f32) Noises {
+pub fn getNoises(noise: *const SimplexNoise, x: f32, z: f32) Noises {
     const zone = tracy.beginZone(@src(), .{});
     defer zone.end();
 

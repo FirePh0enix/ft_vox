@@ -310,6 +310,7 @@ pub const Statistics = struct {
     gpu_time: f32 = 0.0,
     primitives_drawn: usize = 0,
     vram_used: usize = 0,
+    fps: usize = 0,
 };
 
 /// An opaque value used to interact with GPU resources.

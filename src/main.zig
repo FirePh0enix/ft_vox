@@ -7,6 +7,7 @@ const input = @import("input.zig");
 const argzon = @import("argzon");
 const zemscripten = @import("zemscripten");
 const tracy = @import("tracy");
+const gen = @import("voxel/gen.zig");
 
 const Renderer = @import("render/Renderer.zig");
 const Window = @import("Window.zig");
@@ -213,7 +214,7 @@ pub fn mainDesktop() !void {
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
     if (args.options.fov) |fov| {
-        camera.setFov(std.math.degreesToRadians(fov));
+        camera.setFov(std.math.degreesToRadians(std.math.clamp(fov, 1.0, 179.0)));
     }
 
     var window = try Window.create(.{
@@ -237,7 +238,7 @@ pub fn mainDesktop() !void {
 
     const size = window.size();
 
-    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .performance });
+    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .off });
 
     render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
         .max_draw_calls = 32 * 32,
@@ -273,7 +274,7 @@ pub fn mainDesktop() !void {
     try registry.registerBlockFromFile("dirt.zon", .{});
     try registry.registerBlockFromFile("grass.zon", .{});
     try registry.registerBlockFromFile("sand.zon", .{});
-
+    try registry.registerBlockFromFile("snowy_grass.zon", .{});
     try registry.lock();
 
     light_buffer = try Buffer.create(.{
@@ -322,7 +323,7 @@ pub fn mainDesktop() !void {
     try the_world.createBuffers(15);
     try the_world.startWorkers(&registry);
 
-    render_graph_pass.addImguiHook(&statsDebugHook);
+    // render_graph_pass.addImguiHook(&statsDebugHook);
 
     input.init(&window, &camera);
 
@@ -346,13 +347,6 @@ fn tick(world: *World) !void {
     input.pollEvents();
 
     camera.updateCamera(world);
-
-    // Rebuild the render pass
-    const projection_matrix = camera.projection_matrix;
-
-    // TODO: Move projection calculation in Camera.zig
-
-    camera.projection_matrix = projection_matrix;
 
     // Record draw calls into the render pass
     render_graph_pass.reset();
@@ -381,7 +375,7 @@ fn tick(world: *World) !void {
     const stats = rdr().getStatistics();
 
     var buf: [64]u8 = undefined;
-    try text.set(std.fmt.bufPrint(&buf, "{d:.2} ms", .{stats.gpu_time}) catch &.{}, .{ 0.0, 0.0, 0.0 }, 0.1);
+    try text.set(std.fmt.bufPrint(&buf, "FPS: {}", .{stats.fps}) catch &.{}, .{ -1.7, -0.8, 0.0 }, 0.1);
 
     text.draw(&render_graph_pass);
 
@@ -399,6 +393,14 @@ fn statsDebugHook(render_pass: *Graph.RenderPass) void {
         c.ImGui_Text("Primitves  : %zu", stats.primitives_drawn);
         c.ImGui_Text("GPU Time   : %.2f", stats.gpu_time);
         c.ImGui_Text("GPU Memory : %s", (std.fmt.bufPrintZ(&buf, "{:.2}", .{std.fmt.fmtIntSizeBin(@intCast(stats.vram_used))}) catch unreachable).ptr);
+    }
+    c.ImGui_End();
+
+    if (c.ImGui_Begin("Noise", null, 0)) {
+        const noises = gen.getNoises(&the_world.noise, camera.position[0], camera.position[2]);
+        const biome = gen.getBiome(noises);
+
+        c.ImGui_Text("Biome: %s", @tagName(biome).ptr);
     }
     c.ImGui_End();
 }

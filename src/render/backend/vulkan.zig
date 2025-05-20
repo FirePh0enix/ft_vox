@@ -75,6 +75,8 @@ pub const VulkanRenderer = struct {
 
     features: Features,
     statistics: Renderer.Statistics = .{},
+    last_time: i64 = 0,
+    fps: usize = 0,
 
     imgui_context: *c.ImGuiContext,
     imgui_sampler: vk.Sampler,
@@ -135,13 +137,6 @@ pub const VulkanRenderer = struct {
         .framebuffer_create = @ptrCast(&framebufferCreate),
     };
 
-    pub fn createDevice_(self: *VulkanRenderer, window: *Window) Renderer.CreateDeviceError!void {
-        self.createDeviceVk(window) catch |e| switch (e) {
-            Allocator.Error.OutOfMemory => return Renderer.CreateDeviceError.OutOfMemory,
-            else => return error.NoSuitableDevice,
-        };
-    }
-
     fn convertDeviceError(err: anyerror) Renderer.CreateDeviceError {
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -165,9 +160,6 @@ pub const VulkanRenderer = struct {
             .engine_version = @bitCast(vk.makeApiVersion(0, 0, 0, 0)),
         };
 
-        var validation_layers: std.ArrayList([*:0]const u8) = .init(self.allocator);
-        defer validation_layers.deinit();
-
         var required_instance_extensions: std.ArrayList([*:0]const u8) = try .initCapacity(self.allocator, instance_extensions.len);
         defer required_instance_extensions.deinit();
         for (0..instance_extensions.len) |index| try required_instance_extensions.append(instance_extensions[index] orelse unreachable);
@@ -175,8 +167,8 @@ pub const VulkanRenderer = struct {
         const instance_handle = vkb.createInstance(&vk.InstanceCreateInfo{
             .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
             .p_application_info = &app_info,
-            .enabled_layer_count = if (builtin.mode == .Debug) 1 else 0,
-            .pp_enabled_layer_names = if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
+            .enabled_layer_count = 0, // `if (builtin.mode == .Debug) 1 else 0,
+            .pp_enabled_layer_names = null, // if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
             .enabled_extension_count = @intCast(required_instance_extensions.items.len),
             .pp_enabled_extension_names = required_instance_extensions.items.ptr,
         }, null) catch return error.BadDriver;
@@ -418,6 +410,13 @@ pub const VulkanRenderer = struct {
         _ = self.device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64)) catch |e| return convertGraphError(e);
         self.device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame])) catch |e| return convertGraphError(e);
 
+        const current_time = std.time.milliTimestamp();
+        if (current_time - self.last_time >= 1000) {
+            self.last_time = current_time;
+            self.statistics.fps = self.fps;
+            self.fps = 0;
+        }
+
         // TODO: `acquireNextImageKHR` can returns `out_of_date_khr` which is not an error worth crashing over, this only means that we need to recreate the swapchain.
         const image_index_result = self.device.acquireNextImageKHR(self.swapchain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle) catch |e| return convertGraphError(e);
         const image_index = image_index_result.image_index;
@@ -493,6 +492,7 @@ pub const VulkanRenderer = struct {
         }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
+        self.fps += 1;
     }
 
     fn encodeCommandBuffer(self: *VulkanRenderer) void {
@@ -629,10 +629,14 @@ pub const VulkanRenderer = struct {
             .gpu_time = self.statistics.gpu_time,
             .primitives_drawn = self.statistics.primitives_drawn,
             .vram_used = 0,
+            .fps = self.statistics.fps,
         };
     }
 
     pub fn destroy(self: *VulkanRenderer) void {
+        self.graphics_queue_mutex.lock();
+        defer self.graphics_queue_mutex.unlock();
+
         self.device.deviceWaitIdle() catch {};
 
         self.freeRid(self.output_render_pass);
