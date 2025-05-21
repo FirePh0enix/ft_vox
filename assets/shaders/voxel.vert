@@ -19,6 +19,7 @@ layout(location = 4) out vec4 fragShadowCoords;
 layout(location = 5) out uint textureIndex;
 layout(location = 6) out uint fragGradient;
 layout(location = 7) out uint fragGradientType;
+layout(location = 8) out uint fragSelected;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewMatrix;
@@ -40,6 +41,7 @@ void main() {
     uint visibility = visibility_gradient & 255;
     uint gradient = (visibility_gradient >> 8) & 255;
     uint gradientType = (visibility_gradient >> 16) & 255;
+    uint selected = (visibility_gradient >> 24) & 255;
 
     // Discard vertices by setting the position to nan, the GPU will ignore them.
     if (

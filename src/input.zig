@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const zm = @import("zmath");
+const root = @import("root");
 
 const Vec = zm.Vec;
 const Camera = @import("Camera.zig");
@@ -50,11 +51,6 @@ pub fn isActionPressed(action: Action) bool {
     return actions.get(action).value > 0.0;
 }
 
-pub fn isActionJustPressed(action: Action) bool {
-    const status = actions.get(action);
-    return status.value > 0.0 and status.just_pressed;
-}
-
 pub fn getActionValue(action: Action) f32 {
     return actions.get(action).value;
 }
@@ -62,7 +58,11 @@ pub fn getActionValue(action: Action) f32 {
 fn setAction(action: Action, value: f32) void {
     var status = actions.get(action);
 
-    status.just_pressed = status.value == 0.0 or value == 0.0;
+    if (status.just_pressed)
+        status.just_pressed = false
+    else if (value > 0.0)
+        status.just_pressed = true;
+
     status.value = value;
 
     actions.set(action, status);
@@ -98,7 +98,7 @@ pub fn pollEvents() void {
                 window.close();
             },
             .resized => |r| {
-                try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = .on });
+                try rdr().configure(.{ .width = r.width, .height = r.height, .vsync = root.vsync });
                 camera.setAspectRatio(@as(f32, @floatFromInt(r.width)) / @as(f32, @floatFromInt(r.height)));
             },
 
@@ -111,7 +111,7 @@ pub fn pollEvents() void {
 
                             const size = window.size();
 
-                            try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .on });
+                            try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = root.vsync });
                         },
 
                         c.SDLK_ESCAPE => setMouseGrab(false),

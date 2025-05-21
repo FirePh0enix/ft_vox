@@ -9,6 +9,8 @@ const Quat = zm.Quat;
 const Mat = zm.Mat;
 const World = @import("voxel/World.zig");
 const AABB = @import("AABB.zig");
+const Text = @import("Text.zig");
+const Font = @import("Font.zig");
 
 position: Vec,
 rotation: Vec,
@@ -27,6 +29,10 @@ fov: f32,
 /// and implement Frustum Culling.
 frustum: Frustum,
 
+attack_pressed: bool = false,
+
+block_label: Text,
+
 pub const Options = struct {
     position: zm.Vec = zm.f32x4s(0.0),
     rotation: zm.Vec = zm.f32x4s(0.0),
@@ -34,6 +40,7 @@ pub const Options = struct {
     speed_mul: f32 = 1.0,
     aspect_ratio: f32,
     fov: f32 = std.math.degreesToRadians(60.0),
+    font: *const Font,
 };
 
 pub fn init(options: Options) Self {
@@ -46,9 +53,14 @@ pub fn init(options: Options) Self {
         .aspect_ratio = options.aspect_ratio,
         .projection_matrix = calculateProjectionMatrix(options.aspect_ratio, options.fov),
         .frustum = undefined,
+        .block_label = Text.initCapacity(options.font, 8) catch unreachable,
     };
     camera.frustum = Frustum.init(camera.getViewProjMatrix());
     return camera;
+}
+
+pub fn deinit(self: *Self) void {
+    self.block_label.deinit();
 }
 
 pub fn setAspectRatio(self: *Self, aspect_ratio: f32) void {
@@ -94,23 +106,11 @@ pub fn updateCamera(self: *Self, world: *World) void {
     }
 
     const dir = input.getMovementVector();
-    self.position += forward_vec * @as(zm.Vec, @splat(dir[2] * self.speed * self.speed_mul));
-    self.position += up_vec * @as(zm.Vec, @splat(dir[1] * self.speed * self.speed_mul));
-    self.position += right_vec * @as(zm.Vec, @splat(dir[0] * self.speed * self.speed_mul));
+    self.position += forward_vec * zm.f32x4s(dir[2] * self.speed * self.speed_mul);
+    self.position += up_vec * zm.f32x4s(dir[1] * self.speed * self.speed_mul);
+    self.position += right_vec * zm.f32x4s(dir[0] * self.speed * self.speed_mul);
 
-    const attack_range: f32 = 5.0;
-
-    if (input.isActionJustPressed(.attack)) {
-        if (world.castRay(.{ .origin = self.position, .dir = forward_vec }, attack_range, 0.01)) |result| {
-            // const block = world.registry.getBlock(result.block.state.id) orelse unreachable;
-            const pos = result.block.pos;
-
-            // std.debug.print("{s} {d} {}\n", .{ block.name, result.block.distance, result.block.pos });
-            world.setBlockState(pos.x, pos.y, pos.z, .{ .id = 0 });
-        }
-    }
-
-    world.updateWorldAround(self.position[0], self.position[2]) catch unreachable;
+    world.updateWorldAround(self.position[0], self.position[2]) catch {};
 }
 
 pub fn getViewMatrix(self: *const Self) Mat {

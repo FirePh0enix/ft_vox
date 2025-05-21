@@ -32,7 +32,7 @@ pub const BlockInstanceData = extern struct {
     visibility: u8 = 0,
     gradient: u8 = 0,
     gradient_type: GradientType = .none,
-    _padding: u8 = 0,
+    selected: u8 = 0,
 };
 
 pub const Direction = enum(u3) {
@@ -52,7 +52,9 @@ pub const BlockState = packed struct(u32) {
 
     transparent: bool = false,
 
-    _padding: u6 = 0,
+    selected: bool = false,
+
+    _padding: u5 = 0,
 
     pub inline fn isAir(self: BlockState) bool {
         return self.id == 0;
@@ -198,55 +200,18 @@ pub fn setBlockState(self: *Self, x: i64, y: i64, z: i64, state: BlockState) voi
         const local_x: usize = @intCast(x - chunk_x * 16);
         const local_z: usize = @intCast(z - chunk_z * 16);
 
-        std.debug.print("{} {}\n", .{ local_x, local_z });
-
         chunk.setBlockState(local_x, @intCast(y), local_z, state);
 
         {
             self.chunks_lock.lock();
             defer self.chunks_lock.unlock();
 
+            // chunk.computeVisibilityForBlockNoLock(self, local_x, @intCast(y), local_z);
             chunk.computeVisibilityNoLock(self);
         }
 
         rebuildInstanceBuffer(chunk, self.allocator, self.registry, &self.buffers[chunk.instance_buffer_index]) catch {};
     }
-}
-
-pub fn castRay(self: *const Self, ray: Ray, max_length: f32, precision: f32) ?RaycastResult {
-    var t: f32 = 0.0;
-
-    while (t < max_length) : (t += precision) {
-        const point = ray.at(t);
-
-        const block_x: i64 = @intFromFloat(point[0]);
-        const block_y: i64 = @intFromFloat(point[1]);
-        const block_z: i64 = @intFromFloat(point[2]);
-
-        if (block_y < 0 or block_y > Chunk.height) continue;
-
-        if (self.getBlockState(block_x, block_y, block_z)) |state| {
-            if (state.isAir()) continue;
-
-            const block = self.registry.getBlock(state.id) orelse continue;
-
-            if (!block.solid) continue;
-
-            return RaycastResult{
-                .block = .{
-                    .state = state,
-                    .pos = .{
-                        .x = block_x,
-                        .y = block_y,
-                        .z = block_z,
-                    },
-                    .distance = t,
-                },
-            };
-        }
-    }
-
-    return null;
 }
 
 /// Load a chunk on a separate thread.
@@ -281,6 +246,11 @@ const ChunkLoadWorker = struct {
             self.orders_mutex.lock();
             const chunk_pos = self.orders.removeOrNull();
             remaining = self.orders.items.len;
+
+            if (remaining == 0) {
+                self.orders.shrinkAndFree(0);
+            }
+
             self.orders_mutex.unlock();
 
             if (chunk_pos) |pos| {
@@ -352,6 +322,11 @@ const ChunkUnloadWorker = struct {
             self.orders_mutex.lock();
             const chunk_pos = self.orders.pop();
             remaining = self.orders.items.len;
+
+            if (remaining == 0) {
+                self.orders.shrinkAndFree(world.allocator, 0);
+            }
+
             self.orders_mutex.unlock();
 
             if (chunk_pos) |pos| {
@@ -428,7 +403,6 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass
             continue;
         }
 
-        // shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, shadow_matrix); // inversing the two matrices is interesting !
         render_pass.drawInstanced(cube_mesh, render_material, buffer_data.buffer, 0, rdr().meshGetIndicesCount(cube_mesh), 0, buffer_data.opaque_instance_count, camera_matrix);
     }
 
@@ -441,7 +415,6 @@ pub fn encodeDrawCalls(self: *Self, camera: *Camera, cube_mesh: RID, render_pass
             continue;
         }
 
-        // shadow_pass.drawInstanced(cube_mesh, shadow_material, buffer_data.rid, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, shadow_matrix);
         render_pass.drawInstanced(cube_mesh, render_material, buffer_data.buffer, 0, rdr().meshGetIndicesCount(cube_mesh), buffer_data.opaque_instance_count, buffer_data.transparent_instance_count, camera_matrix);
     }
 }
@@ -474,6 +447,7 @@ pub fn rebuildInstanceBuffer(chunk: *Chunk, allocator: Allocator, registry: *con
                     .textures1 = .{ @floatFromInt(textures[3]), @floatFromInt(textures[4]), @floatFromInt(textures[5]) },
                     .visibility = @intCast(block_state.visibility),
                     .gradient_type = if (block.name_hash == grass_name_hash) .grass else .none,
+                    .selected = @intFromBool(block_state.selected),
                 };
                 index += 1;
             }

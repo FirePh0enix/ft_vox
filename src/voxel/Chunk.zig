@@ -45,10 +45,63 @@ pub inline fn setBlockState(self: *Self, x: usize, y: usize, z: usize, state: Bl
     self.blocks[z * length * height + y * length + x] = state;
 }
 
-pub fn computeVisibilityNoLock(
-    self: *Self,
-    world: *const World,
-) void {
+pub fn computeVisibilityForBlockNoLock(self: *Self, world: *const World, x: usize, y: usize, z: usize) void {
+    const north = world.getChunk(self.position.x, self.position.z - 1);
+    const south = world.getChunk(self.position.x, self.position.z + 1);
+    const west = world.getChunk(self.position.x - 1, self.position.z);
+    const east = world.getChunk(self.position.x + 1, self.position.z);
+
+    var visibility: u6 = 0;
+
+    const current_id = (self.getBlockState(x, y, z) orelse return).id;
+
+    if (z == 0) {
+        if (north) |chunk| {
+            if (chunk.noBlockOrTransparent(x, y, 15, current_id)) visibility |= 1 << 0;
+        } else {
+            visibility |= 1 << 0;
+        }
+    } else if (self.noBlockOrTransparent(x, y, z - 1, current_id)) {
+        visibility |= 1 << 0;
+    }
+
+    if (z == 15) {
+        if (south) |chunk| {
+            if (chunk.noBlockOrTransparent(x, y, 0, current_id)) visibility |= 1 << 1;
+        } else {
+            visibility |= 1 << 1;
+        }
+    } else if (self.noBlockOrTransparent(x, y, z + 1, current_id)) {
+        visibility |= 1 << 1;
+    }
+
+    if (x == 0) {
+        if (west) |chunk| {
+            if (chunk.noBlockOrTransparent(15, y, z, current_id)) visibility |= 1 << 2;
+        } else {
+            visibility |= 1 << 2;
+        }
+    } else if (self.noBlockOrTransparent(x - 1, y, z, current_id)) {
+        visibility |= 1 << 2;
+    }
+
+    if (x == 15) {
+        if (east) |chunk| {
+            if (chunk.noBlockOrTransparent(0, y, z, current_id)) visibility |= 1 << 3;
+        } else {
+            visibility |= 1 << 3;
+        }
+    } else if (self.noBlockOrTransparent(x + 1, y, z, current_id)) {
+        visibility |= 1 << 3;
+    }
+
+    if (y == 255 or self.noBlockOrTransparent(x, y + 1, z, current_id)) visibility |= 1 << 4;
+    if (y == 0 or self.noBlockOrTransparent(x, y - 1, z, current_id)) visibility |= 1 << 5;
+
+    self.blocks[z * length * height + y * length + x].visibility = visibility;
+}
+
+pub fn computeVisibilityNoLock(self: *Self, world: *const World) void {
     const north = world.getChunk(self.position.x, self.position.z - 1);
     const south = world.getChunk(self.position.x, self.position.z + 1);
     const west = world.getChunk(self.position.x - 1, self.position.z);

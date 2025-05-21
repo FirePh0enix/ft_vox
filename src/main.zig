@@ -54,13 +54,8 @@ const cli = .{
 };
 const Args = argzon.Args(cli, .{});
 
-pub var camera = Camera.init(.{
-    .aspect_ratio = 16.0 / 9.0,
-    .fov = std.math.degreesToRadians(60.0),
-    .position = .{ 0.0, 100.0, 0.0, 0.0 },
-    .rotation = .{ 0.0, 0.0, 0.0, 0.0 },
-    .speed = 0.5,
-});
+pub var vsync: Renderer.VSync = .off;
+pub var camera: Camera = undefined;
 
 var last_update_time: i64 = 0;
 var time_between_update: i64 = 1000000 / 60;
@@ -187,8 +182,6 @@ pub fn createCube() !RID {
     });
 }
 
-// TODO: Redo instance/batch rendering
-
 const LightData = struct {
     matrix: [16]f32,
     position: [3]f32,
@@ -199,6 +192,7 @@ var light_buffer: Buffer = undefined;
 
 var font: Font = undefined;
 var text: Text = undefined;
+var coords: Text = undefined;
 var skybox: Skybox = undefined;
 
 pub fn main() !void {
@@ -230,7 +224,7 @@ pub fn main() !void {
 
     const size = window.size();
 
-    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = .off });
+    try rdr().configure(.{ .width = size.width, .height = size.height, .vsync = vsync });
 
     render_graph_pass = try Graph.RenderPass.create(allocator, rdr().getOutputRenderPass(), .{
         .max_draw_calls = 32 * 32,
@@ -252,8 +246,21 @@ pub fn main() !void {
     };
     defer font.deinit();
 
+    camera = Camera.init(.{
+        .aspect_ratio = 16.0 / 9.0,
+        .fov = std.math.degreesToRadians(60.0),
+        .position = .{ 0.0, 100.0, 0.0, 0.0 },
+        .rotation = .{ 0.0, 0.0, 0.0, 0.0 },
+        .speed = 0.5,
+        .font = &font,
+    });
+    defer camera.deinit();
+
     text = try Text.initCapacity(&font, 5);
     defer text.deinit();
+
+    coords = try Text.initCapacity(&font, 20);
+    defer coords.deinit();
 
     skybox = try Skybox.init(allocator);
     defer skybox.deinit();
@@ -315,26 +322,35 @@ pub fn main() !void {
     try the_world.createBuffers(15);
     try the_world.startWorkers(&registry);
 
-    // render_graph_pass.addImguiHook(&statsDebugHook);
-
     input.init(&window, &camera);
 
     while (window.running()) {
-        if (std.time.microTimestamp() - last_update_time < time_between_update) {
-            std.Thread.yield() catch {};
-            continue;
-        }
-        last_update_time = std.time.microTimestamp();
+        a: {
+            if (std.time.microTimestamp() - last_update_time < time_between_update) {
+                break :a;
+            }
+            last_update_time = std.time.microTimestamp();
 
-        try tick(&the_world);
+            try tick();
+        }
+        try render();
+        std.Thread.yield() catch {};
     }
 }
 
-fn tick(world: *World) !void {
+fn tick() !void {
     input.pollEvents();
 
-    camera.updateCamera(world);
+    camera.updateCamera(&the_world);
 
+    const stats = rdr().getStatistics();
+
+    var buf: [64]u8 = undefined;
+    try text.set(std.fmt.bufPrint(&buf, "FPS: {}", .{stats.fps}) catch &.{}, .{ -1.7, -0.9, 0.0 }, 0.1);
+    try coords.set(std.fmt.bufPrint(&buf, "X: {d:.1} Y: {d:.1} Z: {d:.1}", .{ camera.position[0], camera.position[1], camera.position[2] }) catch &.{}, .{ -1.7, -0.8, 0.0 }, 0.08);
+}
+
+fn render() !void {
     // Record draw calls into the render pass
     render_graph_pass.reset();
 
@@ -359,35 +375,9 @@ fn tick(world: *World) !void {
 
     skybox.encodeDraw(&render_graph_pass);
 
-    const stats = rdr().getStatistics();
-
-    var buf: [64]u8 = undefined;
-    try text.set(std.fmt.bufPrint(&buf, "FPS: {}", .{stats.fps}) catch &.{}, .{ -1.7, -0.8, 0.0 }, 0.1);
-
     text.draw(&render_graph_pass);
+    camera.block_label.draw(&render_graph_pass);
+    coords.draw(&render_graph_pass);
 
     try rdr().processGraph(&graph);
-}
-
-fn statsDebugHook(render_pass: *Graph.RenderPass) void {
-    _ = render_pass;
-
-    if (c.ImGui_Begin("Statistics", null, 0)) {
-        const stats = rdr().getStatistics();
-
-        var buf: [128]u8 = undefined;
-
-        c.ImGui_Text("Primitves  : %zu", stats.primitives_drawn);
-        c.ImGui_Text("GPU Time   : %.2f", stats.gpu_time);
-        c.ImGui_Text("GPU Memory : %s", (std.fmt.bufPrintZ(&buf, "{:.2}", .{std.fmt.fmtIntSizeBin(@intCast(stats.vram_used))}) catch unreachable).ptr);
-    }
-    c.ImGui_End();
-
-    if (c.ImGui_Begin("Noise", null, 0)) {
-        const noises = gen.getNoises(&the_world.noise, camera.position[0], camera.position[2]);
-        const biome = gen.getBiome(noises);
-
-        c.ImGui_Text("Biome: %s", @tagName(biome).ptr);
-    }
-    c.ImGui_End();
 }

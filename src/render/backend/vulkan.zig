@@ -4,7 +4,6 @@ const c = @import("c");
 const builtin = @import("builtin");
 const zm = @import("zmath");
 const assets = @import("../../assets.zig");
-const tracy = @import("tracy");
 
 const Allocator = std.mem.Allocator;
 const Window = @import("../../Window.zig");
@@ -156,8 +155,8 @@ pub const VulkanRenderer = struct {
         const instance_handle = vkb.createInstance(&vk.InstanceCreateInfo{
             .flags = if (builtin.target.os.tag == .macos) .{ .enumerate_portability_bit_khr = true } else .{},
             .p_application_info = &app_info,
-            .enabled_layer_count = 0, // `if (builtin.mode == .Debug) 1 else 0,
-            .pp_enabled_layer_names = null, // if (builtin.mode == .Debug) &.{"VK_LAYER_KHRONOS_validation"} else null,
+            .enabled_layer_count = 0,
+            .pp_enabled_layer_names = null,
             .enabled_extension_count = @intCast(required_instance_extensions.items.len),
             .pp_enabled_extension_names = required_instance_extensions.items.ptr,
         }, null) catch return error.BadDriver;
@@ -183,11 +182,7 @@ pub const VulkanRenderer = struct {
 
         if (use_moltenvk) try required_extensions.append(vk.extensions.khr_portability_subset.name.ptr);
 
-        const optional_extensions: []const [*:0]const u8 = &.{
-            vk.extensions.khr_deferred_host_operations.name.ptr,
-            vk.extensions.khr_acceleration_structure.name.ptr,
-            vk.extensions.khr_ray_tracing_pipeline.name.ptr,
-        };
+        const optional_extensions: []const [*:0]const u8 = &.{};
 
         // According to gpuinfo support for hostQueryReset this is 99.5%.
         // TODO: Probably better to set this features as optional since it is only used for debugging purpose.
@@ -211,15 +206,7 @@ pub const VulkanRenderer = struct {
         self.physical_device = physical_device_with_info.physical_device;
         self.physical_device_properties = self.instance.getPhysicalDeviceProperties(self.physical_device);
 
-        const features: Features = .{
-            .ray_tracing = containsExtension(physical_device_with_info.extensions, vk.extensions.khr_ray_tracing_pipeline.name),
-        };
-
         std.log.info("GPU selected: {s}", .{self.physical_device_properties.device_name});
-
-        inline for (@typeInfo(Features).@"struct".fields) |field| {
-            if (@field(features, field.name)) std.log.info("Feature `{s}` is supported", .{field.name});
-        }
 
         // Query surface capabilities.
         self.surface_capabilities = self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physical_device, self.surface) catch return error.BadDriver;
@@ -425,8 +412,6 @@ pub const VulkanRenderer = struct {
             unreachable;
         }
 
-        // self.encodeCommandBuffer();
-
         cb.writeTimestamp(profile_stage, self.timestamp_query_pool, @intCast(self.current_frame * 2 + 1));
 
         cb.endCommandBuffer() catch |e| return convertGraphError(e);
@@ -631,7 +616,7 @@ pub const VulkanRenderer = struct {
                 var iter = self.rid_infos.iterator();
 
                 while (iter.next()) |entry| {
-                    std.debug.print("RID 0x{x}\n", .{entry.key_ptr.inner});
+                    std.log.err("RID 0x{x}\n", .{entry.key_ptr.inner});
                     entry.value_ptr.stack_trace.dump();
                 }
             }
@@ -1709,9 +1694,7 @@ pub const VulkanRenderer = struct {
     }
 };
 
-pub const Features = struct {
-    ray_tracing: bool = false,
-};
+pub const Features = struct {};
 
 pub const VulkanBuffer = struct {
     size: usize,
@@ -1743,9 +1726,6 @@ pub const VulkanBuffer = struct {
         if (s.len == 0) {
             return;
         }
-
-        // var staging_buffer_rid = try self.bufferCreate(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
-        // defer self.freeRid(staging_buffer_rid);
 
         var staging_buffer = try Buffer.create(.{ .size = s.len, .usage = .{ .transfer_src = true }, .alloc_usage = .cpu_to_gpu });
         defer staging_buffer.destroy();

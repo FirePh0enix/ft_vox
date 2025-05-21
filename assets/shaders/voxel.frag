@@ -8,6 +8,7 @@ layout(location = 4) in vec4 shadowCoords;
 layout(location = 5) flat in uint textureIndex;
 layout(location = 6) flat in uint gradient;
 layout(location = 7) flat in uint gradientType;
+layout(location = 8) flat in uint selected;
 
 layout(location = 0) out vec4 outColor;
 
@@ -29,15 +30,11 @@ void main() {
         color *= vec4(13.0 / 255.0, 94.0 / 255.0, 21.0 / 255.0, 1.0);
     }
 
-    // float shadow = textureProj(shadowCoords / shadowCoords.w, vec2(0.0)); // filterPCF(shadowCoords / shadowCoords.w);
-
     vec3 N = normalize(normal);
-    vec3 L = normalize(lightVec);
+    vec3 L = normalize(vec3(-1.0, -1.0, 0.0));
     vec3 V = normalize(position.xyz);
     vec3 R = normalize(-reflect(L, N));
     vec3 diffuse = max(dot(N, -L), ambient) * color.rgb;
 
-    // outColor = vec4(shadow * diffuse, 1.0);
     outColor = vec4(diffuse, color.a);
-    // outColor = color;
 }
