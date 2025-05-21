@@ -1,0 +1,15 @@
+.{
+    .name = "dirt",
+    .visual = .{
+        .cube = .{
+            .textures = .{
+                "Dirt.png",
+                "Dirt.png",
+                "Dirt.png",
+                "Dirt.png",
+                "Dirt.png",
+                "Dirt.png",
+            },
+        },
+    },
+}

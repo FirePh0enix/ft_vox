@@ -1,0 +1,15 @@
+PROJECT_NAME           = "ft_vox"
+
+PROJECT_NUMBER         = @VERSION_MAJOR@.@VERSION_MINOR@.@VERSION_PATCH@
+
+PROJECT_BRIEF          =
+
+PROJECT_LOGO           =
+
+DOXYFILE_ENCODING      = UTF-8
+
+OUTPUT_DIRECTORY       = "docs"
+
+OUTPUT_LANGUAGE        = English
+
+INPUT                  = ../src/
