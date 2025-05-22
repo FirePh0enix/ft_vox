@@ -746,7 +746,7 @@ pub const VulkanRenderer = struct {
         self.rid_infos_mutex.lock();
         defer self.rid_infos_mutex.unlock();
 
-        _ = self.rid_infos.swapRemove(rid);
+        if (builtin.mode == .Debug) _ = self.rid_infos.swapRemove(rid);
     }
 
     inline fn addRIDInfo(self: *VulkanRenderer, rid: RID, ret_addr: usize) error{OutOfMemory}!void {
