@@ -249,7 +249,7 @@ fn addEmbeddedAssets(b: *Build, exe: *Build.Module, shaders: []const CompileShad
     }) = .init(b.allocator);
 
     {
-        const textures_dir = std.fs.cwd().openDir("assets/textures", .{ .iterate = true }) catch unreachable;
+        const textures_dir = std.fs.cwd().openDir("assets/textures", .{ .iterate = true }) catch @panic("missing directory `assets/textures`");
         var dir_iter = textures_dir.iterate();
 
         while (dir_iter.next() catch unreachable) |entry| {
