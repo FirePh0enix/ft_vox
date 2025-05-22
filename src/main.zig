@@ -202,10 +202,6 @@ pub fn main() !void {
 
     const args = try Args.parse(allocator, std.io.getStdErr().writer(), .{ .is_gpa = false });
 
-    if (args.options.fov) |fov| {
-        camera.setFov(std.math.degreesToRadians(std.math.clamp(fov, 1.0, 179.0)));
-    }
-
     var window = try Window.create(.{
         .title = "ft_vox",
         .width = 1280,
@@ -255,6 +251,10 @@ pub fn main() !void {
         .font = &font,
     });
     defer camera.deinit();
+
+    if (args.options.fov) |fov| {
+        camera.setFov(std.math.degreesToRadians(std.math.clamp(fov, 1.0, 179.0)));
+    }
 
     text = try Text.initCapacity(&font, 5);
     defer text.deinit();
