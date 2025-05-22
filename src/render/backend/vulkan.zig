@@ -53,9 +53,9 @@ pub const VulkanRenderer = struct {
     graphics_queue_mutex: std.Thread.Mutex = .{},
     graphics_queue_index: u32,
 
-    compute_queue: vk.QueueProxy,
-    compute_queue_mutex: std.Thread.Mutex = .{},
-    compute_queue_index: u32,
+    // compute_queue: vk.QueueProxy,
+    // compute_queue_mutex: std.Thread.Mutex = .{},
+    // compute_queue_index: u32,
 
     current_frame: usize = 0,
     command_buffers: [max_frames_in_flight]vk.CommandBufferProxy,
@@ -225,11 +225,6 @@ pub const VulkanRenderer = struct {
                 .queue_count = queue_priorities.len,
                 .p_queue_priorities = queue_priorities.ptr,
             },
-            vk.DeviceQueueCreateInfo{
-                .queue_family_index = physical_device_with_info.queue_info.compute_index orelse return error.NoSuitableDevice,
-                .queue_count = queue_priorities.len,
-                .p_queue_priorities = queue_priorities.ptr,
-            },
         };
 
         const device_extensions = combine_extensions: {
@@ -278,8 +273,6 @@ pub const VulkanRenderer = struct {
 
         self.graphics_queue_index = physical_device_with_info.queue_info.graphics_index orelse unreachable;
         self.graphics_queue = vk.QueueProxy.init(self.device.getDeviceQueue(self.graphics_queue_index, 0), &device_wrapper);
-        self.compute_queue_index = physical_device_with_info.queue_info.compute_index orelse unreachable;
-        self.compute_queue = vk.QueueProxy.init(self.device.getDeviceQueue(self.compute_queue_index, 0), &device_wrapper);
 
         // Allocate command buffers
         self.command_pool = self.device.createCommandPool(&vk.CommandPoolCreateInfo{
@@ -1563,6 +1556,7 @@ pub const VulkanRenderer = struct {
             .discrete_gpu => score += 1000,
             .virtual_gpu => score += 100,
             .integrated_gpu => score += 10,
+            .cpu => score += 1,
             else => {},
         }
 
@@ -1598,7 +1592,7 @@ pub const VulkanRenderer = struct {
         optional_extensions: []const [*:0]const u8,
     ) !?DeviceWithInfo {
         var best_device: ?DeviceWithInfo = null;
-        var max_score: i32 = 0;
+        var max_score: i32 = -1;
 
         for (devices) |device| {
             const properties = instance.getPhysicalDeviceProperties(device);
